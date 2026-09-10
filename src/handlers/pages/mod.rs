@@ -3784,10 +3784,21 @@ pub async fn statistics_page(
         } else {
             None
         };
+        // Read-through rather than `get_with`: these are site-wide figures a
+        // concurrent miss can recompute harmlessly, and the async closure
+        // `moka::sync` would need is not available on it anyway.
         let admin_db_stats = if show_admin_stats {
-            crate::models::statistics::get_admin_database_stats(&state.db)
-                .await
-                .ok()
+            if let Some(cached) = state.admin_db_stats_cache.get(&()) {
+                Some(cached)
+            } else {
+                let fresh = crate::models::statistics::get_admin_database_stats(&state.db)
+                    .await
+                    .ok();
+                if let Some(stats) = fresh.clone() {
+                    state.admin_db_stats_cache.insert((), stats);
+                }
+                fresh
+            }
         } else {
             None
         };

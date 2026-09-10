@@ -135,6 +135,7 @@ impl AdminEntryStats {
 /// Free space a `VACUUM` would hand back, for backends that can measure it.
 /// `SQLite` reads it off its page-level freelist accounting; there is no
 /// comparable figure on `PostgreSQL` without an extension, so PG reports `None`.
+#[derive(Clone)]
 pub struct ReclaimableSpace {
     pub bytes: i64,
     /// `bytes / db_size_bytes`, in `0.0..=1.0`.
@@ -145,6 +146,7 @@ pub struct ReclaimableSpace {
 /// `None` on backends that cannot report free space, and the `/statistics` page
 /// omits the card entirely rather than rendering a zero that reads as "no
 /// bloat".
+#[derive(Clone)]
 pub struct AdminDatabaseStats {
     pub db_size_bytes: i64,
     pub reclaimable: Option<ReclaimableSpace>,
@@ -169,6 +171,29 @@ const READ_ENTRIES_SQL: &str = r"
           AND COALESCE(e.published_at, e.created_at) >= $2
           AND COALESCE(e.published_at, e.created_at) < $3
           AND e.read_at IS NOT NULL
+        ";
+
+/// The starred-count half of [`get_personal_overview`], hoisted for the same
+/// reason as [`READ_ENTRIES_SQL`] — and written differently from it on purpose.
+///
+/// Scoping the user with `feed_id IN (SELECT ...)` rather than the `INNER JOIN`
+/// its two siblings use is what puts `SQLite` on `idx_entry_feed_starred_sort`.
+/// Written as a join, the planner leads with `idx_entry_starred_sort` — keyed on
+/// the sort timestamp alone — and pays a table lookup per starred row to reach
+/// `feed_id`, because it costs the narrow range as cheap and does not model
+/// those lookups. The subquery removes the choice. See the 0013 migration.
+const STARRED_ENTRIES_SQL: &str = r"
+        SELECT COUNT(e.id)
+        FROM entry e
+        WHERE e.feed_id IN (
+                SELECT f.id
+                FROM feed f
+                INNER JOIN category c ON f.category_id = c.id
+                WHERE c.user_id = $1
+              )
+          AND COALESCE(e.published_at, e.created_at) >= $2
+          AND COALESCE(e.published_at, e.created_at) < $3
+          AND e.starred_at IS NOT NULL
         ";
 
 /// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
@@ -207,24 +232,8 @@ pub async fn get_personal_overview(
     let read_entries: i64 =
         query_scalar!(db, i64, READ_ENTRIES_SQL, user_id, from, to).map_err(AppError::Database)?;
 
-    let starred_entries: i64 = query_scalar!(
-        db,
-        i64,
-        r"
-        SELECT COUNT(e.id)
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = $1
-          AND COALESCE(e.published_at, e.created_at) >= $2
-          AND COALESCE(e.published_at, e.created_at) < $3
-          AND e.starred_at IS NOT NULL
-        ",
-        user_id,
-        from,
-        to,
-    )
-    .map_err(AppError::Database)?;
+    let starred_entries: i64 = query_scalar!(db, i64, STARRED_ENTRIES_SQL, user_id, from, to)
+        .map_err(AppError::Database)?;
 
     let summaries: i64 = query_scalar!(
         db,
@@ -617,6 +626,35 @@ mod tests {
         .await
         .unwrap();
         user_id
+    }
+
+    /// A second user with their own category and feed, for the scoping
+    /// assertions. Separate from `create_user_with_data` because that one pins
+    /// the username and feed URL, both of which are UNIQUE.
+    async fn create_second_user_with_feed(db: &Db) -> (i64, i64) {
+        let user_id = user::create_user(db, "otheruser", "hash", Role::User)
+            .await
+            .unwrap()
+            .id;
+        let cat = category::create_category(db, user_id, "Theirs")
+            .await
+            .unwrap();
+        let feed = feed::create_feed(
+            db,
+            &feed::CreateFeedParams {
+                category_id: cat.id,
+                url: "https://other.example.com/feed",
+                title: Some("Other Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap();
+        (user_id, feed.id)
     }
 
     /// Helper: get the `feed_id` for the first feed belonging to user's category.
@@ -1184,6 +1222,85 @@ mod tests {
         assert!(
             plan.contains("COVERING INDEX idx_entry_feed_read_at"),
             "the daily chart must be served by the index alone, plan was:\n{plan}"
+        );
+    }
+
+    /// The third overview count, and the only one whose plan does not follow
+    /// from the index alone: with starred rows a small fraction of the table,
+    /// SQLite costs `idx_entry_starred_sort`'s narrow range as the cheaper plan
+    /// and pays a table lookup per row to reach `feed_id` for the join. On a
+    /// 567 MB / 70k-entry database that was 2,278 page misses for the all-time
+    /// period, against 594 and 493 for the two covered counts beside it; the
+    /// `feed_id IN (SELECT ...)` scope plus the 0013 index takes it to 23.
+    ///
+    /// The rewrite and the index only work together — the subquery *without*
+    /// the index is far worse than the join it replaced (73,761 misses on the
+    /// same database, a table scan per feed) — so the plan is what this pins.
+    #[tokio::test]
+    async fn test_starred_entries_query_is_index_covered() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        let e = insert_entry(&db, feed_id, "g1", "2024-01-05").await;
+        mark_starred(&db, e, "2024-01-06").await;
+
+        let DbInner::Sqlite(pool) = db.inner() else {
+            unreachable!("connect_in_memory is always SQLite")
+        };
+        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {STARRED_ENTRIES_SQL}"
+        )))
+        .bind(user_id)
+        .bind(parse_ymd("2024-01-01"))
+        .bind(parse_ymd("2024-02-01"))
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let plan = rows.into_iter().map(|r| r.3).collect::<Vec<_>>().join("\n");
+
+        assert!(
+            plan.contains("idx_entry_feed_starred_sort"),
+            "starred count must be served by the partial index, plan was:\n{plan}"
+        );
+        assert!(
+            !plan.contains("idx_entry_starred_sort ("),
+            "leading with the sort-keyed index means a table lookup per starred row, plan was:\n{plan}"
+        );
+    }
+
+    /// The rewrite above changed the SQL behind a user-visible number, so it
+    /// must still count the same rows: starred entries published inside the
+    /// window, belonging to this user and nobody else.
+    #[tokio::test]
+    async fn test_starred_count_is_scoped_to_the_user_and_window() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+
+        let inside = insert_entry(&db, feed_id, "inside", "2024-01-05").await;
+        mark_starred(&db, inside, "2024-01-06").await;
+        // Starred, but published outside the window.
+        let outside = insert_entry(&db, feed_id, "outside", "2024-03-05").await;
+        mark_starred(&db, outside, "2024-03-06").await;
+        // Inside the window, but never starred.
+        insert_entry(&db, feed_id, "unstarred", "2024-01-07").await;
+
+        // Another user's starred entry in the same window: the `feed_id IN
+        // (SELECT ...)` scope is the only thing keeping it out.
+        let (other_id, other_feed) = create_second_user_with_feed(&db).await;
+        let theirs = insert_entry(&db, other_feed, "theirs", "2024-01-05").await;
+        mark_starred(&db, theirs, "2024-01-06").await;
+
+        let overview = get_personal_overview(&db, user_id, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
+        assert_eq!(overview.starred_entries, 1);
+        assert_eq!(
+            get_personal_overview(&db, other_id, "2024-01-01", "2024-02-01")
+                .await
+                .unwrap()
+                .starred_entries,
+            1
         );
     }
 

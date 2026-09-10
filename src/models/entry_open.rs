@@ -112,10 +112,13 @@ pub async fn record_open(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool
 /// the largest table in the schema. Returns nothing at all when the reader is
 /// opted out, which is what suppresses the column.
 pub async fn open_rates_by_feed(db: &Db, user_id: i64) -> AppResult<Vec<FeedOpenRate>> {
-    query_all!(
-        db,
-        FeedOpenRate,
-        "SELECT f.id AS feed_id, f.title AS title, \
+    query_all!(db, FeedOpenRate, OPEN_RATES_SQL, user_id).map_err(AppError::Database)
+}
+
+/// Hoisted so the query-plan regression test asserts against the SQL that
+/// actually runs. It needs `idx_entry_feed_created_at` to stay off the `entry`
+/// table entirely — see the 0014 migration for what it cost without it.
+const OPEN_RATES_SQL: &str = "SELECT f.id AS feed_id, f.title AS title, \
                 COUNT(e.id) AS tracked, \
                 COUNT(o.entry_id) AS opened \
          FROM feed f \
@@ -125,18 +128,22 @@ pub async fn open_rates_by_feed(db: &Db, user_id: i64) -> AppResult<Vec<FeedOpen
               AND e.created_at >= us.pixel_tracking_enabled_at \
          LEFT JOIN entry_open o ON o.entry_id = e.id AND o.user_id = us.user_id \
          WHERE c.user_id = $1 AND us.pixel_tracking_enabled_at IS NOT NULL \
-         GROUP BY f.id, f.title",
-        user_id
-    )
-    .map_err(AppError::Database)
-}
+         GROUP BY f.id, f.title";
 
 /// The opt-in date and the oldest entry still inside the tracked window.
 pub async fn tracking_window(db: &Db, user_id: i64) -> AppResult<TrackingWindow> {
-    let found = query_opt!(
-        db,
-        TrackingWindow,
-        "SELECT us.pixel_tracking_enabled_at AS enabled_at, \
+    let found =
+        query_opt!(db, TrackingWindow, TRACKING_WINDOW_SQL, user_id).map_err(AppError::Database)?;
+    Ok(found.unwrap_or(TrackingWindow {
+        enabled_at: None,
+        oldest_tracked: None,
+    }))
+}
+
+/// Hoisted for the same reason as [`OPEN_RATES_SQL`], and dependent on the same
+/// index: the `MIN(created_at)` is taken over every entry in every feed the
+/// reader subscribes to.
+const TRACKING_WINDOW_SQL: &str = "SELECT us.pixel_tracking_enabled_at AS enabled_at, \
                 MIN(e.created_at) AS oldest_tracked \
          FROM user_settings us \
          LEFT JOIN category c ON c.user_id = us.user_id \
@@ -144,19 +151,55 @@ pub async fn tracking_window(db: &Db, user_id: i64) -> AppResult<TrackingWindow>
          LEFT JOIN entry e ON e.feed_id = f.id \
               AND e.created_at >= us.pixel_tracking_enabled_at \
          WHERE us.user_id = $1 AND us.pixel_tracking_enabled_at IS NOT NULL \
-         GROUP BY us.pixel_tracking_enabled_at",
-        user_id
-    )
-    .map_err(AppError::Database)?;
-    Ok(found.unwrap_or(TrackingWindow {
-        enabled_at: None,
-        oldest_tracked: None,
-    }))
-}
+         GROUP BY us.pixel_tracking_enabled_at";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::DbInner;
+
+    /// `EXPLAIN QUERY PLAN` yields (id, parent, notused, detail); only the last
+    /// column carries the index name.
+    async fn plan_for(db: &Db, sql: &str) -> String {
+        let DbInner::Sqlite(pool) = db.inner() else {
+            unreachable!("connect_in_memory is always SQLite")
+        };
+        let rows: Vec<(i64, i64, i64, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")))
+                .bind(1_i64)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        rows.into_iter().map(|r| r.3).collect::<Vec<_>>().join("\n")
+    }
+
+    /// The open-rate section is the most expensive thing on `/statistics`, and
+    /// only for readers who turned pixel tracking on. Both of its queries bound
+    /// the raw `entry.created_at` per feed, which no index keyed before 0014:
+    /// `idx_entry_feed_sort` keys the *coalesced* timestamp, so it serves the
+    /// join and then reads `created_at` off the table, once per entry in the
+    /// feed, unnarrowed. On a 567 MB / 70k-entry database that was 147,640 and
+    /// 147,933 page misses — roughly 1.2 GB of reads for one render — against
+    /// 141 and 130 once `idx_entry_feed_created_at` covers them.
+    ///
+    /// The plan is the only observable that fails before the index and passes
+    /// after, so it is what this pins.
+    #[tokio::test]
+    async fn test_open_rates_query_is_index_covered() {
+        let db = Db::connect_in_memory().await.unwrap();
+
+        let plan = plan_for(&db, OPEN_RATES_SQL).await;
+        assert!(
+            plan.contains("COVERING INDEX idx_entry_feed_created_at"),
+            "open rates must be served by the index alone, plan was:\n{plan}"
+        );
+
+        let plan = plan_for(&db, TRACKING_WINDOW_SQL).await;
+        assert!(
+            plan.contains("COVERING INDEX idx_entry_feed_created_at"),
+            "the tracking window must be served by the index alone, plan was:\n{plan}"
+        );
+    }
 
     #[test]
     fn percent_is_suppressed_below_the_sample_floor() {

@@ -35,6 +35,7 @@ pub use image_proxy::{
     verify_signature, verify_signature_with_referrer,
 };
 pub use opml::{OpmlFeed, OpmlOutline, export_opml, parse_opml};
+pub use page_cache::{AdminDbStatsCache, new_admin_db_stats_cache};
 pub use readability::{ExtractedContent, fetch_and_extract};
 pub use sanitize::{sanitize_html, sanitize_summary, strip_tracking_params};
 pub use save::{BookmarkData, LinkdingConfig, SaveResult, SaveServicesConfig};

@@ -14,6 +14,9 @@ use serde_json::{Value, json};
 struct TestApp {
     server: TestServer,
     db: Db,
+    /// Held so a test can assert on what the cache is hiding, and on what
+    /// invalidating it reveals.
+    admin_db_stats_cache: services::AdminDbStatsCache,
 }
 
 async fn create_test_app(_name: &str) -> TestApp {
@@ -48,6 +51,7 @@ async fn create_test_app(_name: &str) -> TestApp {
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
+    let admin_db_stats_cache = services::new_admin_db_stats_cache();
     let state = AppState {
         fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
         db: db.clone(),
@@ -56,6 +60,7 @@ async fn create_test_app(_name: &str) -> TestApp {
         summary_cache,
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
+        admin_db_stats_cache: admin_db_stats_cache.clone(),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
@@ -65,7 +70,11 @@ async fn create_test_app(_name: &str) -> TestApp {
 
     let app = create_router(state);
     let server = TestServer::builder().save_cookies().build(app);
-    TestApp { server, db }
+    TestApp {
+        server,
+        db,
+        admin_db_stats_cache,
+    }
 }
 
 async fn setup_users(db: &Db) -> (i64, i64) {
@@ -239,6 +248,50 @@ async fn test_statistics_page_admin_sees_sitewide() {
     assert!(
         body.contains("Reclaimable"),
         "SQLite must render the Reclaimable card"
+    );
+}
+
+/// The site-wide database figures are memoized, so a second render inside the
+/// TTL must not re-run the `COUNT(*)`s behind them. Staleness is the observable
+/// side of that: entries added between the two renders stay hidden until the
+/// slot is dropped.
+#[tokio::test]
+async fn test_admin_database_stats_are_served_from_the_cache() {
+    let mut app = create_test_app("test_stats_db_cache").await;
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let first = app.server.get("/statistics").await;
+    first.assert_status_ok();
+    assert!(
+        first
+            .text()
+            .contains("data-testid=\"stat-db-total-entries\">0<"),
+        "no entries seeded yet"
+    );
+
+    seed_entries(&app.db, admin_id).await;
+
+    let cached = app.server.get("/statistics").await;
+    cached.assert_status_ok();
+    assert!(
+        cached
+            .text()
+            .contains("data-testid=\"stat-db-total-entries\">0<"),
+        "the cached slot must still be serving the pre-seed count"
+    );
+
+    app.admin_db_stats_cache.invalidate_all();
+    app.admin_db_stats_cache.run_pending_tasks();
+
+    let fresh = app.server.get("/statistics").await;
+    fresh.assert_status_ok();
+    assert!(
+        fresh
+            .text()
+            .contains("data-testid=\"stat-db-total-entries\">5<"),
+        "dropping the slot must recompute, body was:\n{}",
+        fresh.text()
     );
 }
 

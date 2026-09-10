@@ -1,0 +1,28 @@
+-- Serve the statistics page's per-user "starred entries in this period" count
+-- from an index alone — the last of the three overview counts still paying a
+-- table lookup per matching row.
+--
+-- `get_personal_overview`'s starred count is 0011's read count with
+-- `starred_at` in place of `read_at`, but it does not inherit 0011's fix. The
+-- planner leads with `idx_entry_starred_sort`, which keys the sort timestamp
+-- only: `feed_id` is not in it, so joining feed to scope by user costs one row
+-- lookup per starred entry, into the widest table in the schema. Measured on a
+-- 567 MB / 70k-entry database with 3% of entries starred, the all-time period
+-- cost 2,278 page misses against 594 and 493 for the covered total and read
+-- counts beside it.
+--
+-- Keying `feed_id` first (for the join) and the sort timestamp second (for the
+-- range) covers both, taking the same query to 23 page misses.
+--
+-- Unlike 0011 and 0012, the index alone is not enough: with starred rows a
+-- small fraction of the table, SQLite costs the `idx_entry_starred_sort` range
+-- as the cheaper plan and does not model the row lookups it then pays. The
+-- companion change rewrites the user scope as `feed_id IN (SELECT ...)`, which
+-- is what puts the planner on this index — the two only work together, which is
+-- why `test_starred_entries_query_is_index_covered` pins the plan.
+--
+-- Partial on `starred_at IS NOT NULL`, matching `idx_entry_starred_sort` and
+-- 0011: proportional to the starred subset, and nothing on the write path for
+-- the unstarred rows that are the overwhelming majority.
+CREATE INDEX IF NOT EXISTS idx_entry_feed_starred_sort
+    ON entry(feed_id, COALESCE(published_at, created_at)) WHERE starred_at IS NOT NULL;

@@ -38,6 +38,7 @@ async fn create_test_server_with_db(config: Config) -> (TestServer, Db) {
         summary_cache,
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
+        admin_db_stats_cache: services::new_admin_db_stats_cache(),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),

@@ -1,0 +1,29 @@
+-- Serve the statistics page's open-rate section from an index alone. This is
+-- the largest single cost on that page by two orders of magnitude, and it only
+-- appears once a reader turns pixel tracking on — which is why 0011 and 0012
+-- did not find it.
+--
+-- `open_rates_by_feed` and `tracking_window` both join entry per feed and bound
+-- `entry.created_at` by the opt-in date. No index keys that pair: the closest,
+-- `idx_entry_feed_sort`, is keyed on `(feed_id, COALESCE(published_at,
+-- created_at))`, and the *coalesced* timestamp is a different column from the
+-- raw `created_at` these two filter on. So the planner uses it for the join
+-- only, and then reads `created_at` off the table row — once per entry in the
+-- feed, with no range to narrow it first, into the widest table in the schema.
+--
+-- Measured on a 567 MB / 70k-entry database with tracking enabled: 147,640 page
+-- misses for the open-rate query and 147,933 for the tracking window, against
+-- fewer than 600 for every other query on the page. Together that is roughly
+-- 1.2 GB of reads for one page render.
+--
+-- `(feed_id, created_at)` covers both — `feed_id` for the join, `created_at` for
+-- the range, and the rowid the index already carries is the `entry.id` the
+-- open-rate query counts and joins `entry_open` on. That takes them to 141 and
+-- 130 misses respectively, without a query change: the planner picks it on its
+-- own, which `test_open_rates_query_is_index_covered` pins.
+--
+-- Not partial, unlike 0011-0013: `created_at` is NOT NULL on every row, so
+-- there is no subset to restrict to. It costs about 2 MB on the database
+-- measured above.
+CREATE INDEX IF NOT EXISTS idx_entry_feed_created_at
+    ON entry(feed_id, created_at);

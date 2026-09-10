@@ -630,6 +630,15 @@ In-memory, per-user caches reduce repeated work on hot read paths:
   runs the handlers carrying those bust hooks.
 - **Page cache** (`page_cache.rs`) — a thin helper around `moka::sync::Cache`
   giving page handlers per-user, TTL-bounded caches for their rendered payloads.
+- **Admin database stats** (`page_cache.rs`, `AdminDbStatsCache`) — the one
+  concrete cache built on that helper, and the only one here that is *not*
+  per-user: the site-wide figures in the `/statistics` admin block are a full
+  `COUNT(*)` over `entry`, another over `entry_tombstone` and the page-count
+  PRAGMAs, none of them scoped to a reader or a period. One slot keyed `()`
+  therefore serves every admin and every period button. Nothing busts it,
+  because nothing a request does moves those numbers — entries arrive from feed
+  sync and leave via the retention worker's prune and `VACUUM` — so the 60 s TTL
+  is the whole invalidation strategy rather than a backstop for one.
 
 ### Progressive Web App
 
