@@ -218,6 +218,20 @@ pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<U
         ))
 }
 
+/// Create the user's settings row with defaults if it is missing, so the
+/// UPDATE that follows always has a row to change.
+async fn ensure_row(db: &Db, user_id: i64) -> AppResult<()> {
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
+         ON CONFLICT(user_id) DO NOTHING",
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
+}
+
 /// Read a user's `SaveServicesConfig`, decrypting it with `key` when the value
 /// was sealed. See [`StoredServices`] for why the unreadable case is its own
 /// arm rather than an empty config.
@@ -254,14 +268,7 @@ pub async fn update_save_services(
         None => json,
     };
 
-    db_execute!(
-        db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
-         ON CONFLICT(user_id) DO NOTHING",
-        user_id,
-        DEFAULT_ENTRIES_PER_PAGE
-    )
-    .map_err(AppError::Database)?;
+    ensure_row(db, user_id).await?;
 
     db_execute!(
         db,
@@ -289,14 +296,7 @@ pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
 
 /// Update theme preference for a user
 pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppResult<()> {
-    db_execute!(
-        db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
-         ON CONFLICT(user_id) DO NOTHING",
-        user_id,
-        DEFAULT_ENTRIES_PER_PAGE
-    )
-    .map_err(AppError::Database)?;
+    ensure_row(db, user_id).await?;
 
     db_execute!(
         db,
@@ -328,14 +328,7 @@ pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> App
         )));
     }
     // Ensure a row exists, then update (mirrors update_theme).
-    db_execute!(
-        db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
-         ON CONFLICT(user_id) DO NOTHING",
-        user_id,
-        DEFAULT_ENTRIES_PER_PAGE
-    )
-    .map_err(AppError::Database)?;
+    ensure_row(db, user_id).await?;
     db_execute!(
         db,
         "UPDATE user_settings SET retention_read_days = $1, updated_at = $2 WHERE user_id = $3",
@@ -376,14 +369,7 @@ pub async fn update_sidebar_prefs(
 ) -> AppResult<()> {
     let sort = parse_sidebar_sort(sort);
     // Ensure a row exists, then update (mirrors update_theme).
-    db_execute!(
-        db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
-         ON CONFLICT(user_id) DO NOTHING",
-        user_id,
-        DEFAULT_ENTRIES_PER_PAGE
-    )
-    .map_err(AppError::Database)?;
+    ensure_row(db, user_id).await?;
     db_execute!(
         db,
         "UPDATE user_settings SET sidebar_sort = $1, sidebar_hide_read = $2, updated_at = $3 WHERE user_id = $4",
@@ -415,14 +401,7 @@ pub async fn update_offline_keep(db: &Db, user_id: i64, keep: i64) -> AppResult<
         )));
     }
     // Ensure a row exists, then update (mirrors update_sidebar_prefs).
-    db_execute!(
-        db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
-         ON CONFLICT(user_id) DO NOTHING",
-        user_id,
-        DEFAULT_ENTRIES_PER_PAGE
-    )
-    .map_err(AppError::Database)?;
+    ensure_row(db, user_id).await?;
     db_execute!(
         db,
         "UPDATE user_settings SET offline_keep = $1, updated_at = $2 WHERE user_id = $3",
@@ -463,14 +442,7 @@ pub async fn get_pixel_tracking_enabled_at(
 /// compare correctly. See `models::entry_open`.
 pub async fn update_pixel_tracking(db: &Db, user_id: i64, enabled: bool) -> AppResult<()> {
     // Ensure a row exists, then update (mirrors update_theme).
-    db_execute!(
-        db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
-         ON CONFLICT(user_id) DO NOTHING",
-        user_id,
-        DEFAULT_ENTRIES_PER_PAGE
-    )
-    .map_err(AppError::Database)?;
+    ensure_row(db, user_id).await?;
     let sql = if enabled {
         "UPDATE user_settings \
          SET pixel_tracking_enabled_at = COALESCE(pixel_tracking_enabled_at, datetime('now')), \

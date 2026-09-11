@@ -50,6 +50,15 @@ pub async fn tag_list(
     Ok(Json(TagListResponse { tags }))
 }
 
+/// Bust the sidebar cache and push the change to open tabs. Busting alone
+/// only helps the next request that renders chrome: a `GReader` client's write
+/// never passes through the browser, so without the event an open tab keeps
+/// showing the pre-change counts until something else reloads it.
+fn sidebar_changed(state: &AppState, user_id: i64) {
+    state.sidebar_cache.bust(user_id);
+    state.events.emit_sidebar(user_id);
+}
+
 // --- edit-tag ---
 
 /// `POST /reader/api/0/edit-tag`
@@ -98,22 +107,16 @@ pub async fn edit_tag(
     // changed, which is what gets reported to the user — not `entry_ids.len()`.
     // Re-marking 40 already-read entries changed nothing, and saying "marked
     // 40" there would be a lie the UI used to tell by counting DOM rows.
+    let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
+    if found.len() != entry_ids.len() {
+        return Err(AppError::EntryNotFound);
+    }
     let affected = if matches!(add_stream, Some(StreamId::Read)) {
-        // Verify all entries belong to the user
-        let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
-        if found.len() != entry_ids.len() {
-            return Err(AppError::EntryNotFound);
-        }
         entry::mark_read_by_ids(&state.db, user_id, &entry_ids).await?
     } else {
-        // Other operations: verify ownership for all ids once, then apply the
-        // tag changes as bulk UPDATEs inside a single transaction (instead of
-        // a per-entry read + UPDATE + re-read loop, untransacted).
-        let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
-        if found.len() != entry_ids.len() {
-            return Err(AppError::EntryNotFound);
-        }
-
+        // Other operations: apply the tag changes as bulk UPDATEs inside a
+        // single transaction (instead of a per-entry read + UPDATE + re-read
+        // loop, untransacted).
         let mut tx = state.db.begin().await?;
         let mut changed = 0_i64;
 
@@ -145,11 +148,7 @@ pub async fn edit_tag(
         changed
     };
 
-    state.sidebar_cache.bust(user_id);
-    // Busting alone only helps the next request that renders chrome. A GReader
-    // client's write never passes through the browser, so without this an open
-    // tab keeps showing the pre-change counts until something else reloads it.
-    state.events.emit_sidebar(user_id);
+    sidebar_changed(&state, user_id);
     Ok(super::ok_with_affected(affected))
 }
 
@@ -211,11 +210,7 @@ pub async fn mark_all_as_read(
         }
     };
 
-    state.sidebar_cache.bust(user_id);
-    // Busting alone only helps the next request that renders chrome. A GReader
-    // client's write never passes through the browser, so without this an open
-    // tab keeps showing the pre-change counts until something else reloads it.
-    state.events.emit_sidebar(user_id);
+    sidebar_changed(&state, user_id);
     Ok(super::ok_with_affected(affected))
 }
 
@@ -254,11 +249,7 @@ pub async fn disable_tag(
         .ok_or(AppError::CategoryNotFound)?;
     category::delete_category(&state.db, cat.id, user_id).await?;
 
-    state.sidebar_cache.bust(user_id);
-    // Busting alone only helps the next request that renders chrome. A GReader
-    // client's write never passes through the browser, so without this an open
-    // tab keeps showing the pre-change counts until something else reloads it.
-    state.events.emit_sidebar(user_id);
+    sidebar_changed(&state, user_id);
     Ok("OK".to_string())
 }
 
@@ -320,10 +311,6 @@ pub async fn rename_tag(
         category::update_name(&state.db, cat.id, user_id, &new_name).await?;
     }
 
-    state.sidebar_cache.bust(user_id);
-    // Busting alone only helps the next request that renders chrome. A GReader
-    // client's write never passes through the browser, so without this an open
-    // tab keeps showing the pre-change counts until something else reloads it.
-    state.events.emit_sidebar(user_id);
+    sidebar_changed(&state, user_id);
     Ok("OK".to_string())
 }

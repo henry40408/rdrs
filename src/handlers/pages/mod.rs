@@ -185,7 +185,9 @@ pub(crate) fn snapshot_now() -> String {
 }
 
 /// Layout context shared by all entries-family pages (`_entries_layout.html`).
-#[derive(Debug, Clone)]
+/// `Default` stands for "this page has none": no breadcrumbs, filter tabs,
+/// search box or sidebar highlight.
+#[derive(Debug, Clone, Default)]
 pub struct EntriesLayoutContext {
     pub active: &'static str,
     pub description: Option<String>,
@@ -520,65 +522,30 @@ pub struct StatisticsQuery {
 /// Returns (`from_str`, `to_str`, `active_period`) as ISO date strings for SQL.
 pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, String) {
     let today = chrono::Utc::now().date_naive();
-    let default_from = today - chrono::Duration::days(7);
+    let days_ago = |n| today - chrono::Duration::days(n);
+    let parse = |s: &Option<String>| {
+        s.as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+    };
 
-    let period = query.period.as_deref().unwrap_or("7d");
-
-    match period {
-        "30d" => {
-            let from = today - chrono::Duration::days(30);
-            (
-                from.to_string(),
-                (today + chrono::Duration::days(1)).to_string(),
-                "30d".to_string(),
-            )
-        }
-        "90d" => {
-            let from = today - chrono::Duration::days(90);
-            (
-                from.to_string(),
-                (today + chrono::Duration::days(1)).to_string(),
-                "90d".to_string(),
-            )
-        }
-        "all" => (
-            "1970-01-01".to_string(),
-            (today + chrono::Duration::days(1)).to_string(),
-            "all".to_string(),
-        ),
-        "custom" => {
-            let from = query
-                .from
-                .as_deref()
-                .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-            let to = query
-                .to
-                .as_deref()
-                .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-
-            match (from, to) {
-                (Some(f), Some(t)) if f <= t => {
-                    let max_to = f + chrono::Duration::days(365);
-                    let clamped_to = if t > max_to { max_to } else { t };
-                    (
-                        f.to_string(),
-                        (clamped_to + chrono::Duration::days(1)).to_string(),
-                        "custom".to_string(),
-                    )
-                }
-                _ => (
-                    default_from.to_string(),
-                    (today + chrono::Duration::days(1)).to_string(),
-                    "7d".to_string(),
-                ),
-            }
-        }
-        _ => (
-            default_from.to_string(),
-            (today + chrono::Duration::days(1)).to_string(),
-            "7d".to_string(),
-        ),
-    }
+    // (first day, last day, period); the SQL range is end-exclusive, hence the
+    // day added to `to` below. A custom range is capped at a year, and one
+    // that is missing, malformed or backwards falls back to the last 7 days.
+    let (from, to, period) = match query.period.as_deref().unwrap_or("7d") {
+        "30d" => (days_ago(30), today, "30d"),
+        "90d" => (days_ago(90), today, "90d"),
+        "all" => (chrono::NaiveDate::default(), today, "all"),
+        "custom" => match (parse(&query.from), parse(&query.to)) {
+            (Some(f), Some(t)) if f <= t => (f, t.min(f + chrono::Duration::days(365)), "custom"),
+            _ => (days_ago(7), today, "7d"),
+        },
+        _ => (days_ago(7), today, "7d"),
+    };
+    (
+        from.to_string(),
+        (to + chrono::Duration::days(1)).to_string(),
+        period.to_string(),
+    )
 }
 
 /// The page the service worker hands back when a navigation cannot reach the
@@ -850,24 +817,14 @@ pub async fn unread_page(
 
     let entries_layout = EntriesLayoutContext {
         active: "unread",
-        description: None,
         empty_title: "All caught up",
         empty_detail: "You've read every unread entry — new items land here as your feeds refresh.",
         path: "/".to_string(),
-        show_tab_bar: false,
         mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
-        breadcrumb_items: vec![],
-        header_feed_icon_id: None,
-        active_category_id: None,
-        active_feed_id: None,
-        filter_tabs: None,
-        status_filter: None,
         show_mark_above: true,
         onboarding: no_feeds,
         snapshot_at: snapshot_now(),
-        search: None,
-        search_action: None,
-        matching_count: None,
+        ..Default::default()
     };
 
     // List-refresh fragment (fragment=1, no cursor): re-render page 1 in place.
@@ -1572,24 +1529,13 @@ pub async fn entries_page(
             csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "all",
-                description: None,
                 empty_title: "Nothing to read yet",
                 empty_detail: "Subscribe to a few feeds and their entries will gather here.",
                 path: "/entries".to_string(),
                 show_tab_bar: true,
                 mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
-                breadcrumb_items: vec![],
-                header_feed_icon_id: None,
-                active_category_id: None,
-                active_feed_id: None,
-                filter_tabs: None,
-                status_filter: None,
-                show_mark_above: false,
-                onboarding: false,
                 snapshot_at: snapshot_now(),
-                search: None,
-                search_action: None,
-                matching_count: None,
+                ..Default::default()
             },
         },
     )
@@ -1767,24 +1713,12 @@ pub async fn read_entries_page(
             csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "read",
-                description: None,
                 empty_title: "No read entries yet",
                 empty_detail: "Entries stay here once you've opened and read them.",
                 path: "/entries/read".to_string(),
                 show_tab_bar: true,
-                mark_as_read_scope: None,
-                breadcrumb_items: vec![],
-                header_feed_icon_id: None,
-                active_category_id: None,
-                active_feed_id: None,
-                filter_tabs: None,
-                status_filter: None,
-                show_mark_above: false,
-                onboarding: false,
                 snapshot_at: snapshot_now(),
-                search: None,
-                search_action: None,
-                matching_count: None,
+                ..Default::default()
             },
         },
     )
@@ -1860,24 +1794,12 @@ pub async fn starred_entries_page(
             csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "starred",
-                description: None,
                 empty_title: "No starred entries",
                 empty_detail: "Star an entry and it'll wait for you here.",
                 path: "/entries/starred".to_string(),
                 show_tab_bar: true,
-                mark_as_read_scope: None,
-                breadcrumb_items: vec![],
-                header_feed_icon_id: None,
-                active_category_id: None,
-                active_feed_id: None,
-                filter_tabs: None,
-                status_filter: None,
-                show_mark_above: false,
-                onboarding: false,
                 snapshot_at: snapshot_now(),
-                search: None,
-                search_action: None,
-                matching_count: None,
+                ..Default::default()
             },
         },
     )
@@ -1929,7 +1851,6 @@ pub async fn offline_entries_page(
             csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "offline",
-                description: None,
                 empty_title: if keep == user_settings::OFFLINE_KEEP_OFF {
                     "Offline reading is off"
                 } else {
@@ -1941,20 +1862,8 @@ pub async fn offline_entries_page(
                     "Entries are mirrored while you are online. Come back once something has synced."
                 },
                 path: "/entries/offline".to_string(),
-                show_tab_bar: false,
-                mark_as_read_scope: None,
-                breadcrumb_items: vec![],
-                header_feed_icon_id: None,
-                active_category_id: None,
-                active_feed_id: None,
-                filter_tabs: None,
-                status_filter: None,
-                show_mark_above: false,
-                onboarding: false,
                 snapshot_at: snapshot_now(),
-                search: None,
-                search_action: None,
-                matching_count: None,
+                ..Default::default()
             },
         },
     )
@@ -2030,24 +1939,12 @@ pub async fn summarized_entries_page(
             csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "summarized",
-                description: None,
                 empty_title: "No summaries yet",
                 empty_detail: "Entries you summarize are collected on this page.",
                 path: "/entries/summarized".to_string(),
                 show_tab_bar: true,
-                mark_as_read_scope: None,
-                breadcrumb_items: vec![],
-                header_feed_icon_id: None,
-                active_category_id: None,
-                active_feed_id: None,
-                filter_tabs: None,
-                status_filter: None,
-                show_mark_above: false,
-                onboarding: false,
                 snapshot_at: snapshot_now(),
-                search: None,
-                search_action: None,
-                matching_count: None,
+                ..Default::default()
             },
         },
     )
@@ -2193,16 +2090,12 @@ pub async fn category_entries_page(
 
     let entries_layout = EntriesLayoutContext {
         active: "",
-        description: None,
         empty_title: "Nothing in this category",
         empty_detail: "The feeds in this category haven't brought in any entries yet.",
         path,
-        show_tab_bar: false,
         mark_as_read_scope,
         breadcrumb_items,
-        header_feed_icon_id: None,
         active_category_id: Some(id),
-        active_feed_id: None,
         filter_tabs,
         status_filter,
         // Hidden while a scoped search is active: "Mark Above as Read" marks the
@@ -2210,11 +2103,11 @@ pub async fn category_entries_page(
         // indistinguishable at a glance from "Mark N matching as Read" above it,
         // while one of the two reads as "everything older than here".
         show_mark_above: search.is_none(),
-        onboarding: false,
         snapshot_at: snapshot_now(),
         search: search.clone(),
         search_action: Some(format!("/categories/{id}/entries")),
         matching_count,
+        ..Default::default()
     };
 
     // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
@@ -2520,11 +2413,9 @@ pub async fn feed_entries_page(
 
     let entries_layout = EntriesLayoutContext {
         active: "",
-        description: None,
         empty_title: "Nothing in this feed",
         empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
         path,
-        show_tab_bar: false,
         mark_as_read_scope,
         breadcrumb_items,
         header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
@@ -2534,11 +2425,11 @@ pub async fn feed_entries_page(
         status_filter,
         // See the category page: the matching button owns a filtered list.
         show_mark_above: search.is_none(),
-        onboarding: false,
         snapshot_at: snapshot_now(),
         search: search.clone(),
         search_action: Some(format!("/feeds/{id}/entries")),
         matching_count,
+        ..Default::default()
     };
 
     // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
