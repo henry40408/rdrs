@@ -13,6 +13,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Test: `cargo nextest run` (the project uses nextest, not `cargo test`); one
   test: `cargo nextest run <substring>`.
 - Coverage (as CI runs it): `RDRS_FAST_HASH=1 cargo llvm-cov nextest --lcov --output-path lcov.info`.
+- Entry-list benchmark: `RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- --label before`
+  (`--entries`, `--iterations`). Server-side p50/p90 per list route, in-process
+  over a seeded in-memory database — the baseline for changes to the list
+  handlers or entry queries; `dom-bench` below covers the browser side.
 
 `RDRS_FAST_HASH=1` swaps Argon2 to minimal-cost params so the auth-heavy test
 suite isn't dominated by password hashing. Use it for local test runs; **never**

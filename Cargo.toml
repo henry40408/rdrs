@@ -111,6 +111,10 @@ tempfile = "3.26.0"
 http-body-util = "0.1"
 wiremock = "0.6"
 
+[[bench]]
+name = "entry_pages"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
