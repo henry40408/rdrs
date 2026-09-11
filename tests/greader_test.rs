@@ -3,51 +3,15 @@
 //! mark-all-as-read and unread-count.
 
 mod common;
-use common::default_test_config;
-
-use std::sync::Arc;
+use common::{TestApp, create_test_app, default_test_config};
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use rdrs::models::{category, entry, feed};
-use rdrs::{AppState, Config, Db, auth, create_router, services};
+use rdrs::{Db, auth, create_router};
 use serde_json::json;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-    state: AppState,
-}
-
-async fn create_test_app(config: Config) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state.clone());
-    let server = TestServer::builder().save_cookies().build(app);
-
-    TestApp { server, db, state }
-}
 
 /// Register and login a user via session cookie. Returns `user_id`.
 ///
@@ -65,22 +29,7 @@ async fn setup_authenticated_user(app: &mut TestApp) -> i64 {
         .await
         .assert_status(StatusCode::CREATED);
 
-    let login = app
-        .server
-        .post("/api/session")
-        .json(&json!({
-            "username": "testuser",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-    login.assert_status_ok();
-
-    let csrf = login
-        .cookie(rdrs::middleware::csrf::CSRF_COOKIE_NAME)
-        .value()
-        .to_string();
-    app.server
-        .add_header(rdrs::middleware::csrf::CSRF_HEADER, csrf);
+    common::login(&mut app.server, "testuser").await;
 
     rdrs::models::user::find_by_username(&app.db, "testuser")
         .await
@@ -1139,30 +1088,9 @@ async fn test_unread_count_with_entries() {
 
 #[tokio::test]
 async fn test_unauthenticated_access_denied() {
-    let config = default_test_config();
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db,
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state);
-    let server = TestServer::builder().build(app);
+    let server = TestServer::new(create_router(
+        common::test_state(default_test_config()).await,
+    ));
 
     // All endpoints should be unauthorized without auth
     let response = server.get("/reader/api/0/subscription/list").await;

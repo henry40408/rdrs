@@ -2,21 +2,14 @@
 //! page handlers.
 
 mod common;
-use common::{default_test_config, flash_text};
-
-use std::sync::Arc;
+use common::{TestApp, create_test_app, default_test_config, flash_text};
 
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use axum_test::multipart::{MultipartForm, Part};
 use chrono::{Duration, Utc};
-use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
+use rdrs::{Config, Db, Role, auth};
 use serde_json::json;
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-}
 
 /// Static asset cache-control depends on whether the binary was built from a
 /// clean git tree. PR-9 switched to `no-cache` for `-dirty` builds so dev
@@ -30,57 +23,7 @@ fn expected_static_cache_control() -> &'static str {
 }
 
 async fn create_test_server(config: Config) -> TestServer {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db,
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state);
-    TestServer::builder().save_cookies().build(app)
-}
-
-async fn create_test_app(config: Config) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app);
-
-    TestApp { server, db }
+    create_test_app(config).await.server
 }
 
 /// Helper to register and login a user
@@ -93,16 +36,7 @@ async fn setup_authenticated_user(server: &mut TestServer) {
         }))
         .await
         .assert_status(StatusCode::CREATED);
-
-    let login = server
-        .post("/api/session")
-        .json(&json!({
-            "username": "testuser",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-    login.assert_status_ok();
-    common::apply_csrf(server, &login);
+    common::login(server, "testuser").await;
 }
 
 /// Helper to create a category via `GReader` rename-tag (s==dest creates idempotently)
@@ -3111,7 +3045,7 @@ async fn test_update_linkding_form() {
 /// legible in the database, and must still come back out through the app.
 #[tokio::test]
 async fn a_saved_linkding_token_is_encrypted_in_the_database() {
-    let mut app = create_test_app_named(default_test_config(), "linkding_token_encrypted").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let response = app
@@ -4179,39 +4113,9 @@ async fn test_import_opml_form_succeeds() {
 
 // --- GET /entries/{id}/fragment — PR-10 T3 ---
 
-/// Isolated app factory used by the fragment tests so they don't share the
-/// `test_handlers_app` `SQLite` in-memory database with the rest of the suite.
-async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app);
-
-    TestApp { server, db }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_renders_reading_pane() {
-    let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_happy").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4347,7 +4251,7 @@ async fn test_entry_fragment_renders_reading_pane() {
 /// `fetch()` the swap helper would have sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_redirects_on_top_level_navigation() {
-    let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4437,8 +4341,7 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
 /// and the entry would never become read at all.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_speculative_load_does_not_mark_read() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_entry_fragment_speculative").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4576,8 +4479,7 @@ async fn test_entry_fragment_speculative_load_does_not_mark_read() {
 /// `app.js` is stale-cached and clicks fall through to navigation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_document_nav_preserves_referer_scope() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_entry_fragment_referer_scope").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4619,7 +4521,7 @@ async fn test_entry_fragment_document_nav_preserves_referer_scope() {
 /// mirroring miniflux's media proxy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_proxy_image_304_on_if_none_match() {
-    let app = create_test_app_named(default_test_config(), "test_proxy_image_inm").await;
+    let app = create_test_app(default_test_config()).await;
 
     // Signed with the test config's secret: the 304 short-circuit sits behind
     // signature verification, so an unsigned `s` never reaches it.
@@ -4649,7 +4551,7 @@ async fn test_proxy_image_304_on_if_none_match() {
 /// signed and get back a cacheable 304 whose `ETag` echoed their own input.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn proxy_image_304_requires_a_valid_signature() {
-    let app = create_test_app_named(default_test_config(), "test_proxy_image_304_unsigned").await;
+    let app = create_test_app(default_test_config()).await;
 
     for signature in ["sometoken", "*"] {
         let response = app
@@ -4670,7 +4572,7 @@ async fn proxy_image_304_requires_a_valid_signature() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_404_for_other_user() {
-    let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_404").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4736,7 +4638,7 @@ async fn test_entry_fragment_404_for_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_star_entry_form_is_idempotent_mark_starred() {
-    let mut app = create_test_app_named(default_test_config(), "test_star_entry_form").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4824,7 +4726,7 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
-    let mut app = create_test_app_named(default_test_config(), "test_unstar_entry_form").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4907,7 +4809,7 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_read_entry_form_is_idempotent_mark_read() {
-    let mut app = create_test_app_named(default_test_config(), "test_read_entry_form").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4992,7 +4894,7 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_entry_form_is_idempotent_mark_unread() {
-    let mut app = create_test_app_named(default_test_config(), "test_unread_entry_form").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -5083,7 +4985,7 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_star_entry_form_404_for_other_user() {
-    let mut app = create_test_app_named(default_test_config(), "test_star_entry_form_404").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -5159,7 +5061,7 @@ async fn test_star_entry_form_404_for_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_read_entry_form_404_for_other_user() {
-    let mut app = create_test_app_named(default_test_config(), "test_read_entry_form_404").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -5236,7 +5138,7 @@ async fn test_read_entry_form_404_for_other_user() {
 // externally-fetched article body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_summarize_entry_form_renders_summary_pending_fragment() {
-    let mut app = create_test_app_named(default_test_config(), "test_summarize_entry_form").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -5309,7 +5211,7 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entries_load_more_returns_row_fragments() {
-    let mut app = create_test_app_named(default_test_config(), "test_load_more_fragment").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -5406,7 +5308,7 @@ async fn test_entries_load_more_returns_row_fragments() {
 
 #[tokio::test]
 async fn test_edit_feed_form_empty_url() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_empty_url").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
     let (cat_id, feed_id) =
         insert_test_feed(&app, "Tech", "https://empty-url-test.example.com/feed.xml").await;
@@ -5447,7 +5349,7 @@ async fn test_edit_feed_form_empty_url() {
 /// it every cycle.
 #[tokio::test]
 async fn edit_feed_form_refuses_a_private_url() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_private_url").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
     let (cat_id, feed_id) = insert_test_feed(
         &app,
@@ -5497,7 +5399,7 @@ async fn edit_feed_form_refuses_a_private_url() {
 
 #[tokio::test]
 async fn test_edit_feed_form_not_found() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_not_found").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
     let (cat_id, _) =
         insert_test_feed(&app, "Tech", "https://notfound-test.example.com/feed.xml").await;
@@ -5523,7 +5425,7 @@ async fn test_edit_feed_form_not_found() {
 
 #[tokio::test]
 async fn test_edit_feed_form_other_users_feed() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_other_user_feed").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let other_user = rdrs::models::user::create_user(&app.db, "other_editfeed", "x", Role::User)
@@ -5577,8 +5479,7 @@ async fn test_edit_feed_form_other_users_feed() {
 
 #[tokio::test]
 async fn test_edit_feed_form_category_not_owned() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_edit_feed_cat_not_owned").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
     let (cat_id, feed_id) = insert_test_feed(
         &app,
@@ -5629,7 +5530,7 @@ async fn test_edit_feed_form_category_not_owned() {
 /// current value into the input, so a blank submission is deliberate.
 #[tokio::test]
 async fn test_edit_feed_form_blank_http_settings_clear_them() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_clear_ua").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let (cat_id, feed_id) =
@@ -5691,7 +5592,7 @@ async fn test_edit_feed_form_blank_http_settings_clear_them() {
 /// unchanged, so an ordinary "save" from the form never disturbs the overrides.
 #[tokio::test]
 async fn test_edit_feed_form_keeps_resubmitted_http_settings() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_keep_ua").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let (cat_id, feed_id) =
@@ -5743,7 +5644,7 @@ async fn test_edit_feed_form_keeps_resubmitted_http_settings() {
 /// future handler, a script, or a narrower form from posting a subset.
 #[tokio::test]
 async fn test_edit_feed_form_omitted_fields_are_left_alone() {
-    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_omitted").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let (_cat_a, feed_id) =
@@ -5827,7 +5728,7 @@ async fn test_edit_feed_form_omitted_fields_are_left_alone() {
 
 #[tokio::test]
 async fn test_delete_feed_form_not_found() {
-    let mut app = create_test_app_named(default_test_config(), "test_delete_feed_not_found").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let response = app.server.post("/feeds/999999/delete").await;
@@ -5838,8 +5739,7 @@ async fn test_delete_feed_form_not_found() {
 
 #[tokio::test]
 async fn test_import_opml_form_invalid() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_import_opml_invalid_form").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let invalid_xml = b"<not valid opml";
@@ -5860,8 +5760,7 @@ async fn test_import_opml_form_invalid() {
 
 #[tokio::test]
 async fn test_import_opml_form_duplicate_skipped() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_import_opml_dup_skipped").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     // Pre-seed a feed with a specific URL in a specific category.
@@ -5908,8 +5807,7 @@ async fn test_import_opml_form_duplicate_skipped() {
 /// uploading a file they are not sure about.
 #[tokio::test]
 async fn test_import_opml_form_flash_reports_counts() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_import_opml_flash_counts").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let existing = "https://already.example.com/feed.xml";
@@ -5955,7 +5853,7 @@ async fn test_create_feed_form_success() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let mut app = create_test_app_named(default_test_config(), "test_create_feed_success").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let cat_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM category LIMIT 1").unwrap();
@@ -5998,7 +5896,7 @@ async fn test_create_feed_form_duplicate() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let mut app = create_test_app_named(default_test_config(), "test_create_feed_dup").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let mock_server = MockServer::start().await;
@@ -6045,7 +5943,7 @@ async fn test_refresh_feed_form_success() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let mut app = create_test_app_named(default_test_config(), "test_refresh_feed_success").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let mock_server = MockServer::start().await;
@@ -6086,7 +5984,7 @@ async fn test_fetch_metadata_form_success() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let mut app = create_test_app_named(default_test_config(), "test_fetch_metadata_success").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let mock_server = MockServer::start().await;
@@ -6149,7 +6047,7 @@ async fn events_endpoint_requires_auth() {
 
 #[tokio::test]
 async fn test_authenticated_page_is_no_store() {
-    let mut app = create_test_app_named(default_test_config(), "test_authenticated_no_store").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     let response = app.server.get("/").await;
@@ -6200,8 +6098,7 @@ async fn test_image_proxy_keeps_upstream_cache_control() {
     // even on an authenticated request, where rule 3 would otherwise apply. The
     // ETag/If-None-Match short-circuit is a real SSRF-free path carrying the
     // handler's own header, so it stands in for the upstream case.
-    let mut app =
-        create_test_app_named(default_test_config(), "test_proxy_keeps_upstream_cc").await;
+    let mut app = create_test_app(default_test_config()).await;
     // Authenticated on purpose: this is the case where the cache_control
     // middleware could plausibly override the proxy's own header (rule 1 —
     // "response already has Cache-Control" — must win over rule 3 — "request
@@ -6235,11 +6132,7 @@ async fn test_image_proxy_keeps_upstream_cache_control() {
 // receive a live session/CSRF cookie riding along on it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn authenticated_cacheable_response_carries_no_set_cookie() {
-    let mut app = create_test_app_named(
-        default_test_config(),
-        "authenticated_cacheable_response_carries_no_set_cookie",
-    )
-    .await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
     // Signed with the test config's secret: the 304 short-circuit sits behind

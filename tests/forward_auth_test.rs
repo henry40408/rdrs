@@ -2,13 +2,12 @@ mod common;
 use common::{apply_csrf, default_test_config};
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum_test::TestServer;
 use rdrs::{
-    AppState, Config, Db, auth, config::parse_trusted_networks, create_router,
-    middleware::forward_auth::forward_auth_identity, services,
+    Config, Db, config::parse_trusted_networks, create_router,
+    middleware::forward_auth::forward_auth_identity,
 };
 use serde_json::json;
 
@@ -70,32 +69,14 @@ fn test_forward_auth_identity() {
 /// is inside the trusted network. Returns the backing `Db` so callers can seed
 /// and inspect users directly.
 async fn create_server(mut mutate: impl FnMut(&mut Config)) -> (TestServer, Db) {
-    let db = Db::connect_in_memory().await.unwrap();
-
     let mut config = default_test_config();
     config.auth_proxy_header = "Remote-User".to_string();
     config.auth_proxy_groups_header = "Remote-Groups".to_string();
     config.auth_proxy_admin_group = "admins".to_string();
     mutate(&mut config);
 
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _rx) = services::create_summary_channel(10);
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
+    let state = common::test_state(config).await;
+    let db = state.db.clone();
     let app = create_router(state).into_make_service_with_connect_info::<SocketAddr>();
     let server = TestServer::builder()
         .http_transport()

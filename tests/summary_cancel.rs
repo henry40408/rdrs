@@ -6,49 +6,11 @@
 //! - In-flight token is cancelled and removed from the registry
 
 mod common;
-use common::default_test_config;
+use common::{create_test_app, default_test_config, login_with as login};
 
-use std::sync::Arc;
-
-use axum_test::TestServer;
 use rdrs::models::{category, entry, feed, user};
-use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
-use serde_json::json;
+use rdrs::{Db, Role, auth};
 use tokio_util::sync::CancellationToken;
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-    state: AppState,
-}
-
-async fn create_test_app(config: Config, _db_name: &str) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state.clone());
-    let server = TestServer::builder().save_cookies().build(app);
-
-    TestApp { server, db, state }
-}
 
 /// Seed a user, category, feed, and one entry. Returns (`user_id`, `entry_id`).
 async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64, i64) {
@@ -90,23 +52,11 @@ async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64,
     (user.id, e.id)
 }
 
-async fn login(server: &mut TestServer, username: &str, password: &str) {
-    let login = server
-        .post("/api/session")
-        .json(&json!({
-            "username": username,
-            "password": password
-        }))
-        .await;
-    login.assert_status_ok();
-    common::apply_csrf(server, &login);
-}
-
 // --- Case 1: Failed-summary clear deletes the record ---
 
 #[tokio::test]
 async fn test_cancel_clears_failed_summary() {
-    let mut app = create_test_app(default_test_config(), "test_cancel_clears_failed").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (uid, eid) = setup_user_with_entry(&app.db, "user1", "vulture-mango-77-quilt").await;
     login(&mut app.server, "user1", "vulture-mango-77-quilt").await;
 
@@ -134,7 +84,7 @@ async fn test_cancel_clears_failed_summary() {
 
 #[tokio::test]
 async fn test_cancel_non_owner_returns_404() {
-    let mut app = create_test_app(default_test_config(), "test_cancel_non_owner").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     let (_uid1, eid) = setup_user_with_entry(&app.db, "owner", "vulture-mango-77-quilt").await;
 
@@ -156,7 +106,7 @@ async fn test_cancel_non_owner_returns_404() {
 
 #[tokio::test]
 async fn summarize_emits_pending_event() {
-    let mut app = create_test_app(default_test_config(), "test_summarize_emits_pending").await;
+    let mut app = create_test_app(default_test_config()).await;
     let mut sub = app.state.events.subscribe();
     let (uid, eid) = setup_user_with_entry(&app.db, "pendinguser", "vulture-mango-77-quilt").await;
     login(&mut app.server, "pendinguser", "vulture-mango-77-quilt").await;
@@ -184,7 +134,7 @@ async fn summarize_emits_pending_event() {
 
 #[tokio::test]
 async fn test_cancel_removes_inflight_token() {
-    let mut app = create_test_app(default_test_config(), "test_cancel_inflight_token").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (uid, eid) = setup_user_with_entry(&app.db, "tokenuser", "vulture-mango-77-quilt").await;
     login(&mut app.server, "tokenuser", "vulture-mango-77-quilt").await;
 

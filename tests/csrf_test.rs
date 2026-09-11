@@ -9,7 +9,7 @@ use common::default_test_config;
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{AppState, Config, Db, auth, create_router, services};
+use rdrs::{Config, create_router};
 use std::sync::{Arc, Mutex};
 
 async fn test_server() -> TestServer {
@@ -30,26 +30,7 @@ async fn test_server_with_config_saving_cookies(config: Config) -> TestServer {
 }
 
 async fn build_router(config: Config) -> axum::Router {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _rx) = services::create_summary_channel(10);
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db,
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-    create_router(state)
+    create_router(common::test_state(config).await)
 }
 
 #[tokio::test]

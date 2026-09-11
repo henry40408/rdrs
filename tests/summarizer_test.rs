@@ -1,58 +1,19 @@
 mod common;
-use common::default_test_config;
+use common::{TestApp, create_test_app, default_test_config};
 
-use std::sync::Arc;
-
-use axum_test::TestServer;
 use rdrs::models::user_settings;
 use rdrs::services::KagiConfig;
 use rdrs::services::save::SaveServicesConfig;
-use rdrs::{AppState, Config, Db, Role, auth, create_router, models::user, services};
+use rdrs::{Role, auth, models::user};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-}
-
-async fn create_test_app(config: Config) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _rx) = services::create_summary_channel(10);
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-    let server = TestServer::builder()
-        .save_cookies()
-        .build(create_router(state));
-    TestApp { server, db }
-}
 
 async fn login(app: &mut TestApp, username: &str) -> i64 {
     let hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let u = user::create_user(&app.db, username, &hash, Role::User)
         .await
         .unwrap();
-    let login = app
-        .server
-        .post("/api/session")
-        .json(&serde_json::json!({"username": username, "password": "vulture-mango-77-quilt"}))
-        .await;
-    common::apply_csrf(&mut app.server, &login);
+    common::login(&mut app.server, username).await;
     u.id
 }
 
