@@ -224,7 +224,7 @@ async fn test_statistics_page_masquerade_hides_admin_section() {
 }
 
 #[tokio::test]
-async fn test_statistics_page_embeds_sidebar_bootstrap() {
+async fn test_statistics_page_embeds_sidebar_and_renders_counts() {
     let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
@@ -238,14 +238,6 @@ async fn test_statistics_page_embeds_sidebar_bootstrap() {
     assert!(body.contains("\"is_admin\":true"));
     // Categories from seed appear in the bootstrap payload.
     assert!(body.contains("\"name\":\"Tech\""));
-}
-
-#[tokio::test]
-async fn test_statistics_page_renders_overview_counts() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (admin_id, _user_id) = setup_users(&app.db).await;
-    seed_entries(&app.db, admin_id).await;
-    login(&mut app.server, "admin").await;
 
     let body = common::get_ok(&app.server, "/statistics?period=all").await;
     // Seeded data: 5 total entries, 3 read, 1 starred.

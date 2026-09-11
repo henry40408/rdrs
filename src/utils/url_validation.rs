@@ -367,53 +367,38 @@ mod tests {
     }
 
     #[test]
-    fn policy_allows_listed_cidr() {
-        let policy = FetchPolicy::parse("192.168.0.0/16, 10.0.0.0/8").unwrap();
-        assert!(
-            policy
-                .validate(&Url::parse("http://192.168.1.5/feed").unwrap())
-                .is_ok()
-        );
-        assert!(
-            policy
-                .validate(&Url::parse("http://10.1.2.3/feed").unwrap())
-                .is_ok()
-        );
-        assert!(
-            policy
-                .validate(&Url::parse("http://172.16.0.1/feed").unwrap())
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn policy_allows_listed_hostname() {
-        let policy = FetchPolicy::parse("nas.local,localhost").unwrap();
-        assert!(
-            policy
-                .validate(&Url::parse("http://nas.local/feed.xml").unwrap())
-                .is_ok()
-        );
-        assert!(
-            policy
-                .validate(&Url::parse("http://localhost:3000/feed.xml").unwrap())
-                .is_ok()
-        );
-        assert!(
-            policy
-                .validate(&Url::parse("http://other.local/feed.xml").unwrap())
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn policy_allows_listed_ipv6() {
-        let policy = FetchPolicy::parse("::1").unwrap();
-        assert!(
-            policy
-                .validate(&Url::parse("http://[::1]:8080/feed").unwrap())
-                .is_ok()
-        );
+    fn policy_allows_listed_cidrs_hostnames_and_ipv6() {
+        for (list, allowed, refused) in [
+            (
+                "192.168.0.0/16, 10.0.0.0/8",
+                &["http://192.168.1.5/feed", "http://10.1.2.3/feed"][..],
+                &["http://172.16.0.1/feed"][..],
+            ),
+            (
+                "nas.local,localhost",
+                &[
+                    "http://nas.local/feed.xml",
+                    "http://localhost:3000/feed.xml",
+                ],
+                &["http://other.local/feed.xml"],
+            ),
+            ("::1", &["http://[::1]:8080/feed"], &[]),
+            ("  ,, 127.0.0.1 ,", &["http://127.0.0.1/feed"], &[]),
+        ] {
+            let policy = FetchPolicy::parse(list).unwrap();
+            for url in allowed {
+                assert!(
+                    policy.validate(&Url::parse(url).unwrap()).is_ok(),
+                    "{list}: {url}"
+                );
+            }
+            for url in refused {
+                assert!(
+                    policy.validate(&Url::parse(url).unwrap()).is_err(),
+                    "{list}: {url}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -436,15 +421,5 @@ mod tests {
     fn policy_parse_rejects_malformed_entries() {
         assert!(FetchPolicy::parse("192.168.0.0/99").is_err());
         assert!(FetchPolicy::parse("not a host").is_err());
-    }
-
-    #[test]
-    fn policy_parse_ignores_blank_entries() {
-        let policy = FetchPolicy::parse("  ,, 127.0.0.1 ,").unwrap();
-        assert!(
-            policy
-                .validate(&Url::parse("http://127.0.0.1/feed").unwrap())
-                .is_ok()
-        );
     }
 }

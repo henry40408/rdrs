@@ -216,38 +216,20 @@ mod tests {
     }
 
     #[test]
-    fn does_not_repeat_an_existing_cookie_vary() {
-        let response = response_with_header(header::VARY, "Accept-Encoding, Cookie");
-
-        let response = apply(true, response);
-
-        assert_eq!(
-            response.headers().get(header::VARY).unwrap(),
+    fn leaves_a_vary_that_already_covers_cookie_alone() {
+        for vary in [
+            // Cookie is already covered; appending it again is pure noise.
             "Accept-Encoding, Cookie",
-            "Cookie is already covered; appending it again is pure noise"
-        );
-    }
-
-    #[test]
-    fn matches_an_existing_cookie_vary_case_insensitively() {
-        // Field values are compared case-insensitively by caches, so `cookie`
-        // must count as already covered.
-        let response = response_with_header(header::VARY, "cookie");
-
-        let response = apply(true, response);
-
-        assert_eq!(response.headers().get(header::VARY).unwrap(), "cookie");
-    }
-
-    #[test]
-    fn leaves_a_wildcard_vary_alone() {
-        // `Vary: *` is already the strongest possible statement; narrowing it
-        // to `*, Cookie` adds nothing.
-        let response = response_with_header(header::VARY, "*");
-
-        let response = apply(true, response);
-
-        assert_eq!(response.headers().get(header::VARY).unwrap(), "*");
+            // Field values are compared case-insensitively by caches, so
+            // `cookie` must count as already covered.
+            "cookie",
+            // `Vary: *` is already the strongest possible statement; narrowing
+            // it to `*, Cookie` adds nothing.
+            "*",
+        ] {
+            let response = apply(true, response_with_header(header::VARY, vary));
+            assert_eq!(response.headers().get(header::VARY).unwrap(), vary);
+        }
     }
 
     #[test]

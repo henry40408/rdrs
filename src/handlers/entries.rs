@@ -1225,36 +1225,29 @@ mod tests {
     }
 
     #[test]
-    fn document_redirect_preserves_unread_scope() {
-        let h = with_referer("https://rdrs.example/");
-        assert_eq!(fragment_document_redirect(&h, 42), "/?entry=42");
-    }
-
-    #[test]
-    fn document_redirect_preserves_feed_scope_and_filters() {
-        let h = with_referer("https://rdrs.example/feeds/7/entries?status=unread");
-        assert_eq!(
-            fragment_document_redirect(&h, 42),
-            "/feeds/7/entries?status=unread&entry=42"
-        );
-    }
-
-    #[test]
-    fn document_redirect_preserves_category_scoped_search() {
-        let h = with_referer("https://rdrs.example/categories/3/entries?q=rust");
-        assert_eq!(
-            fragment_document_redirect(&h, 9),
-            "/categories/3/entries?q=rust&entry=9"
-        );
-    }
-
-    #[test]
-    fn document_redirect_replaces_stale_entry_param() {
-        let h = with_referer("https://rdrs.example/entries/starred?entry=1");
-        assert_eq!(
-            fragment_document_redirect(&h, 2),
-            "/entries/starred?entry=2"
-        );
+    fn document_redirect_keeps_the_list_scope_and_filters() {
+        for (referer, id, expected) in [
+            ("https://rdrs.example/", 42, "/?entry=42"),
+            (
+                "https://rdrs.example/feeds/7/entries?status=unread",
+                42,
+                "/feeds/7/entries?status=unread&entry=42",
+            ),
+            (
+                "https://rdrs.example/categories/3/entries?q=rust",
+                9,
+                "/categories/3/entries?q=rust&entry=9",
+            ),
+            // A stale `entry` param is replaced, not duplicated.
+            (
+                "https://rdrs.example/entries/starred?entry=1",
+                2,
+                "/entries/starred?entry=2",
+            ),
+        ] {
+            let h = with_referer(referer);
+            assert_eq!(fragment_document_redirect(&h, id), expected, "{referer}");
+        }
     }
 
     #[test]

@@ -13,19 +13,26 @@ async fn create_test_server(config: Config) -> TestServer {
 }
 
 #[tokio::test]
-async fn test_login_page_gzip_when_accepted() {
+async fn test_login_page_compressed_with_the_accepted_encoding() {
     let server = create_test_server(default_test_config()).await;
 
-    let response = server
-        .get("/login")
-        .add_header(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip"))
-        .await;
+    for encoding in ["gzip", "br"] {
+        let response = server
+            .get("/login")
+            .add_header(header::ACCEPT_ENCODING, HeaderValue::from_static(encoding))
+            .await;
 
-    response.assert_status_ok();
-    let encoding = response.headers().get(header::CONTENT_ENCODING).expect(
-        "CompressionLayer should set Content-Encoding when client sends Accept-Encoding: gzip",
-    );
-    assert_eq!(encoding.to_str().unwrap(), "gzip");
+        response.assert_status_ok();
+        let applied = response
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .unwrap_or_else(|| {
+                panic!(
+                    "CompressionLayer should set Content-Encoding for Accept-Encoding: {encoding}"
+                )
+            });
+        assert_eq!(applied, encoding);
+    }
 }
 
 #[tokio::test]
@@ -39,20 +46,4 @@ async fn test_login_page_not_compressed_without_accept_encoding() {
         response.headers().get(header::CONTENT_ENCODING).is_none(),
         "Responses must not be compressed when client does not advertise support"
     );
-}
-
-#[tokio::test]
-async fn test_login_page_brotli_when_accepted() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server
-        .get("/login")
-        .add_header(header::ACCEPT_ENCODING, HeaderValue::from_static("br"))
-        .await;
-
-    response.assert_status_ok();
-    let encoding = response.headers().get(header::CONTENT_ENCODING).expect(
-        "CompressionLayer should set Content-Encoding when client sends Accept-Encoding: br",
-    );
-    assert_eq!(encoding.to_str().unwrap(), "br");
 }

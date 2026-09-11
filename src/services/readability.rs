@@ -101,35 +101,17 @@ mod tests {
     // ---- Public entry: SSRF validation happens before any network I/O. ----
 
     #[tokio::test]
-    async fn rejects_malformed_url() {
-        let err = fetch_and_extract("not a url", "RDRS-Test/1.0", &Fetcher::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AppError::InvalidUrl));
-    }
-
-    #[tokio::test]
-    async fn rejects_blocked_loopback_host() {
-        let err = fetch_and_extract(
+    async fn rejects_malformed_blocked_and_non_http_urls() {
+        for url in [
+            "not a url",
             "http://localhost/article",
-            "RDRS-Test/1.0",
-            &Fetcher::default(),
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, AppError::InvalidUrl));
-    }
-
-    #[tokio::test]
-    async fn rejects_non_http_scheme() {
-        let err = fetch_and_extract(
             "ftp://example.com/article",
-            "RDRS-Test/1.0",
-            &Fetcher::default(),
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(err, AppError::InvalidUrl));
+        ] {
+            let err = fetch_and_extract(url, "RDRS-Test/1.0", &Fetcher::default())
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::InvalidUrl), "{url}: {err:?}");
+        }
     }
 
     // ---- Fetch + extract path, driven against a local mock server. ----

@@ -729,13 +729,18 @@ async fn test_settings_page_redacts_database_password() {
 }
 
 #[tokio::test]
-async fn test_settings_page_forbidden_for_non_admin() {
+async fn test_admin_only_pages_redirect_a_regular_user() {
     let (app, _) = app_signed_in_as("user").await;
 
     // Non-admins are bounced to the login page rather than shown deployment
     // internals (database target, bind address, forward-auth headers).
-    let response = app.server.get("/settings").await;
-    response.assert_status_see_other();
+    for path in ["/settings", "/admin"] {
+        assert_eq!(
+            app.server.get(path).await.status_code(),
+            StatusCode::SEE_OTHER,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -774,108 +779,44 @@ async fn setup_page_redirects_once_the_instance_has_an_account() {
 }
 
 #[tokio::test]
-async fn test_categories_page_with_flash() {
+async fn test_pages_render_a_pending_flash() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app
-        .server
-        .get("/categories")
-        .add_cookie(cookie::Cookie::new(
-            "flash",
-            common::signed_flash_value(
-                r#"[{"level":"success","message":"Category created successfully"}]"#,
-            ),
-        ))
-        .await;
-
-    response.assert_status_ok();
-    let body = response.text();
-    // Pending flash messages are rendered as banners inside `<rdrs-flash>`,
-    // so they are visible on first paint with or without JavaScript.
-    assert!(body.contains(r#"data-testid="flash-message""#));
-    assert!(body.contains("Category created successfully"));
+    for (path, level, message) in [
+        ("/categories", "success", "Category created successfully"),
+        ("/feeds", "error", "Failed to add feed"),
+        ("/entries", "info", "Entries refreshed"),
+        ("/user-settings", "success", "Settings saved"),
+    ] {
+        let flash = format!(r#"[{{"level":"{level}","message":"{message}"}}]"#);
+        let response = app
+            .server
+            .get(path)
+            .add_cookie(cookie::Cookie::new(
+                "flash",
+                common::signed_flash_value(&flash),
+            ))
+            .await;
+        response.assert_status_ok();
+        let body = response.text();
+        // Pending flash messages are rendered as banners inside `<rdrs-flash>`,
+        // so they are visible on first paint with or without JavaScript.
+        assert!(body.contains(r#"data-testid="flash-message""#), "{path}");
+        assert!(body.contains(message), "{path}");
+    }
 }
 
 #[tokio::test]
-async fn test_feeds_page_with_flash() {
+async fn test_entry_list_pages_render_ssr_layout() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app
-        .server
-        .get("/feeds")
-        .add_cookie(cookie::Cookie::new(
-            "flash",
-            common::signed_flash_value(r#"[{"level":"error","message":"Failed to add feed"}]"#),
-        ))
-        .await;
-
-    response.assert_status_ok();
-    let body = response.text();
-    // SSR page still renders pending flash messages inline.
-    assert!(body.contains(r#"data-testid="flash-message""#));
-    assert!(body.contains("Failed to add feed"));
-}
-
-#[tokio::test]
-async fn test_entries_page_with_flash() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let response = app
-        .server
-        .get("/entries")
-        .add_cookie(cookie::Cookie::new(
-            "flash",
-            common::signed_flash_value(r#"[{"level":"info","message":"Entries refreshed"}]"#),
-        ))
-        .await;
-
-    response.assert_status_ok();
-    let body = response.text();
-    // Post-SSR migration: flash is rendered inline, no CSR shell.
-    assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(body.contains(r#"data-testid="flash-message""#));
-    assert!(body.contains("Entries refreshed"));
-}
-
-#[tokio::test]
-async fn test_entries_page_renders_ssr_layout() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let body = common::get_ok(&app.server, "/entries").await;
-    // SSR layout: no CSR shell, no entries.js page script.
-    assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(!body.contains("/static/js/pages/entries.js"));
-    assert!(body.contains(r#"id="reading-pane""#));
-}
-
-#[tokio::test]
-async fn test_summarized_entries_page_renders_ssr_layout() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let body = common::get_ok(&app.server, "/entries/summarized").await;
-    // SSR layout: no CSR shell, no entries.js page script.
-    assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(!body.contains("/static/js/pages/entries.js"));
-    assert!(body.contains(r#"id="reading-pane""#));
-}
-
-#[tokio::test]
-async fn test_user_settings_page_with_flash() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let response = app
-        .server
-        .get("/user-settings")
-        .add_cookie(cookie::Cookie::new(
-            "flash",
-            common::signed_flash_value(r#"[{"level":"success","message":"Settings saved"}]"#),
-        ))
-        .await;
-
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains(r#"data-testid="flash-message""#));
-    assert!(body.contains("Settings saved"));
+    for path in ["/entries", "/entries/summarized"] {
+        let body = common::get_ok(&app.server, path).await;
+        // SSR layout: no CSR shell, no entries.js page script.
+        assert!(!body.contains("<rdrs-entries-page>"), "{path}");
+        assert!(!body.contains("/static/js/pages/entries.js"), "{path}");
+        assert!(body.contains(r#"id="reading-pane""#), "{path}");
+    }
 }
 
 // --- Entry Page with Save Services Tests ---
@@ -897,15 +838,6 @@ async fn test_regular_user_unread_page_no_admin_link() {
     assert!(body.contains("user"));
     // Should NOT show admin link
     assert!(!body.contains("data-testid=\"nav-admin\""));
-}
-
-#[tokio::test]
-async fn test_regular_user_cannot_access_admin_page() {
-    let (app, _) = app_signed_in_as("user").await;
-
-    let response = app.server.get("/admin").await;
-    // Should redirect to login
-    response.assert_status_see_other();
 }
 
 // Non-admin coverage lives in the /admin SSR page test above; the
@@ -966,33 +898,19 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
 // --- Archive Entry Pages Tests ---
 
 #[tokio::test]
-async fn test_read_entries_page() {
+async fn test_archive_entry_pages() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let body = common::get_ok(&app.server, "/entries/read").await;
-    // SSR layout: no CSR shell.
-    assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("Read Entries") || body.contains("read"));
-}
-
-#[tokio::test]
-async fn test_starred_entries_page() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let body = common::get_ok(&app.server, "/entries/starred").await;
-    // SSR layout: no CSR shell.
-    assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("Starred Entries") || body.contains("starred"));
-}
-
-#[tokio::test]
-async fn test_summarized_entries_page() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let body = common::get_ok(&app.server, "/entries/summarized").await;
-    // SSR layout: no CSR shell.
-    assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("Summarized Entries") || body.contains("summarized"));
+    for (path, heading, word) in [
+        ("/entries/read", "Read Entries", "read"),
+        ("/entries/starred", "Starred Entries", "starred"),
+        ("/entries/summarized", "Summarized Entries", "summarized"),
+    ] {
+        let body = common::get_ok(&app.server, path).await;
+        // SSR layout: no CSR shell.
+        assert!(!body.contains("<rdrs-entries-page>"), "{path}");
+        assert!(body.contains(heading) || body.contains(word), "{path}");
+    }
 }
 
 #[tokio::test]
@@ -1261,34 +1179,25 @@ async fn test_category_entries_page() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_category_entries_page_not_found() {
-    let mut app = create_test_app(default_test_config()).await;
+#[tokio::test]
+async fn test_not_found_pages_render_inside_the_app_chrome() {
+    let (app, _) = app_signed_in_as("admin").await;
 
-    app.server
-        .post("/api/setup")
-        .json(&json!({ "username": "alice_cnf", "password": "vulture-mango-77-quilt" }))
-        .await
-        .assert_status(StatusCode::CREATED);
-    let __login = app
-        .server
-        .post("/api/session")
-        .json(&json!({ "username": "alice_cnf", "password": "vulture-mango-77-quilt" }))
-        .await;
-    __login.assert_status_ok();
-    common::apply_csrf(&mut app.server, &__login);
-
-    let resp = app.server.get("/categories/999999/entries").await;
-    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
-    let body = resp.text();
-    assert!(
-        body.contains("Category not found"),
-        "404 page should render the not-found heading, got: {body}"
-    );
-    assert!(
-        body.contains("rdrs-sidebar"),
-        "404 page should render inside the app chrome (sidebar present), got: {body}"
-    );
+    for (path, heading) in [
+        ("/categories/999999/entries", "Category not found"),
+        ("/feeds/999999/entries", "Feed not found"),
+        ("/feeds/999999/edit", "Feed not found"),
+        ("/this-page-does-not-exist", "Page not found"),
+    ] {
+        let response = app.server.get(path).await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{path}");
+        let body = response.text();
+        assert!(body.contains(heading), "{path}: {body}");
+        assert!(
+            body.contains("rdrs-sidebar"),
+            "{path} should render inside the app chrome (sidebar present), got: {body}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -2484,36 +2393,6 @@ async fn test_feed_entries_page_status_filter() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_feed_entries_page_not_found() {
-    let mut app = create_test_app(default_test_config()).await;
-
-    app.server
-        .post("/api/setup")
-        .json(&json!({ "username": "alice_fnf", "password": "vulture-mango-77-quilt" }))
-        .await
-        .assert_status(StatusCode::CREATED);
-    let __login = app
-        .server
-        .post("/api/session")
-        .json(&json!({ "username": "alice_fnf", "password": "vulture-mango-77-quilt" }))
-        .await;
-    __login.assert_status_ok();
-    common::apply_csrf(&mut app.server, &__login);
-
-    let resp = app.server.get("/feeds/999999/entries").await;
-    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
-    let body = resp.text();
-    assert!(
-        body.contains("Feed not found"),
-        "404 page should render the not-found heading, got: {body}"
-    );
-    assert!(
-        body.contains("rdrs-sidebar"),
-        "404 page should render inside the app chrome (sidebar present), got: {body}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
@@ -2869,40 +2748,6 @@ async fn test_feed_edit_page_omits_the_referrer_list_when_there_is_nothing_to_su
 }
 
 #[tokio::test]
-async fn test_feed_edit_page_not_found_renders_error_page() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let response = app.server.get("/feeds/999999/edit").await;
-    assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
-    let body = response.text();
-    assert!(
-        body.contains("Feed not found"),
-        "404 page should render the not-found heading, got: {body}"
-    );
-    assert!(
-        body.contains("rdrs-sidebar"),
-        "404 page should render inside the app chrome (sidebar present), got: {body}"
-    );
-}
-
-#[tokio::test]
-async fn test_unknown_route_logged_in_renders_chrome_404() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let response = app.server.get("/this-page-does-not-exist").await;
-    assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
-    let body = response.text();
-    assert!(
-        body.contains("Page not found"),
-        "fallback 404 should render the not-found heading, got: {body}"
-    );
-    assert!(
-        body.contains("rdrs-sidebar"),
-        "fallback 404 should render inside the app chrome (sidebar present), got: {body}"
-    );
-}
-
-#[tokio::test]
 async fn test_unknown_route_logged_out_redirects_to_login() {
     let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
@@ -3140,31 +2985,24 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_login_page_does_not_load_logged_in_chrome() {
+async fn test_login_and_setup_pages_do_not_load_logged_in_chrome() {
     let app = create_test_app(default_test_config()).await;
-    let body = common::get_ok(&app.server, "/login").await;
+    for path in ["/login", "/setup"] {
+        let body = common::get_ok(&app.server, path).await;
 
-    // None of the logged-in chrome should appear on the pre-login shell.
-    assert!(!body.contains("rdrs-kb-help.js"));
-    assert!(!body.contains("rdrs-sidebar.js"));
-    assert!(!body.contains("/static/js/app.js"));
-    assert!(!body.contains("<rdrs-kb-help"));
+        // None of the logged-in chrome should appear on the pre-login shell.
+        for chrome in [
+            "rdrs-kb-help.js",
+            "rdrs-sidebar.js",
+            "/static/js/app.js",
+            "<rdrs-kb-help",
+        ] {
+            assert!(!body.contains(chrome), "{path} loads {chrome}");
+        }
 
-    // Flash machinery is still needed (login/register use flash.redirect).
-    assert!(body.contains("rdrs-flash.js"));
-}
-
-#[tokio::test]
-async fn test_setup_page_does_not_load_logged_in_chrome() {
-    let app = create_test_app(default_test_config()).await;
-    let body = common::get_ok(&app.server, "/setup").await;
-
-    assert!(!body.contains("rdrs-kb-help.js"));
-    assert!(!body.contains("rdrs-sidebar.js"));
-    assert!(!body.contains("/static/js/app.js"));
-    assert!(!body.contains("<rdrs-kb-help"));
-
-    assert!(body.contains("rdrs-flash.js"));
+        // Flash machinery is still needed (login/register use flash.redirect).
+        assert!(body.contains("rdrs-flash.js"), "{path}");
+    }
 }
 
 #[tokio::test]

@@ -4,7 +4,7 @@
 mod common;
 use common::{TestApp, create_test_app, default_test_config, flash_text};
 
-use axum::http::{HeaderName, HeaderValue, StatusCode, header};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum_test::TestServer;
 use axum_test::multipart::{MultipartForm, Part};
 use chrono::{Duration, Utc};
@@ -149,6 +149,34 @@ async fn test_list_categories() {
     // 3 created + the "Uncategorized" category seeded at registration.
     let count = count_folder_tags(&server).await;
     assert_eq!(count, 4);
+}
+
+#[tokio::test]
+async fn test_api_mutations_require_authentication() {
+    // No cookie jar: a stored anonymous session would put the CSRF guard in
+    // front of the auth check this is about.
+    let server = TestServer::new(rdrs::create_router(
+        common::test_state(default_test_config()).await,
+    ));
+    for (method, path) in [
+        (
+            Method::GET,
+            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list",
+        ),
+        (Method::POST, "/reader/api/0/subscription/import"),
+        (Method::PUT, "/api/user/settings/theme"),
+        (Method::POST, "/api/session/reauth"),
+        (Method::POST, "/api/passkey/register/start"),
+        (Method::PUT, "/api/passkeys/1"),
+        (Method::DELETE, "/api/passkeys/1"),
+    ] {
+        let response = server.method(method.clone(), path).await;
+        assert_eq!(
+            response.status_code(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -558,18 +586,6 @@ async fn test_import_opml_valid() {
 }
 
 #[tokio::test]
-async fn test_import_opml_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server
-        .post("/reader/api/0/subscription/import")
-        .text("<opml></opml>")
-        .await;
-
-    response.assert_status_unauthorized();
-}
-
-#[tokio::test]
 async fn test_import_opml_invalid() {
     let server = authed_server().await;
 
@@ -651,26 +667,20 @@ async fn test_import_opml_multiple_categories() {
 // --- Entry Handler Tests (via GReader stream/contents and edit-tag) ---
 
 #[tokio::test]
-async fn test_list_entries_empty() {
+async fn test_empty_reading_list_and_unknown_item_have_no_items() {
     let server = authed_server().await;
 
-    let response = server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
-}
-
-#[tokio::test]
-async fn test_list_entries_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
-        .await;
-    response.assert_status_unauthorized();
+    // stream/items/contents with a non-existent ID is a 200 with no items,
+    // not a 404.
+    for path in [
+        "/reader/api/0/stream/contents/user/-/state/com.google/reading-list",
+        "/reader/api/0/stream/items/contents?i=9999",
+    ] {
+        let response = server.get(path).await;
+        response.assert_status_ok();
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["items"].as_array().unwrap().len(), 0, "{path}");
+    }
 }
 
 #[tokio::test]
@@ -717,19 +727,6 @@ async fn test_stream_of_an_unknown_category_or_feed_is_not_found() {
 }
 
 #[tokio::test]
-async fn test_get_entry_not_found() {
-    let server = authed_server().await;
-
-    // stream/items/contents with non-existent ID returns 200 with empty items
-    let response = server
-        .get("/reader/api/0/stream/items/contents?i=9999")
-        .await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
-}
-
-#[tokio::test]
 async fn test_edit_tag_on_an_unknown_entry_is_not_found() {
     let server = authed_server().await;
 
@@ -745,19 +742,18 @@ async fn test_edit_tag_on_an_unknown_entry_is_not_found() {
 }
 
 #[tokio::test]
-async fn test_get_entry_neighbors_not_found() {
-    let server = authed_server().await;
-
-    let response = server.get("/api/entries/9999/neighbors").await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
 async fn test_entry_actions_on_an_unknown_entry_are_not_found() {
     let server = authed_server().await;
 
-    for action in ["fetch-full-content", "summarize", "save"] {
-        let response = server.post(&format!("/api/entries/9999/{action}")).await;
+    for (method, action) in [
+        (Method::GET, "neighbors"),
+        (Method::POST, "fetch-full-content"),
+        (Method::POST, "summarize"),
+        (Method::POST, "save"),
+    ] {
+        let response = server
+            .method(method, &format!("/api/entries/9999/{action}"))
+            .await;
         assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{action}");
     }
 }
@@ -806,27 +802,19 @@ async fn test_mark_all_read_older_than_days() {
 }
 
 #[tokio::test]
-async fn test_mark_all_read_by_category_not_found() {
+async fn test_mark_all_read_of_an_unknown_stream_is_not_found() {
     let server = authed_server().await;
 
-    let form: Vec<(&str, &str)> = vec![("s", "user/-/label/NonExistent")];
-    let response = server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_mark_all_read_by_feed_not_found() {
-    let server = authed_server().await;
-
-    let form: Vec<(&str, &str)> = vec![("s", "feed/https://nonexistent.com/feed.xml")];
-    let response = server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form)
-        .await;
-    response.assert_status_not_found();
+    for stream in [
+        "user/-/label/NonExistent",
+        "feed/https://nonexistent.com/feed.xml",
+    ] {
+        let response = server
+            .post("/reader/api/0/mark-all-as-read")
+            .form(&[("s", stream)])
+            .await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{stream}");
+    }
 }
 
 #[tokio::test]
@@ -901,27 +889,19 @@ async fn test_update_theme_system() {
 }
 
 #[tokio::test]
-async fn test_update_theme_invalid() {
+async fn test_invalid_theme_or_passkey_name_is_a_bad_request() {
     let server = authed_server().await;
 
-    let response = server
-        .put("/api/user/settings/theme")
-        .json(&json!({ "theme": "invalid-theme" }))
-        .await;
-
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_update_theme_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server
-        .put("/api/user/settings/theme")
-        .json(&json!({ "theme": "dark" }))
-        .await;
-
-    response.assert_status_unauthorized();
+    for (path, body) in [
+        (
+            "/api/user/settings/theme",
+            json!({ "theme": "invalid-theme" }),
+        ),
+        ("/api/passkeys/1", json!({ "name": "" })),
+    ] {
+        let response = server.put(path).json(&body).await;
+        assert_eq!(response.status_code(), StatusCode::BAD_REQUEST, "{path}");
+    }
 }
 
 // --- Page Handler Tests ---
@@ -1336,25 +1316,6 @@ async fn test_reauth_with_wrong_password_is_rejected() {
 }
 
 #[tokio::test]
-async fn test_reauth_requires_a_session() {
-    let server = create_test_server(default_test_config()).await;
-
-    server
-        .post("/api/session/reauth")
-        .json(&json!({ "password": "vulture-mango-77-quilt" }))
-        .await
-        .assert_status_unauthorized();
-}
-
-#[tokio::test]
-async fn test_passkey_register_start_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.post("/api/passkey/register/start").await;
-    response.assert_status_unauthorized();
-}
-
-#[tokio::test]
 async fn test_passkey_register_start_authorized() {
     let server = authed_server().await;
 
@@ -1435,17 +1396,6 @@ async fn test_list_passkeys_empty() {
 }
 
 #[tokio::test]
-async fn test_rename_passkey_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server
-        .put("/api/passkeys/1")
-        .json(&json!({ "name": "New Name" }))
-        .await;
-    response.assert_status_unauthorized();
-}
-
-#[tokio::test]
 async fn test_rename_passkey_not_found() {
     let server = authed_server().await;
 
@@ -1454,25 +1404,6 @@ async fn test_rename_passkey_not_found() {
         .json(&json!({ "name": "New Name" }))
         .await;
     response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_rename_passkey_empty_name() {
-    let server = authed_server().await;
-
-    let response = server
-        .put("/api/passkeys/1")
-        .json(&json!({ "name": "" }))
-        .await;
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_delete_passkey_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.delete("/api/passkeys/1").await;
-    response.assert_status_unauthorized();
 }
 
 #[tokio::test]
@@ -2526,36 +2457,18 @@ async fn test_get_post_token() {
 }
 
 #[tokio::test]
-async fn test_preference_list() {
+async fn test_greader_stub_lists_are_empty() {
     let server = authed_server().await;
 
-    let response = server.get("/reader/api/0/preference/list").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body, json!({ "prefs": [] }));
-}
-
-#[tokio::test]
-async fn test_preference_stream_list() {
-    let server = authed_server().await;
-
-    let response = server.get("/reader/api/0/preference/stream/list").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body, json!({ "streamprefs": {} }));
-}
-
-#[tokio::test]
-async fn test_friend_list() {
-    let server = authed_server().await;
-
-    let response = server.get("/reader/api/0/friend/list").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body, json!({ "friends": [] }));
+    for (path, expected) in [
+        ("preference/list", json!({ "prefs": [] })),
+        ("preference/stream/list", json!({ "streamprefs": {} })),
+        ("friend/list", json!({ "friends": [] })),
+    ] {
+        let response = server.get(&format!("/reader/api/0/{path}")).await;
+        response.assert_status_ok();
+        assert_eq!(response.json::<serde_json::Value>(), expected, "{path}");
+    }
 }
 
 // ============================================================================
@@ -2564,57 +2477,64 @@ async fn test_friend_list() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_change_password_form_success() {
+async fn test_change_password_form() {
     let server = authed_server().await;
 
-    let response = server
-        .post("/user-settings/password")
-        .form(&json!({
-            "current_password": "vulture-mango-77-quilt",
-            "new_password": "heron-lantern-53-drift",
-            "confirm_password": "heron-lantern-53-drift",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/login");
+    // A mismatch changes nothing and stays on the page; the real change
+    // signs the session out. In that order, so the first leaves the second
+    // something to change.
+    for (confirm, location) in [
+        ("differentvalue", "/user-settings"),
+        ("heron-lantern-53-drift", "/login"),
+    ] {
+        let response = server
+            .post("/user-settings/password")
+            .form(&json!({
+                "current_password": "vulture-mango-77-quilt",
+                "new_password": "heron-lantern-53-drift",
+                "confirm_password": confirm,
+            }))
+            .await;
+        response.assert_status(StatusCode::SEE_OTHER);
+        assert_eq!(response.header(header::LOCATION), location, "{confirm}");
+    }
 }
 
+/// Settings forms answer 303 back to `/user-settings` whether they saved or,
+/// as with `entries_per_page=5` (below the minimum of 10), refused.
 #[tokio::test]
-async fn test_change_password_form_mismatch() {
+async fn test_settings_forms_redirect_back_to_the_page() {
     let server = authed_server().await;
 
-    let response = server
-        .post("/user-settings/password")
-        .form(&json!({
-            "current_password": "vulture-mango-77-quilt",
-            "new_password": "heron-lantern-53-drift",
-            "confirm_password": "differentvalue",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
-}
-
-#[tokio::test]
-async fn test_update_preferences_form() {
-    let server = authed_server().await;
-
-    let response = server
-        .post("/user-settings/preferences")
-        .form(&json!({
-            "theme": "dark",
-            "entries_per_page": 50,
-            "retention_read_days": 0,
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
+    for (path, form) in [
+        (
+            "preferences",
+            json!({ "theme": "dark", "entries_per_page": 50, "retention_read_days": 0 }),
+        ),
+        (
+            "preferences",
+            json!({ "theme": "system", "entries_per_page": 5, "retention_read_days": 0 }),
+        ),
+        (
+            "linkding",
+            json!({ "api_url": "https://linkding.example.com", "api_token": "secret-token" }),
+        ),
+        (
+            "kagi",
+            json!({ "session_link": "https://kagi.com/search?token=mysessiontoken", "language": "EN" }),
+        ),
+    ] {
+        let response = server
+            .post(&format!("/user-settings/{path}"))
+            .form(&form)
+            .await;
+        response.assert_status(StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.header(header::LOCATION),
+            "/user-settings",
+            "{form}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2660,42 +2580,6 @@ async fn test_update_preferences_form_sets_sidebar_prefs() {
     assert_eq!(sidebar["sidebar_hide_read"], false);
 }
 
-#[tokio::test]
-async fn test_update_preferences_form_validation() {
-    let server = authed_server().await;
-
-    // entries_per_page=5 is below MIN_ENTRIES_PER_PAGE (10), expect error path
-    let response = server
-        .post("/user-settings/preferences")
-        .form(&json!({
-            "theme": "system",
-            "entries_per_page": 5,
-            "retention_read_days": 0,
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
-}
-
-#[tokio::test]
-async fn test_update_linkding_form() {
-    let server = authed_server().await;
-
-    let response = server
-        .post("/user-settings/linkding")
-        .form(&json!({
-            "api_url": "https://linkding.example.com",
-            "api_token": "secret-token",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
-}
-
 /// End to end for the credential-at-rest fix: what the form stores must not be
 /// legible in the database, and must still come back out through the app.
 #[tokio::test]
@@ -2727,23 +2611,6 @@ async fn a_saved_linkding_token_is_encrypted_in_the_database() {
     // And the page still reports it as configured, i.e. the value round-trips.
     let page = app.server.get("/user-settings").await;
     assert!(page.text().contains("linkding.example.com"));
-}
-
-#[tokio::test]
-async fn test_update_kagi_form() {
-    let server = authed_server().await;
-
-    let response = server
-        .post("/user-settings/kagi")
-        .form(&json!({
-            "session_link": "https://kagi.com/search?token=mysessiontoken",
-            "language": "EN",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
 }
 
 #[tokio::test]
