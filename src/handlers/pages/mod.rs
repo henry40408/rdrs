@@ -5,6 +5,7 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::AppState;
@@ -455,14 +456,25 @@ pub(crate) struct EntriesFragmentTemplate {
     pub csrf_token: String,
 }
 
-impl IntoResponse for EntriesFragmentTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
+crate::handlers::impl_html_response!(
+    EntriesFragmentTemplate,
+    EntriesRefreshFragmentTemplate,
+    EntriesPaneFragmentTemplate,
+    OfflineTemplate,
+    LoginTemplate,
+    SetupTemplate,
+    InviteTemplate,
+    SettingsTemplate,
+    UserSettingsTemplate,
+    AdminTemplate,
+    StatisticsTemplate,
+    CategoriesTemplate,
+    FeedsTemplate,
+    FeedEditTemplate,
+    FeedsImportTemplate,
+    EntriesPageTemplate,
+    SearchTemplate,
+);
 
 /// Search-refresh fragment for the scoped-search box: multi-target templates
 /// replacing `[data-entries-list]` and the `[data-mark-matching-slot]` button in
@@ -478,15 +490,6 @@ pub(crate) struct EntriesRefreshFragmentTemplate {
     pub csrf_token: String,
 }
 
-impl IntoResponse for EntriesRefreshFragmentTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Category-switch fragment (`?pane=1`): multi-target templates that replace
 /// the whole `[data-list-pane]` column and reset `#reading-pane` to its empty
 /// state. Renders `_list_pane.html` — the same partial the full page uses — so
@@ -500,15 +503,6 @@ pub(crate) struct EntriesPaneFragmentTemplate {
     pub entries_layout: EntriesLayoutContext,
     /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
     pub csrf_token: String,
-}
-
-impl IntoResponse for EntriesPaneFragmentTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// Compact relative-time formatter for the entry list. Returns short
@@ -600,15 +594,6 @@ pub struct OfflineTemplate {
     pub git_version: &'static str,
 }
 
-impl IntoResponse for OfflineTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Freshness for `/offline`. Short and shared rather than `immutable`: the URL
 /// carries no build stamp, so a long-lived entry would pin one release's copy
 /// with nothing left to change.
@@ -646,15 +631,6 @@ pub struct LoginTemplate {
     /// Server-rendered sign-in failure, for the no-JavaScript path. `login.js`
     /// writes into the same `#error` element when it drives the request itself.
     pub error: Option<String>,
-}
-
-impl IntoResponse for LoginTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 pub async fn login_page(
@@ -699,15 +675,6 @@ pub struct SetupTemplate {
     pub password_max_length: usize,
     /// Synchronizer token for the native `POST /setup` fallback.
     pub csrf_token: String,
-}
-
-impl IntoResponse for SetupTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// `GET /setup` — the first-run form, and only that.
@@ -809,15 +776,6 @@ impl InviteTemplate {
                 "Too many attempts. Please try again in {retry_after_secs} seconds."
             )),
             ..Self::invalid()
-        }
-    }
-}
-
-impl IntoResponse for InviteTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
     }
 }
@@ -934,8 +892,8 @@ pub async fn unread_page(
 
     (
         flash,
-        UnreadTemplate {
-            title: "Unread",
+        EntriesPageTemplate {
+            title: "Unread".into(),
             git_version: crate::GIT_VERSION,
             layout,
             entries,
@@ -1604,8 +1562,8 @@ pub async fn entries_page(
 
     (
         flash,
-        EntriesTemplate {
-            title: "Entries",
+        EntriesPageTemplate {
+            title: "Entries".into(),
             git_version: crate::GIT_VERSION,
             layout,
             entries,
@@ -1799,8 +1757,8 @@ pub async fn read_entries_page(
 
     (
         flash,
-        ReadEntriesTemplate {
-            title: "Read Entries",
+        EntriesPageTemplate {
+            title: "Read Entries".into(),
             git_version: crate::GIT_VERSION,
             layout,
             entries,
@@ -1892,8 +1850,8 @@ pub async fn starred_entries_page(
 
     (
         flash,
-        StarredEntriesTemplate {
-            title: "Starred Entries",
+        EntriesPageTemplate {
+            title: "Starred Entries".into(),
             git_version: crate::GIT_VERSION,
             layout,
             entries,
@@ -1961,8 +1919,8 @@ pub async fn offline_entries_page(
 
     (
         flash,
-        OfflineEntriesTemplate {
-            title: "Offline",
+        EntriesPageTemplate {
+            title: "Offline".into(),
             git_version: crate::GIT_VERSION,
             layout,
             entries,
@@ -2062,8 +2020,8 @@ pub async fn summarized_entries_page(
 
     (
         flash,
-        SummarizedEntriesTemplate {
-            title: "Summarized Entries",
+        EntriesPageTemplate {
+            title: "Summarized Entries".into(),
             git_version: crate::GIT_VERSION,
             layout,
             entries,
@@ -2293,8 +2251,8 @@ pub async fn category_entries_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
-    let template = CategoryEntriesTemplate {
-        title: category_name,
+    let template = EntriesPageTemplate {
+        title: category_name.into(),
         git_version: crate::GIT_VERSION,
         layout,
         entries,
@@ -2617,8 +2575,8 @@ pub async fn feed_entries_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
-    let template = FeedEntriesTemplate {
-        title: feed_title,
+    let template = EntriesPageTemplate {
+        title: feed_title.into(),
         git_version: crate::GIT_VERSION,
         layout,
         entries,
@@ -2950,15 +2908,6 @@ pub struct SettingsTemplate {
     pub auth_proxy_logout_url: String,
 }
 
-impl IntoResponse for SettingsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// A single card in the "Active Sessions" list on `/user-settings`. `id` is
 /// exposed because the revoke-one form posts it in the URL path, on the same
 /// reasoning as [`ApiTokenRow`]: `session::delete_user_session_by_id` re-checks
@@ -3055,15 +3004,6 @@ pub struct UserSettingsTemplate {
     pub credentials_unreadable: bool,
 }
 
-impl IntoResponse for UserSettingsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// One row of the SSR `/admin` user table.
 pub struct AdminUserView {
     pub id: i64,
@@ -3105,15 +3045,6 @@ pub struct AdminTemplate {
     /// the POST to discover, so an admin learns the window has lapsed *before*
     /// clicking a destructive button.
     pub needs_reauth: bool,
-}
-
-impl IntoResponse for AdminTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// One bar in the daily-read chart, with pre-computed height and labels. A bar
@@ -3255,15 +3186,6 @@ pub struct StatisticsTemplate {
     pub admin_db: Option<AdminDatabaseStatsView>,
 }
 
-impl IntoResponse for StatisticsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// One row of the SSR `/categories` table.
 pub struct CategoryRowView {
     pub id: i64,
@@ -3281,15 +3203,6 @@ pub struct CategoriesTemplate {
     /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
     pub csrf_token: String,
     pub categories: Vec<CategoryRowView>,
-}
-
-impl IntoResponse for CategoriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// One row of the SSR `/feeds` table.
@@ -3358,15 +3271,6 @@ pub struct FeedsTemplate {
     pub min_tracked_for_rate: i64,
 }
 
-impl IntoResponse for FeedsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Editable view of a single feed for `/feeds/{id}/edit`.
 pub struct FeedEditView {
     pub id: i64,
@@ -3433,15 +3337,6 @@ pub struct FeedEditTemplate {
     pub user_agent_suggestions: &'static [&'static str],
 }
 
-impl IntoResponse for FeedEditTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Per-route template for `/feeds/import`.
 #[derive(Template)]
 #[template(path = "feeds_import.html")]
@@ -3453,54 +3348,25 @@ pub struct FeedsImportTemplate {
     pub csrf_token: String,
 }
 
-impl IntoResponse for FeedsImportTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/` (unread). Extends `_entries_layout.html`.
-/// `git_version` is duplicated at the leaf level because `base.html`
-/// references the bare `{{ git_version }}` outside the blocks owned by
-/// `app_layout.html` (Askama 0.15 quirk — see other templates for the pattern).
-#[derive(Template)]
-#[template(path = "unread.html")]
-pub struct UnreadTemplate {
-    pub title: &'static str,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
-    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
-    /// are shared with the swap fragments — hence a leaf-level field rather
-    /// than one on `layout`, exactly like `git_version`.
-    pub csrf_token: String,
-}
-
-impl IntoResponse for UnreadTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/entries`.
+/// Every entry-list page: `/`, `/entries` and its read/starred/offline/
+/// summarized tabs, and the feed and category scopes. They differ only in the
+/// data, so all of them render `entries.html`, which extends
+/// `_entries_layout.html`. `git_version` is duplicated at the leaf level
+/// because `base.html` references the bare `{{ git_version }}` outside the
+/// blocks owned by `app_layout.html` (Askama 0.15 quirk — see other templates
+/// for the pattern).
 #[derive(Template)]
 #[template(path = "entries.html")]
-pub struct EntriesTemplate {
-    pub title: &'static str,
+pub struct EntriesPageTemplate {
+    /// A fixed label for the tabs, the feed or category name for a scope.
+    pub title: Cow<'static, str>,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
+    /// Always `None` on `/entries/offline`: the whole set is rendered in one
+    /// go. Load More needs the network, which is the one thing that page
+    /// cannot assume.
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
     /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
@@ -3508,176 +3374,6 @@ pub struct EntriesTemplate {
     /// are shared with the swap fragments — hence a leaf-level field rather
     /// than one on `layout`, exactly like `git_version`.
     pub csrf_token: String,
-}
-
-impl IntoResponse for EntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/entries/read`.
-#[derive(Template)]
-#[template(path = "read_entries.html")]
-pub struct ReadEntriesTemplate {
-    pub title: &'static str,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
-    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
-    /// are shared with the swap fragments — hence a leaf-level field rather
-    /// than one on `layout`, exactly like `git_version`.
-    pub csrf_token: String,
-}
-
-impl IntoResponse for ReadEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/entries/starred`.
-#[derive(Template)]
-#[template(path = "starred_entries.html")]
-pub struct StarredEntriesTemplate {
-    pub title: &'static str,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
-    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
-    /// are shared with the swap fragments — hence a leaf-level field rather
-    /// than one on `layout`, exactly like `git_version`.
-    pub csrf_token: String,
-}
-
-impl IntoResponse for StarredEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/entries/offline`.
-#[derive(Template)]
-#[template(path = "offline_entries.html")]
-pub struct OfflineEntriesTemplate {
-    pub title: &'static str,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    /// Always `None`: the whole set is rendered in one go. Load More needs the
-    /// network, which is the one thing this page cannot assume.
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`StarredEntriesTemplate::csrf_token`].
-    pub csrf_token: String,
-}
-
-impl IntoResponse for OfflineEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/entries/summarized`.
-#[derive(Template)]
-#[template(path = "summarized_entries.html")]
-pub struct SummarizedEntriesTemplate {
-    pub title: &'static str,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
-    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
-    /// are shared with the swap fragments — hence a leaf-level field rather
-    /// than one on `layout`, exactly like `git_version`.
-    pub csrf_token: String,
-}
-
-impl IntoResponse for SummarizedEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/feeds/{id}/entries`.
-#[derive(Template)]
-#[template(path = "feed_entries.html")]
-pub struct FeedEntriesTemplate {
-    pub title: String,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
-    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
-    /// are shared with the swap fragments — hence a leaf-level field rather
-    /// than one on `layout`, exactly like `git_version`.
-    pub csrf_token: String,
-}
-
-impl IntoResponse for FeedEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Per-route template for `/categories/{id}/entries`.
-#[derive(Template)]
-#[template(path = "category_entries.html")]
-pub struct CategoryEntriesTemplate {
-    pub title: String,
-    pub git_version: &'static str,
-    pub layout: AppLayoutContext,
-    pub entries: Vec<EntryRowView>,
-    pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<String>,
-    pub entries_layout: EntriesLayoutContext,
-    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
-    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
-    /// are shared with the swap fragments — hence a leaf-level field rather
-    /// than one on `layout`, exactly like `git_version`.
-    pub csrf_token: String,
-}
-
-impl IntoResponse for CategoryEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// One row of the SSR `/search` results list. `title_html` and `snippet_html`
@@ -3705,15 +3401,6 @@ pub struct SearchTemplate {
     pub q: String,
     pub error: Option<String>,
     pub results: Vec<SearchResultView>,
-}
-
-impl IntoResponse for SearchTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// Serves `/statistics` rendered fully server-side. Period buttons are
