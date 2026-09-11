@@ -237,9 +237,7 @@ async fn library_lists_what_the_browser_should_be_holding() {
     set_keep(&app.db, "reader", 2).await;
     login(&mut app.server, "reader").await;
 
-    let response = app.server.get("/entries/offline").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/entries/offline").await;
 
     assert!(body.contains(&format!("entry-row-{}", ids[2])));
     assert!(body.contains(&format!("entry-row-{}", ids[1])));

@@ -304,93 +304,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_token_401() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(401))
-            .mount(&server)
-            .await;
-        let config = KagiConfig {
-            session_token: "tok".into(),
-            language: None,
-        };
-        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
-            .await
-            .unwrap();
-        assert!(!result.success);
-        assert!(
-            result
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("Invalid session token")
-        );
-    }
-
-    #[tokio::test]
-    async fn forbidden_403() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(403))
-            .mount(&server)
-            .await;
-        let config = KagiConfig {
-            session_token: "tok".into(),
-            language: None,
-        };
-        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
-            .await
-            .unwrap();
-        assert!(!result.success);
-        assert!(
-            result
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("Access forbidden")
-        );
-    }
-
-    #[tokio::test]
-    async fn rate_limited_429() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(429))
-            .mount(&server)
-            .await;
-        let config = KagiConfig {
-            session_token: "tok".into(),
-            language: None,
-        };
-        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
-            .await
-            .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("Rate limit"));
-    }
-
-    #[tokio::test]
-    async fn server_error_500() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(500).set_body_string("x"))
-            .mount(&server)
-            .await;
-        let config = KagiConfig {
-            session_token: "tok".into(),
-            language: None,
-        };
-        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
-            .await
-            .unwrap();
-        assert!(!result.success);
-        assert!(
-            result
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("Kagi error (500")
-        );
+    async fn error_statuses_become_readable_errors() {
+        for (status, body, expected) in [
+            (401, "", "Invalid session token"),
+            (403, "", "Access forbidden"),
+            (429, "", "Rate limit"),
+            (500, "x", "Kagi error (500"),
+        ] {
+            let server = MockServer::start().await;
+            let mut response = ResponseTemplate::new(status);
+            if !body.is_empty() {
+                response = response.set_body_string(body);
+            }
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            let config = KagiConfig {
+                session_token: "tok".into(),
+                language: None,
+            };
+            let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+                .await
+                .unwrap();
+            assert!(!result.success, "{status}");
+            let error = result.error.as_deref().unwrap_or("");
+            assert!(error.contains(expected), "{status}: {error}");
+        }
     }
 
     #[tokio::test]

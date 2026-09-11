@@ -54,6 +54,14 @@ pub async fn create_test_app(config: Config) -> TestApp {
     }
 }
 
+/// `GET path`, assert a 200, and return the body.
+#[allow(dead_code)]
+pub async fn get_ok(server: &TestServer, path: &str) -> String {
+    let response = server.get(path).await;
+    response.assert_status_ok();
+    response.text()
+}
+
 /// Sign `username` in with the fixture password `vulture-mango-77-quilt`.
 #[allow(dead_code)]
 pub async fn login(server: &mut TestServer, username: &str) {
@@ -84,6 +92,16 @@ pub async fn setup_users(db: &Db) -> (i64, i64) {
         .await
         .unwrap();
     (admin.id, user.id)
+}
+
+/// A default app holding [`setup_users`]' two accounts, signed in as
+/// `username`. Returns the app with `(admin_id, user_id)`.
+#[allow(dead_code)]
+pub async fn app_signed_in_as(username: &str) -> (TestApp, (i64, i64)) {
+    let mut app = create_test_app(default_test_config()).await;
+    let ids = setup_users(&app.db).await;
+    login(&mut app.server, username).await;
+    (app, ids)
 }
 
 /// A fresh, default-configured [`rdrs::middleware::RateLimiter`] for an

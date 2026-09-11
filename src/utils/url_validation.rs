@@ -230,106 +230,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_url_valid() {
-        let url = Url::parse("https://example.com/article").unwrap();
-        assert!(validate_url(&url).is_ok());
+    fn test_validate_url_accepts_public_http_and_https() {
+        for url in ["https://example.com/article", "http://example.com/article"] {
+            assert!(validate_url(&Url::parse(url).unwrap()).is_ok(), "{url}");
+        }
     }
 
     #[test]
-    fn test_validate_url_localhost() {
-        let url = Url::parse("http://localhost/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_loopback() {
-        let url = Url::parse("http://127.0.0.1/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_10() {
-        let url = Url::parse("http://10.0.0.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_172() {
-        let url = Url::parse("http://172.16.0.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_192() {
-        let url = Url::parse("http://192.168.1.1/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_local_domain() {
-        let url = Url::parse("http://myhost.local/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_internal_domain() {
-        let url = Url::parse("http://server.internal/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_ftp_scheme() {
-        let url = Url::parse("ftp://example.com/file").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_file_scheme() {
-        let url = Url::parse("file:///etc/passwd").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_ipv6_loopback() {
-        let url = Url::parse("http://[::1]/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_link_local() {
-        let url = Url::parse("http://169.254.1.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_broadcast() {
-        let url = Url::parse("http://255.255.255.255/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_documentation_ip() {
-        // 192.0.2.0/24 is a documentation range
-        let url = Url::parse("http://192.0.2.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_unspecified_ipv4() {
-        let url = Url::parse("http://0.0.0.0/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_unspecified_ipv6() {
-        let url = Url::parse("http://[::]/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_http_valid() {
-        let url = Url::parse("http://example.com/article").unwrap();
-        assert!(validate_url(&url).is_ok());
+    fn test_validate_url_rejects_private_hosts_and_other_schemes() {
+        for url in [
+            "http://localhost/article",
+            "http://127.0.0.1/article",
+            "http://10.0.0.1/image.jpg",
+            "http://172.16.0.1/image.jpg",
+            "http://192.168.1.1/article",
+            "http://myhost.local/article",
+            "http://server.internal/article",
+            "ftp://example.com/file",
+            "file:///etc/passwd",
+            "http://[::1]/article",
+            "http://169.254.1.1/image.jpg",
+            "http://255.255.255.255/image.jpg",
+            // 192.0.2.0/24 is a documentation range
+            "http://192.0.2.1/image.jpg",
+            "http://0.0.0.0/image.jpg",
+            "http://[::]/image.jpg",
+        ] {
+            assert!(
+                validate_url(&Url::parse(url).unwrap()).is_err(),
+                "{url} must be rejected"
+            );
+        }
     }
 
     #[test]
@@ -356,21 +287,10 @@ mod tests {
     }
 
     #[test]
-    fn test_is_private_ip_ipv6_unspecified() {
-        let ip: IpAddr = "::".parse().unwrap();
-        assert!(is_private_ip(&ip));
-    }
-
-    #[test]
-    fn test_is_private_ip_ipv6_loopback() {
-        let ip: IpAddr = "::1".parse().unwrap();
-        assert!(is_private_ip(&ip));
-    }
-
-    #[test]
-    fn test_is_private_ip_ipv6_public() {
-        let ip: IpAddr = "2606:4700::1111".parse().unwrap();
-        assert!(!is_private_ip(&ip));
+    fn test_is_private_ip_ipv6() {
+        for (addr, private) in [("::", true), ("::1", true), ("2606:4700::1111", false)] {
+            assert_eq!(is_private_ip(&addr.parse().unwrap()), private, "{addr}");
+        }
     }
 
     /// Ranges that are just as unreachable from the internet as RFC 1918, and

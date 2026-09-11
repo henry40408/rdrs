@@ -94,55 +94,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hex_reference_lowercase() {
-        assert_eq!(
-            decode_html_entities("Collabora&#x27;s CODE"),
-            "Collabora's CODE"
-        );
-    }
-
-    #[test]
-    fn hex_reference_uppercase_marker() {
-        assert_eq!(decode_html_entities("a&#X27;b"), "a'b");
-    }
-
-    #[test]
-    fn decimal_reference() {
-        assert_eq!(decode_html_entities("it&#39;s"), "it's");
-    }
-
-    #[test]
-    fn named_amp() {
-        assert_eq!(decode_html_entities("Tom &amp; Jerry"), "Tom & Jerry");
-    }
-
-    #[test]
-    fn named_quot_and_apos() {
-        assert_eq!(
-            decode_html_entities("&quot;hi&quot; &apos;yo&apos;"),
-            "\"hi\" 'yo'"
-        );
-    }
-
-    #[test]
-    fn named_lt_gt() {
-        assert_eq!(decode_html_entities("&lt;tag&gt;"), "<tag>");
-    }
-
-    #[test]
-    fn mixed() {
-        assert_eq!(
-            decode_html_entities("A &amp; B &#x27;C&#x27; &lt;d&gt; &#39;e&#39;"),
-            "A & B 'C' <d> 'e'"
-        );
-    }
-
-    #[test]
-    fn no_entities() {
-        assert_eq!(
-            decode_html_entities("plain text, no entities"),
-            "plain text, no entities"
-        );
+    fn decodes_numeric_and_named_references() {
+        for (input, expected) in [
+            ("Collabora&#x27;s CODE", "Collabora's CODE"),
+            ("a&#X27;b", "a'b"),
+            ("it&#39;s", "it's"),
+            ("Tom &amp; Jerry", "Tom & Jerry"),
+            ("&quot;hi&quot; &apos;yo&apos;", "\"hi\" 'yo'"),
+            ("&lt;tag&gt;", "<tag>"),
+            (
+                "A &amp; B &#x27;C&#x27; &lt;d&gt; &#39;e&#39;",
+                "A & B 'C' <d> 'e'",
+            ),
+            ("plain text, no entities", "plain text, no entities"),
+            ("日本語 &amp; 中文", "日本語 & 中文"),
+            ("ends with &", "ends with &"),
+        ] {
+            assert_eq!(decode_html_entities(input), expected, "{input}");
+        }
     }
 
     #[test]
@@ -156,15 +125,5 @@ mod tests {
         assert_eq!(decode_html_entities("&#xFFFFFFFF;"), "&#xFFFFFFFF;");
         // Surrogate code point is not a valid char.
         assert_eq!(decode_html_entities("&#xD800;"), "&#xD800;");
-    }
-
-    #[test]
-    fn multibyte_passthrough() {
-        assert_eq!(decode_html_entities("日本語 &amp; 中文"), "日本語 & 中文");
-    }
-
-    #[test]
-    fn trailing_ampersand() {
-        assert_eq!(decode_html_entities("ends with &"), "ends with &");
     }
 }

@@ -3,8 +3,9 @@
 //! save), and cross-user access restrictions.
 
 mod common;
-use common::{create_test_app, default_test_config};
+use common::{TestApp, create_test_app, default_test_config};
 
+use axum::http::StatusCode;
 use axum_test::TestServer;
 use rdrs::models::{category, entry, feed, user};
 use rdrs::{Db, Role};
@@ -57,6 +58,14 @@ async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
 
 async fn login(server: &mut TestServer) {
     common::login(server, "testuser").await;
+}
+
+/// A default app seeded by [`setup_test_data`] and signed in as its user.
+async fn seeded_app() -> (TestApp, (i64, i64, i64, Vec<i64>)) {
+    let mut app = create_test_app(default_test_config()).await;
+    let data = setup_test_data(&app.db).await;
+    login(&mut app.server).await;
+    (app, data)
 }
 
 /// Setup a second user's data in the database
@@ -165,27 +174,37 @@ async fn unstar_entry(server: &TestServer, entry_ids: &[i64]) {
 // --- Stream Contents Tests (Entry List) ---
 
 #[tokio::test]
-async fn test_list_entries_with_data() {
+async fn test_list_entries_by_reading_list_category_and_feed() {
     let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
-        .await;
-    response.assert_status_ok();
+    for (path, id) in [
+        (
+            "user/-/state/com.google/reading-list",
+            "user/-/state/com.google/reading-list",
+        ),
+        ("user/-/label/Test%20Category", "user/-/label/Test Category"),
+        (
+            "feed/https://example.com/feed.xml",
+            "feed/https://example.com/feed.xml",
+        ),
+    ] {
+        let response = app
+            .server
+            .get(&format!("/reader/api/0/stream/contents/{path}"))
+            .await;
+        response.assert_status_ok();
 
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 5);
-    assert_eq!(body["id"], "user/-/state/com.google/reading-list");
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["items"].as_array().unwrap().len(), 5, "{path}");
+        assert_eq!(body["id"], id);
+    }
 }
 
 #[tokio::test]
 async fn test_list_entries_with_limit() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -289,44 +308,8 @@ async fn test_list_entries_with_continuation() {
 }
 
 #[tokio::test]
-async fn test_list_entries_by_category() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/label/Test%20Category")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 5);
-    assert_eq!(body["id"], "user/-/label/Test Category");
-}
-
-#[tokio::test]
-async fn test_list_entries_by_feed() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/feed/https://example.com/feed.xml")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 5);
-    assert_eq!(body["id"], "feed/https://example.com/feed.xml");
-}
-
-#[tokio::test]
 async fn test_get_entry_by_id() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -347,9 +330,7 @@ async fn test_get_entry_by_id() {
 
 #[tokio::test]
 async fn test_get_multiple_entries_by_id() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -367,9 +348,7 @@ async fn test_get_multiple_entries_by_id() {
 
 #[tokio::test]
 async fn test_get_entries_by_id_post() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let form_data: Vec<(&str, String)> = entry_ids
         .iter()
@@ -393,9 +372,7 @@ async fn test_get_entries_by_id_post() {
 
 #[tokio::test]
 async fn test_mark_entry_read() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0]]).await;
 
@@ -424,9 +401,7 @@ async fn test_mark_entry_read() {
 
 #[tokio::test]
 async fn test_mark_entry_unread() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0]]).await;
 
@@ -455,9 +430,7 @@ async fn test_mark_entry_unread() {
 
 #[tokio::test]
 async fn test_list_entries_unread_only() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
@@ -476,9 +449,7 @@ async fn test_list_entries_unread_only() {
 
 #[tokio::test]
 async fn test_star_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     star_entry(&app.server, &[entry_ids[0]]).await;
 
@@ -505,9 +476,7 @@ async fn test_star_entry() {
 
 #[tokio::test]
 async fn test_unstar_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     // Star the entry
     star_entry(&app.server, &[entry_ids[0]]).await;
@@ -538,9 +507,7 @@ async fn test_unstar_entry() {
 
 #[tokio::test]
 async fn test_list_entries_starred_only() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     // Star first entry
     star_entry(&app.server, &[entry_ids[0]]).await;
@@ -559,9 +526,7 @@ async fn test_list_entries_starred_only() {
 
 #[tokio::test]
 async fn test_list_entries_read_only() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
@@ -579,85 +544,47 @@ async fn test_list_entries_read_only() {
 // --- Mark All Read Tests ---
 
 #[tokio::test]
-async fn test_mark_all_read() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+async fn test_mark_all_read_by_reading_list_category_and_feed() {
+    for (stream, path) in [
+        (
+            "user/-/state/com.google/reading-list",
+            "user/-/state/com.google/reading-list",
+        ),
+        ("user/-/label/Test Category", "user/-/label/Test%20Category"),
+        (
+            "feed/https://example.com/feed.xml",
+            "feed/https://example.com/feed.xml",
+        ),
+    ] {
+        // A fresh app per stream: once one of them is marked read, every
+        // other one would already be empty.
+        let mut app = create_test_app(default_test_config()).await;
+        setup_test_data(&app.db).await;
+        login(&mut app.server).await;
 
-    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/state/com.google/reading-list")];
-    let response = app
-        .server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form_data)
-        .await;
-    response.assert_status_ok();
-    assert_eq!(response.text(), "OK");
+        let response = app
+            .server
+            .post("/reader/api/0/mark-all-as-read")
+            .form(&[("s", stream)])
+            .await;
+        response.assert_status_ok();
+        assert_eq!(response.text(), "OK");
 
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
-}
-
-#[tokio::test]
-async fn test_mark_all_read_by_category() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Test Category")];
-    let response = app
-        .server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form_data)
-        .await;
-    response.assert_status_ok();
-    assert_eq!(response.text(), "OK");
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/label/Test%20Category?xt=user/-/state/com.google/read")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
-}
-
-#[tokio::test]
-async fn test_mark_all_read_by_feed() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![("s", "feed/https://example.com/feed.xml")];
-    let response = app
-        .server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form_data)
-        .await;
-    response.assert_status_ok();
-    assert_eq!(response.text(), "OK");
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/feed/https://example.com/feed.xml?xt=user/-/state/com.google/read")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+        let response = app
+            .server
+            .get(&format!(
+                "/reader/api/0/stream/contents/{path}?xt=user/-/state/com.google/read"
+            ))
+            .await;
+        response.assert_status_ok();
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["items"].as_array().unwrap().len(), 0, "{stream}");
+    }
 }
 
 #[tokio::test]
 async fn test_mark_read_batch_by_ids() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[1], entry_ids[2]]).await;
 
@@ -688,9 +615,7 @@ async fn test_edit_tag_no_items_returns_error() {
 
 #[tokio::test]
 async fn test_mark_read_already_read() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0]]).await;
 
@@ -739,9 +664,7 @@ async fn test_cannot_mark_read_by_ids_other_user() {
 
 #[tokio::test]
 async fn test_get_unread_count_with_data() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app.server.get("/reader/api/0/unread-count").await;
     response.assert_status_ok();
@@ -773,9 +696,7 @@ async fn test_get_unread_count_with_data() {
 
 #[tokio::test]
 async fn test_get_unread_count_after_marking_read() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
@@ -802,9 +723,7 @@ async fn test_get_unread_count_after_marking_read() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -820,9 +739,7 @@ async fn test_get_entry_neighbors() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors_first_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -836,9 +753,7 @@ async fn test_get_entry_neighbors_first_entry() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors_unread_only() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[2]]).await;
 
@@ -861,9 +776,7 @@ async fn test_get_entry_neighbors_unread_only() {
 
 #[tokio::test]
 async fn test_subscription_list() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
@@ -881,9 +794,7 @@ async fn test_subscription_list() {
 
 #[tokio::test]
 async fn test_subscription_edit_update_title() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let form_data: Vec<(&str, &str)> = vec![
         ("ac", "edit"),
@@ -907,9 +818,7 @@ async fn test_subscription_edit_update_title() {
 
 #[tokio::test]
 async fn test_subscription_unsubscribe() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let form_data: Vec<(&str, &str)> = vec![
         ("ac", "unsubscribe"),
@@ -934,9 +843,7 @@ async fn test_subscription_unsubscribe() {
 
 #[tokio::test]
 async fn test_tag_list() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app.server.get("/reader/api/0/tag/list").await;
     response.assert_status_ok();
@@ -954,9 +861,7 @@ async fn test_tag_list() {
 
 #[tokio::test]
 async fn test_rename_tag() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let form_data: Vec<(&str, &str)> = vec![
         ("s", "user/-/label/Test Category"),
@@ -982,9 +887,7 @@ async fn test_rename_tag() {
 
 #[tokio::test]
 async fn test_disable_tag() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Test Category")];
     let response = app
@@ -1008,9 +911,7 @@ async fn test_disable_tag() {
 
 #[tokio::test]
 async fn test_list_entries_combined_filters() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     // Star some entries
     star_entry(&app.server, &[entry_ids[0], entry_ids[1]]).await;
@@ -1042,9 +943,7 @@ async fn test_list_entries_combined_filters() {
 
 #[tokio::test]
 async fn test_list_entries_oldest_first() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1072,9 +971,7 @@ async fn test_list_entries_oldest_first() {
 
 #[tokio::test]
 async fn test_mark_all_read_with_timestamp() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     // Entries are 1-5 hours old. `older_than_days` is integer division, so
     // anything under a day rounds to 0 and every entry is marked — a timestamp
@@ -1099,9 +996,7 @@ async fn test_mark_all_read_with_timestamp() {
 
 #[tokio::test]
 async fn test_stream_contents_item_format() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -1202,91 +1097,66 @@ async fn test_cannot_get_other_user_entry() {
 }
 
 #[tokio::test]
-async fn test_cannot_mark_other_user_entry_read() {
+async fn test_cannot_tag_other_user_entry() {
     let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
+    setup_test_data(&app.db).await;
+    let (_, _, _, other_entry_ids) = setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    let mut form_data: Vec<(&str, String)> = vec![("i", other_entry_ids[0].to_string())];
-    form_data.push(("a", "user/-/state/com.google/read".to_string()));
-    let response = app
-        .server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
+    let entry = other_entry_ids[0].to_string();
+    for (op, tag) in [
+        ("a", "user/-/state/com.google/read"),
+        ("r", "user/-/state/com.google/read"),
+        ("a", "user/-/state/com.google/starred"),
+    ] {
+        let response = app
+            .server
+            .post("/reader/api/0/edit-tag")
+            .form(&[("i", entry.as_str()), (op, tag)])
+            .await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{op}={tag}");
+    }
 }
 
+/// Every `GReader` mutation addressed at another user's feed or category is a
+/// 404, the same answer a stream that does not exist gets.
 #[tokio::test]
-async fn test_cannot_mark_other_user_entry_unread() {
+async fn test_cannot_mutate_other_user_feeds_or_categories() {
     let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
+    setup_test_data(&app.db).await;
+    setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    let mut form_data: Vec<(&str, String)> = vec![("i", other_entry_ids[0].to_string())];
-    form_data.push(("r", "user/-/state/com.google/read".to_string()));
-    let response = app
-        .server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_star_other_user_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let mut form_data: Vec<(&str, String)> = vec![("i", other_entry_ids[0].to_string())];
-    form_data.push(("a", "user/-/state/com.google/starred".to_string()));
-    let response = app
-        .server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_mark_all_read_other_user_feed() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![("s", "feed/https://other.com/feed.xml")];
-    let response = app
-        .server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_mark_all_read_other_user_category() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Other User Category")];
-    let response = app
-        .server
-        .post("/reader/api/0/mark-all-as-read")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
+    let feed = "feed/https://other.com/feed.xml";
+    let category = "user/-/label/Other User Category";
+    for (endpoint, form) in [
+        ("mark-all-as-read", vec![("s", feed)]),
+        ("mark-all-as-read", vec![("s", category)]),
+        (
+            "subscription/edit",
+            vec![("ac", "unsubscribe"), ("s", feed)],
+        ),
+        (
+            "subscription/edit",
+            vec![("ac", "edit"), ("s", feed), ("t", "Hacked Title")],
+        ),
+        ("disable-tag", vec![("s", category)]),
+        (
+            "rename-tag",
+            vec![("s", category), ("dest", "user/-/label/Hacked Category")],
+        ),
+    ] {
+        let response = app
+            .server
+            .post(&format!("/reader/api/0/{endpoint}"))
+            .form(&form)
+            .await;
+        assert_eq!(
+            response.status_code(),
+            StatusCode::NOT_FOUND,
+            "{endpoint} {form:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1300,84 +1170,6 @@ async fn test_cannot_get_other_user_entry_neighbors() {
     let response = app
         .server
         .get(&format!("/api/entries/{}/neighbors", other_entry_ids[0]))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_unsubscribe_other_user_feed() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![
-        ("ac", "unsubscribe"),
-        ("s", "feed/https://other.com/feed.xml"),
-    ];
-    let response = app
-        .server
-        .post("/reader/api/0/subscription/edit")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_edit_other_user_feed() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![
-        ("ac", "edit"),
-        ("s", "feed/https://other.com/feed.xml"),
-        ("t", "Hacked Title"),
-    ];
-    let response = app
-        .server
-        .post("/reader/api/0/subscription/edit")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_disable_other_user_category() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Other User Category")];
-    let response = app
-        .server
-        .post("/reader/api/0/disable-tag")
-        .form(&form_data)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_rename_other_user_category() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let form_data: Vec<(&str, &str)> = vec![
-        ("s", "user/-/label/Other User Category"),
-        ("dest", "user/-/label/Hacked Category"),
-    ];
-    let response = app
-        .server
-        .post("/reader/api/0/rename-tag")
-        .form(&form_data)
         .await;
     response.assert_status_not_found();
 }
@@ -1519,9 +1311,7 @@ async fn test_save_entry_no_link() {
 
 #[tokio::test]
 async fn test_summarize_entry_no_kagi_config() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -1535,9 +1325,7 @@ async fn test_summarize_entry_no_kagi_config() {
 
 #[tokio::test]
 async fn test_save_entry_no_services_config() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -1553,9 +1341,7 @@ async fn test_save_entry_no_services_config() {
 
 #[tokio::test]
 async fn test_stream_item_ids() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1575,9 +1361,7 @@ async fn test_stream_item_ids() {
 
 #[tokio::test]
 async fn test_stream_item_ids_with_count() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1594,9 +1378,7 @@ async fn test_stream_item_ids_with_count() {
 
 #[tokio::test]
 async fn test_stream_item_count() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app.server.get("/reader/api/0/stream/items/count").await;
     response.assert_status_ok();
@@ -1607,9 +1389,7 @@ async fn test_stream_item_count() {
 
 #[tokio::test]
 async fn test_stream_item_count_by_feed() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1623,9 +1403,7 @@ async fn test_stream_item_count_by_feed() {
 
 #[tokio::test]
 async fn test_stream_item_count_starred() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1639,9 +1417,7 @@ async fn test_stream_item_count_starred() {
 
 #[tokio::test]
 async fn test_stream_contents_oldest_first() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1664,9 +1440,7 @@ async fn test_stream_contents_oldest_first() {
 
 #[tokio::test]
 async fn test_stream_contents_with_count() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app
         .server
@@ -1769,9 +1543,7 @@ async fn test_stream_contents_with_continuation() {
 
 #[tokio::test]
 async fn test_stream_items_contents_post() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let form_data: Vec<(&str, String)> = vec![("i", entry_ids[0].to_string())];
 
@@ -1791,9 +1563,7 @@ async fn test_stream_items_contents_post() {
 
 #[tokio::test]
 async fn test_stream_items_contents_empty() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     // GET with no i= params
     let response = app.server.get("/reader/api/0/stream/items/contents").await;
@@ -1806,9 +1576,7 @@ async fn test_stream_items_contents_empty() {
 
 #[tokio::test]
 async fn test_stream_contents_exclude_read() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0]]).await;
 
@@ -1835,9 +1603,7 @@ async fn test_stream_contents_exclude_read() {
 
 #[tokio::test]
 async fn test_stream_contents_include_starred() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     // Star one entry
     star_entry(&app.server, &[entry_ids[2]]).await;
@@ -1856,9 +1622,7 @@ async fn test_stream_contents_include_starred() {
 
 #[tokio::test]
 async fn test_stream_item_ids_default_stream() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     // GET stream/items/ids without s= parameter — should default to reading-list
     let response = app.server.get("/reader/api/0/stream/items/ids").await;
@@ -1873,9 +1637,7 @@ async fn test_stream_item_ids_default_stream() {
 
 #[tokio::test]
 async fn test_user_info() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app.server.get("/reader/api/0/user-info").await;
     response.assert_status_ok();
@@ -1891,9 +1653,7 @@ async fn test_user_info() {
 
 #[tokio::test]
 async fn test_unread_count_with_data() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     let response = app.server.get("/reader/api/0/unread-count").await;
     response.assert_status_ok();
@@ -1926,9 +1686,7 @@ async fn test_unread_count_with_data() {
 
 #[tokio::test]
 async fn test_unread_count_after_read() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[1], entry_ids[2]]).await;
 
@@ -1955,9 +1713,7 @@ async fn test_unread_count_after_read() {
 
 #[tokio::test]
 async fn test_star_and_unstar_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     // Star an entry via edit-tag
     star_entry(&app.server, &[entry_ids[1]]).await;
@@ -1989,9 +1745,7 @@ async fn test_star_and_unstar_entry() {
 
 #[tokio::test]
 async fn test_find_by_ids_with_feed_empty() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     // GET stream/items/contents with no valid IDs (nonexistent IDs)
     let response = app
@@ -2007,9 +1761,7 @@ async fn test_find_by_ids_with_feed_empty() {
 
 #[tokio::test]
 async fn test_stream_contents_time_filter() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, _) = seeded_app().await;
 
     // Entries are created at now-1h, now-2h, now-3h, now-4h, now-5h.
     // Use ot (oldest timestamp) to filter: only entries newer than 3.5 hours ago.
@@ -2047,9 +1799,7 @@ async fn test_stream_contents_time_filter() {
 
 #[tokio::test]
 async fn test_get_entry_summary_not_found() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -2063,9 +1813,7 @@ async fn test_get_entry_summary_not_found() {
 
 #[tokio::test]
 async fn test_delete_entry_summary() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let response = app
         .server
@@ -2081,9 +1829,7 @@ async fn test_delete_entry_summary() {
 
 #[tokio::test]
 async fn summary_fragment_renders_completed_summary() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let entry_id = entry_ids[0];
 
@@ -2120,9 +1866,7 @@ async fn summary_fragment_sanitizes_a_hostile_summary() {
     // Kagi writes the summary from a page nobody here controls, and it is
     // rendered with `|safe`. Sanitizing on read (not on write) is what lets a
     // row already in the table — like this one — come back clean.
-    let mut app = create_test_app(default_test_config()).await;
-    let (user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
-    login(&mut app.server).await;
+    let (app, (user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     let entry_id = entry_ids[0];
     rdrs::models::entry_summary::upsert_pending(&app.db, user_id, entry_id)
