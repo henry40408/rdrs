@@ -1910,15 +1910,25 @@ async fn test_static_star_font_serves_and_css_scopes_it() {
         css.contains("unicode-range: U+2605-2606, U+2BE8-2BEB;"),
         "star font must stay scoped to the star code points"
     );
-    for stack in ["--font-display", "--font-body", "--font-ui", "--font-mono"] {
+    // Second, right behind the stack's own face: first, WebKit sizes every line
+    // box from Noto's tall metrics and shifts text ~2px off the icons beside it;
+    // behind the system families, those get to substitute their own ★.
+    for (stack, face) in [
+        ("--font-display", "'Newsreader'"),
+        ("--font-body", "'Newsreader'"),
+        ("--font-ui", "'Archivo'"),
+        ("--font-mono", "'IBM Plex Mono'"),
+    ] {
         let decl = css
             .split(&format!("{stack}:"))
             .nth(1)
             .unwrap_or_else(|| panic!("{stack} must be defined"));
         let decl = decl.split(';').next().unwrap();
-        assert!(
-            decl.trim_start().starts_with("'Noto Sans Symbols 2'"),
-            "{stack} must list the star font first, got: {decl}"
+        let families: Vec<&str> = decl.split(',').map(str::trim).take(2).collect();
+        assert_eq!(
+            families,
+            [face, "'Noto Sans Symbols 2'"],
+            "{stack} must list its own face, then the star font, got: {decl}"
         );
     }
 }

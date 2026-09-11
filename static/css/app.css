@@ -80,11 +80,17 @@
     --font-2xl: 1.5rem;
     --font-3xl: 2rem;
 
-    /* Font families — "Wire Room" */
-    --font-display: 'Noto Sans Symbols 2', 'Newsreader', Georgia, serif;   /* serif display + reading */
-    --font-body: 'Noto Sans Symbols 2', 'Newsreader', Georgia, serif;
-    --font-ui: 'Noto Sans Symbols 2', 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'Noto Sans Symbols 2', 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
+    /* Font families — "Wire Room". The star face goes second, never first:
+       WebKit sizes the line box from the first family listed even when its
+       `unicode-range` covers nothing on the line, and Noto's 1069/630
+       ascent/descent (Archivo's is 878/210) lifted every label ~2px off the
+       icon beside it and stretched each <kbd> from 19px to 23px. The vendored
+       faces carry no star, so second still reaches it — as long as it stays
+       ahead of the system families, which may substitute a ★ of their own. */
+    --font-display: 'Newsreader', 'Noto Sans Symbols 2', Georgia, serif;   /* serif display + reading */
+    --font-body: 'Newsreader', 'Noto Sans Symbols 2', Georgia, serif;
+    --font-ui: 'Archivo', 'Noto Sans Symbols 2', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Noto Sans Symbols 2', 'SF Mono', ui-monospace, monospace;
 
     /* Border radius */
     --radius-sm: 3px;
@@ -2861,8 +2867,13 @@ summary {
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
 }
+/* One line tall and centring its icon: the row is `flex-start` so a wrapped
+   message keeps the icon at its first line, and an icon shorter than that line
+   would otherwise hug its top, ~2px above the text. */
 .summary-error-banner .action-icon {
     flex: none;
+    height: 1lh;
+    align-items: center;
     color: var(--color-error);
     display: inline-flex;
 }
