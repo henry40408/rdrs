@@ -338,8 +338,9 @@ pub async fn recover_incomplete_jobs(
 mod tests {
     use super::*;
     use crate::models::user::Role;
-    use crate::models::{category, entry, entry_summary, feed, user};
+    use crate::models::{category, entry, entry_summary, feed};
     use crate::services::{EventBus, EventKind};
+    use crate::test_support::seed_user;
 
     fn registry() -> CancelRegistry {
         Arc::new(Mutex::new(HashMap::new()))
@@ -487,10 +488,7 @@ mod tests {
     async fn test_recover_incomplete_jobs_with_pending() {
         let db = setup_test_db().await;
 
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
         let category_id = category::create_category(&db, user_id, "Tech")
             .await
             .unwrap()
@@ -543,10 +541,7 @@ mod tests {
     async fn test_recover_incomplete_jobs_with_processing() {
         let db = setup_test_db().await;
 
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
         let category_id = category::create_category(&db, user_id, "Tech")
             .await
             .unwrap()
@@ -642,10 +637,7 @@ mod tests {
     async fn cancelled_while_queued_does_not_repopulate_cache() {
         let db = setup_test_db().await;
 
-        let u = user::create_user(&db, "canceluser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let u = seed_user(&db, "canceluser", Role::User).await.id;
         let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
         let feed_id = feed::create_feed(
             &db,
@@ -729,9 +721,7 @@ mod tests {
         let db = setup_test_db().await;
         let cancel_token = CancellationToken::new();
 
-        user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        seed_user(&db, "testuser", Role::User).await;
 
         let handle = start_summary_worker(
             rx,
@@ -776,10 +766,7 @@ mod tests {
         let mut sub = bus.subscribe();
 
         // Seed a user + entry + pending summary so set_processing finds a row.
-        let u = user::create_user(&db, "emit", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let u = seed_user(&db, "emit", Role::User).await.id;
         let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
         let feed_id = feed::create_feed(
             &db,

@@ -344,17 +344,7 @@ mod tests {
     use super::*;
     use crate::models::category;
     use crate::models::user::{self, Role};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
-
-    async fn create_test_user(db: &Db, username: &str) -> i64 {
-        user::create_user(db, username, "hash123", Role::User)
-            .await
-            .unwrap()
-            .id
-    }
+    use crate::test_support::{create_test_user, setup_db};
 
     async fn create_test_category(db: &Db, user_id: i64, name: &str) -> i64 {
         category::create_category(db, user_id, name)

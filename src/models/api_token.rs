@@ -219,18 +219,13 @@ pub async fn delete_expired(db: &Db) -> AppResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::user::{self, Role};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::user::Role;
+    use crate::test_support::{seed_user, setup_db};
 
     #[tokio::test]
     async fn test_create_and_find_api_token() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let token = create_api_token(
             &db,
@@ -254,9 +249,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_has_prefix_and_no_slash() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let token = create_api_token(&db, user.id, "greader", "", "test-agent", "127.0.0.1")
             .await
@@ -271,12 +264,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_token_is_user_scoped() {
         let db = setup_db().await;
-        let user_a = user::create_user(&db, "usera", "hash", Role::User)
-            .await
-            .unwrap();
-        let user_b = user::create_user(&db, "userb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user_a = seed_user(&db, "usera", Role::User).await;
+        let user_b = seed_user(&db, "userb", Role::User).await;
 
         let token_a = create_api_token(&db, user_a.id, "greader", "", "test-agent", "127.0.0.1")
             .await
@@ -297,9 +286,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_expired_removes_only_expired() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let expired = create_api_token(&db, user.id, "greader", "", "test-agent", "127.0.0.1")
             .await
@@ -382,9 +369,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_prunes_past_the_per_user_cap() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "capuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "capuser", Role::User).await;
 
         let overshoot = 5;
         let mut minted = Vec::new();
@@ -423,12 +408,8 @@ mod tests {
         // The prune is a bulk DELETE driven by a subquery; getting its
         // `user_id` scoping wrong would silently revoke a bystander's tokens.
         let db = setup_db().await;
-        let victim = user::create_user(&db, "victim", "hash", Role::User)
-            .await
-            .unwrap();
-        let noisy = user::create_user(&db, "noisy", "hash", Role::User)
-            .await
-            .unwrap();
+        let victim = seed_user(&db, "victim", Role::User).await;
+        let noisy = seed_user(&db, "noisy", Role::User).await;
 
         let victim_token = mint(&db, victim.id, "victim-client").await;
 

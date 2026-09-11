@@ -471,7 +471,8 @@ mod tests {
     use crate::error::AppError;
     use crate::models::entry;
     use crate::models::user::Role;
-    use crate::models::{category, feed, user};
+    use crate::models::{category, feed};
+    use crate::test_support::seed_user;
     use crate::utils::url_validation::FetchPolicy;
 
     /// Every suite here drives a `wiremock` server, which binds loopback — what
@@ -499,9 +500,7 @@ mod tests {
     /// Seed one user → category → feed whose URL points at `url`.
     /// Returns the feed id.
     async fn seed_feed(pool: &Db, url: &str) -> i64 {
-        let u = user::create_user(pool, "syncuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let u = seed_user(pool, "syncuser", Role::User).await;
         let cat = category::create_category(pool, u.id, "Tech").await.unwrap();
         feed::create_feed(
             pool,
@@ -519,9 +518,7 @@ mod tests {
 
     /// Like `seed_feed` but allows a custom user agent override.
     async fn seed_feed_with_ua(pool: &Db, url: &str, custom_user_agent: &str) -> i64 {
-        let u = user::create_user(pool, "uauser", "hash", Role::User)
-            .await
-            .unwrap();
+        let u = seed_user(pool, "uauser", Role::User).await;
         let cat = category::create_category(pool, u.id, "Tech").await.unwrap();
         feed::create_feed(
             pool,

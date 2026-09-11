@@ -124,19 +124,13 @@ mod tests {
     use super::*;
     use crate::db_execute;
     use crate::models::user::Role;
-    use crate::models::{category, entry, feed, user};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::{category, entry, feed};
+    use crate::test_support::{seed_user, setup_db};
 
     #[tokio::test]
     async fn test_delete_expired() {
         let db = setup_db().await;
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
         let category_id = category::create_category(&db, user_id, "Tech")
             .await
             .unwrap()
@@ -214,10 +208,7 @@ mod tests {
     async fn test_cleanup_worker_runs_cleanup_on_interval() {
         let db = setup_db().await;
 
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
         let category_id = category::create_category(&db, user_id, "Tech")
             .await
             .unwrap()
@@ -277,10 +268,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_worker_sweeps_expired_sessions() {
         let db = setup_db().await;
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
 
         let expired = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
             .await
@@ -319,10 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_worker_sweeps_expired_api_tokens() {
         let db = setup_db().await;
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
 
         let expired =
             api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
@@ -366,10 +351,7 @@ mod tests {
         // would pass unchanged against a `continue`-on-error chain; this one
         // drives the real per-tick body with one sweep guaranteed to fail.
         let db = setup_db().await;
-        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(&db, "testuser", Role::User).await.id;
 
         let expired_session = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
             .await

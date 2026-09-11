@@ -274,19 +274,8 @@ pub async fn exists(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::user::Role;
-    use crate::models::{category, entry, feed, user};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
-
-    async fn create_test_user(db: &Db, username: &str) -> i64 {
-        user::create_user(db, username, "hash123", Role::User)
-            .await
-            .unwrap()
-            .id
-    }
+    use crate::models::{category, entry, feed};
+    use crate::test_support::{create_test_user, setup_db};
 
     async fn create_test_entry(db: &Db, user_id: i64) -> i64 {
         let category_id = category::create_category(db, user_id, "Tech")

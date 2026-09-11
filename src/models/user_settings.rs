@@ -488,11 +488,8 @@ pub async fn update_pixel_tracking(db: &Db, user_id: i64, enabled: bool) -> AppR
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::user::{self, Role};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::user::Role;
+    use crate::test_support::{seed_user, setup_db};
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
@@ -517,10 +514,7 @@ mod tests {
     }
 
     async fn seeded_user(db: &Db) -> i64 {
-        user::create_user(db, "settingsuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id
+        seed_user(db, "settingsuser", Role::User).await.id
     }
 
     #[tokio::test]
@@ -620,9 +614,7 @@ mod tests {
     #[tokio::test]
     async fn pixel_tracking_defaults_to_opted_out() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         // No settings row at all — a brand-new account must not be tracking.
         assert_eq!(
@@ -634,9 +626,7 @@ mod tests {
     #[tokio::test]
     async fn enabling_pixel_tracking_twice_keeps_the_original_baseline() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         update_pixel_tracking(&db, user.id, true).await.unwrap();
         let first = get_pixel_tracking_enabled_at(&db, user.id)
@@ -656,9 +646,7 @@ mod tests {
     #[tokio::test]
     async fn disabling_pixel_tracking_clears_the_baseline() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         update_pixel_tracking(&db, user.id, true).await.unwrap();
         assert!(
@@ -678,9 +666,7 @@ mod tests {
     #[tokio::test]
     async fn offline_keep_defaults_to_off() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         // No settings row at all — the case a brand-new account is in, and the
         // one where "on" would mean writing articles to a disk nobody asked to
@@ -694,9 +680,7 @@ mod tests {
     #[tokio::test]
     async fn offline_keep_round_trips_and_rejects_out_of_range() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         update_offline_keep(&db, user.id, 50).await.unwrap();
         assert_eq!(get_offline_keep(&db, user.id).await.unwrap(), 50);
@@ -717,9 +701,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_entries_per_page_default() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let entries_per_page = get_entries_per_page(&db, user.id).await.unwrap();
         assert_eq!(entries_per_page, DEFAULT_ENTRIES_PER_PAGE);
@@ -728,9 +710,7 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_and_find() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let settings = upsert(&db, user.id, 50).await.unwrap();
         assert_eq!(settings.user_id, user.id);
@@ -749,9 +729,7 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_validation() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         // Too low
         let result = upsert(&db, user.id, 5).await;
@@ -772,9 +750,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_theme_default() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         // No settings exist yet, should return None
         let theme = get_theme(&db, user.id).await.unwrap();
@@ -784,9 +760,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_and_get_theme() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         update_theme(&db, user.id, Some("dark".to_string()))
             .await
@@ -808,9 +782,7 @@ mod tests {
     #[tokio::test]
     async fn test_theme_with_existing_settings() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         upsert(&db, user.id, 50).await.unwrap();
 
@@ -832,9 +804,7 @@ mod tests {
     #[tokio::test]
     async fn entries_per_page_suggestions_are_all_accepted() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "epp_sugg", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "epp_sugg", Role::User).await;
 
         assert!(!ENTRIES_PER_PAGE_SUGGESTIONS.is_empty());
         for &v in ENTRIES_PER_PAGE_SUGGESTIONS {
@@ -854,9 +824,7 @@ mod tests {
     #[tokio::test]
     async fn retention_read_days_suggestions_are_all_accepted() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "rrd_sugg", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "rrd_sugg", Role::User).await;
 
         assert!(RETENTION_READ_DAYS_SUGGESTIONS.contains(&0));
         for &v in RETENTION_READ_DAYS_SUGGESTIONS {
@@ -876,18 +844,14 @@ mod tests {
     #[tokio::test]
     async fn test_retention_read_days_default_zero() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "ret", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "ret", Role::User).await;
         assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn test_update_retention_read_days() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "ret", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "ret", Role::User).await;
 
         update_retention_read_days(&db, user.id, 30).await.unwrap();
         assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), 30);
@@ -924,9 +888,7 @@ mod tests {
     #[tokio::test]
     async fn test_sidebar_prefs_default() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "sb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "sb", Role::User).await;
 
         // No settings row at all.
         assert_eq!(
@@ -944,9 +906,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_sidebar_prefs() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "sb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "sb", Role::User).await;
 
         update_sidebar_prefs(&db, user.id, SIDEBAR_SORT_UNREAD, true)
             .await
@@ -969,9 +929,7 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_sidebar_sort_falls_back_to_default() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "sb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "sb", Role::User).await;
 
         assert_eq!(parse_sidebar_sort("nonsense"), DEFAULT_SIDEBAR_SORT);
 

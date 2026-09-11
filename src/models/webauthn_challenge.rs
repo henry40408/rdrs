@@ -141,18 +141,13 @@ pub async fn find_and_delete_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::user::{self, Role};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::user::Role;
+    use crate::test_support::{seed_user, setup_db};
 
     #[tokio::test]
     async fn test_create_and_find_challenge() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let challenge_bytes = vec![1, 2, 3, 4];
         let state_data = r#"{"some":"data"}"#;
@@ -176,9 +171,7 @@ mod tests {
     #[tokio::test]
     async fn test_find_and_delete_challenge() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let challenge_bytes = vec![1, 2, 3, 4];
         create_challenge(
