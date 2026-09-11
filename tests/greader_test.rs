@@ -1548,10 +1548,10 @@ async fn test_disable_tag_emits_sidebar_event() {
 /// A `Sec-Fetch-Site: same-site` forged POST — no CSRF token, no `GReader` `T`
 /// post token — must not be able to unsubscribe a feed.
 ///
-/// This surface is exempt from the synchronizer-token guard
-/// (`CSRF_SKIP_PREFIXES`) and `verify_post_token_if_needed` skips the `T` token
-/// for cookie credentials, so `csrf_origin_guard` is its only CSRF defence.
-/// `SameSite=Lax` does not cover the gap: it withholds the session cookie only
+/// `verify_post_token_if_needed` skips the `T` token for cookie credentials, so
+/// the two CSRF guards are all that stand in front of it. The origin guard
+/// rejects this first; the synchronizer-token guard, which has covered this
+/// surface since #544, would too. `SameSite=Lax` does not cover the gap: it withholds the session cookie only
 /// from *cross*-site requests, while a sibling subdomain or another port on the
 /// same host is same-site and still sends it.
 #[tokio::test]
@@ -1589,8 +1589,8 @@ async fn test_same_site_forged_post_cannot_unsubscribe() {
 /// session's CSRF token. `csrf_guard` used to exempt these paths outright on
 /// the grounds that they are bearer-authenticated, but `GReaderUser` also
 /// accepts the session cookie and `verify_post_token_if_needed` waives the
-/// `GReader` `T` token for that credential — so nothing but `csrf_origin_guard`
-/// stood in front of a cookie-authenticated mutation.
+/// `GReader` `T` token for that credential — so nothing but the CSRF origin
+/// guard stood in front of a cookie-authenticated mutation.
 #[tokio::test]
 async fn test_cookie_authenticated_greader_post_requires_the_csrf_token() {
     let mut app = create_test_app(default_test_config()).await;

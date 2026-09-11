@@ -550,6 +550,12 @@ size and attack surface. The build-stage design is described in
   session and breaking cached image-proxy URLs).
 - Mount the `/data` volume so the SQLite database persists.
 - Put RDRS behind a reverse proxy for TLS termination.
+- Have the proxy forward the `Host` header exactly as the browser sent it, port
+  included. For browsers that do not send `Sec-Fetch-Site` (Safari before 16.4),
+  the CSRF guard checks that `Origin` matches `Host`, so a proxy that drops the
+  port — nginx's `proxy_set_header Host $host` on a non-default port — gets those
+  users' form submissions rejected with `403`. Use `$http_host` instead; Caddy and
+  Traefik forward it unchanged by default.
 - RDRS sends its own security headers on every response — `Content-Security-Policy`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`,
   `X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`. These are

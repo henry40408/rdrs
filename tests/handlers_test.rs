@@ -6448,7 +6448,7 @@ async fn test_existing_hsts_header_is_not_overwritten() {
 #[tokio::test]
 async fn hsts_is_sent_on_a_csrf_rejected_response() {
     // Regression test: HSTS must be the outermost layer, because
-    // `csrf_origin_guard` short-circuits with a 403 without calling `next`,
+    // the CSRF origin guard short-circuits with a 403 without calling `next`,
     // so a layer nested inside it (as HSTS used to be) would never run.
     let config = Config::from_map(|k| {
         (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
@@ -6538,7 +6538,7 @@ async fn test_security_headers_on_static_and_a_page() {
 
 #[tokio::test]
 async fn security_headers_are_sent_on_a_csrf_rejected_response() {
-    // Same regression the HSTS test above guards: `csrf_origin_guard`
+    // Same regression the HSTS test above guards: the CSRF origin guard
     // short-circuits with a 403 without calling `next`, so a layer nested
     // inside it would never run. A rejected response is exactly the one an
     // attacker sees, so it must carry the policy too.

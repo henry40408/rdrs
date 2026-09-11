@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use tokio::sync::mpsc;
-use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
+use tower_http::{compression::CompressionLayer, csrf::CsrfLayer, timeout::TimeoutLayer};
 use webauthn_rs::prelude::Webauthn;
 
 use services::http::SERVER_REQUEST_TIMEOUT;
@@ -466,10 +466,15 @@ pub fn create_router(state: AppState) -> Router {
             middleware::flash::sign_flash_cookies,
         ))
         // First-line CSRF defence: reject provably cross-site state-changing
-        // requests. Header-only and stateless, so its position in the stack is
-        // immaterial; the synchronizer-token guard is layered on separately.
+        // requests (see `middleware::csrf`). Header-only and stateless, so its
+        // position in the stack is immaterial; the synchronizer-token guard is
+        // layered on separately.
+        .layer(CsrfLayer::new())
+        // Directly outside the guard: it reads the `ProtectionError` the guard
+        // attaches to its 403, which is the only way to log a rejection with the
+        // request it rejected.
         .layer(axum::middleware::from_fn(
-            middleware::csrf::csrf_origin_guard,
+            middleware::csrf::log_cross_site_rejection,
         ));
 
     let router = Router::new()
