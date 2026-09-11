@@ -1097,11 +1097,22 @@ async fn test_categories_page() {
 }
 
 #[tokio::test]
-async fn test_categories_page_unauthorized() {
+async fn test_pages_redirect_when_signed_out() {
     let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/categories").await;
-    response.assert_status_see_other();
+    for path in [
+        "/categories",
+        "/feeds",
+        "/entries",
+        "/entries/1",
+        "/user-settings",
+        "/settings",
+    ] {
+        assert_eq!(
+            server.get(path).await.status_code(),
+            StatusCode::SEE_OTHER,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1123,14 +1134,6 @@ async fn test_feeds_page() {
 }
 
 #[tokio::test]
-async fn test_feeds_page_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/feeds").await;
-    response.assert_status_see_other();
-}
-
-#[tokio::test]
 async fn test_entries_page() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
@@ -1140,27 +1143,11 @@ async fn test_entries_page() {
 }
 
 #[tokio::test]
-async fn test_entries_page_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/entries").await;
-    response.assert_status_see_other();
-}
-
-#[tokio::test]
 async fn test_entry_page() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
     // Entry page now redirects to the list page with ?entry= param
-    let response = server.get("/entries/1").await;
-    response.assert_status_see_other();
-}
-
-#[tokio::test]
-async fn test_entry_page_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
     let response = server.get("/entries/1").await;
     response.assert_status_see_other();
 }
@@ -1177,14 +1164,6 @@ async fn test_user_settings_page() {
 }
 
 #[tokio::test]
-async fn test_user_settings_page_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/user-settings").await;
-    response.assert_status_see_other();
-}
-
-#[tokio::test]
 async fn test_settings_page() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
@@ -1196,14 +1175,6 @@ async fn test_settings_page() {
     assert!(!body.contains("<rdrs-settings-page>"));
     assert!(!body.contains("/static/js/pages/settings.js"));
     assert!(body.contains("<h1>App</h1>"));
-}
-
-#[tokio::test]
-async fn test_settings_page_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/settings").await;
-    response.assert_status_see_other();
 }
 
 // --- Cross-User Isolation Tests ---
@@ -2062,67 +2033,22 @@ async fn test_passkey_delete_other_user() {
 // --- Favicon Handler Tests ---
 
 #[tokio::test]
-async fn test_favicon_ico() {
+async fn test_icons_and_static_files_carry_their_content_type() {
     let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/favicon.ico").await;
-    response.assert_status_ok();
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(content_type, "image/x-icon");
-}
-
-#[tokio::test]
-async fn test_favicon_svg() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/favicon.svg").await;
-    response.assert_status_ok();
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(content_type, "image/svg+xml");
-}
-
-#[tokio::test]
-async fn test_favicon_16() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/favicon-16x16.png").await;
-    response.assert_status_ok();
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(content_type, "image/png");
-}
-
-#[tokio::test]
-async fn test_favicon_32() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/favicon-32x32.png").await;
-    response.assert_status_ok();
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(content_type, "image/png");
+    for (path, content_type) in [
+        ("/favicon.ico", "image/x-icon"),
+        ("/favicon.svg", "image/svg+xml"),
+        ("/favicon-16x16.png", "image/png"),
+        ("/favicon-32x32.png", "image/png"),
+        (
+            "/static/js/components/rdrs-sidebar.js",
+            "application/javascript",
+        ),
+    ] {
+        let response = server.get(path).await;
+        response.assert_status_ok();
+        assert_eq!(response.header("content-type"), content_type, "{path}");
+    }
 }
 
 #[tokio::test]
@@ -2132,12 +2058,7 @@ async fn test_apple_touch_icon() {
     let response = server.get("/apple-touch-icon.png").await;
     response.assert_status_ok();
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let content_type = response.header("content-type");
     assert_eq!(content_type, "image/png");
 
     // iOS home-screen icons do not support transparency (transparent pixels
@@ -2167,40 +2088,14 @@ async fn test_static_js_serves_known_file() {
     let response = server.get("/static/js/utils.js").await;
     response.assert_status_ok();
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let content_type = response.header("content-type");
     assert_eq!(content_type, "application/javascript");
 
-    let cache_control = response
-        .headers()
-        .get("cache-control")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let cache_control = response.header("cache-control");
     assert_eq!(cache_control, expected_static_cache_control());
 
     let body = response.text();
     assert!(!body.is_empty(), "JS file should not be empty");
-}
-
-#[tokio::test]
-async fn test_static_js_serves_component_file() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/static/js/components/rdrs-sidebar.js").await;
-    response.assert_status_ok();
-
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(content_type, "application/javascript");
 }
 
 #[tokio::test]
@@ -2218,20 +2113,10 @@ async fn test_static_css_serves_app_css() {
     let response = server.get("/static/css/app.css").await;
     response.assert_status_ok();
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let content_type = response.header("content-type");
     assert_eq!(content_type, "text/css; charset=utf-8");
 
-    let cache_control = response
-        .headers()
-        .get("cache-control")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let cache_control = response.header("cache-control");
     assert_eq!(cache_control, expected_static_cache_control());
 
     let body = response.text();
@@ -2251,20 +2136,10 @@ async fn test_static_font_serves_woff2() {
 
     // Self-hosted webfonts are served with the `font/woff2` content type from
     // the binary-embedded FONTS table (ahead of the text FILES table).
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let content_type = response.header("content-type");
     assert_eq!(content_type, "font/woff2");
 
-    let cache_control = response
-        .headers()
-        .get("cache-control")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let cache_control = response.header("cache-control");
     assert_eq!(cache_control, expected_static_cache_control());
 
     let body = response.into_bytes();
@@ -2619,23 +2494,17 @@ async fn test_export_opml_content_type() {
     let response = server.get("/reader/api/0/subscription/export").await;
     response.assert_status_ok();
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let content_type = response.header("content-type").to_str().unwrap().to_owned();
     assert!(
         content_type.contains("application/xml"),
         "Content-Type should be application/xml, got: {content_type}"
     );
 
     let content_disposition = response
-        .headers()
-        .get("content-disposition")
-        .unwrap()
+        .header("content-disposition")
         .to_str()
-        .unwrap();
+        .unwrap()
+        .to_owned();
     assert!(
         content_disposition.contains("attachment"),
         "Content-Disposition should contain 'attachment', got: {content_disposition}"
