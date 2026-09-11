@@ -4110,18 +4110,35 @@ mod tests {
     }
 
     #[test]
-    fn highlight_wraps_simple_match() {
-        let out = highlight_html("Sunrise Over Kyoto", &["sunrise"]);
-        assert_eq!(out, "<mark>Sunrise</mark> Over Kyoto");
-    }
-
-    #[test]
-    fn highlight_wraps_multiple_matches_case_insensitive() {
-        let out = highlight_html("SUNRISE sunrise Sunrise", &["sunrise"]);
-        assert_eq!(
-            out,
-            "<mark>SUNRISE</mark> <mark>sunrise</mark> <mark>Sunrise</mark>"
-        );
+    fn highlight_wraps_matches_and_escapes_the_rest() {
+        for (text, terms, expected) in [
+            (
+                "Sunrise Over Kyoto",
+                &["sunrise"][..],
+                "<mark>Sunrise</mark> Over Kyoto",
+            ),
+            (
+                "SUNRISE sunrise Sunrise",
+                &["sunrise"],
+                "<mark>SUNRISE</mark> <mark>sunrise</mark> <mark>Sunrise</mark>",
+            ),
+            // "learn" is contained in "learning"; ranges merge into one wrapper.
+            (
+                "machine learning",
+                &["learn", "learning"],
+                "machine <mark>learning</mark>",
+            ),
+            ("Weather report", &["sunrise"], "Weather report"),
+            (
+                "<b>sunrise</b>",
+                &["sunrise"],
+                "&lt;b&gt;<mark>sunrise</mark>&lt;/b&gt;",
+            ),
+            ("Hi <world>", &[], "Hi &lt;world&gt;"),
+            ("Hi <world>", &[""], "Hi &lt;world&gt;"),
+        ] {
+            assert_eq!(highlight_html(text, terms), expected, "{text} {terms:?}");
+        }
     }
 
     #[test]
@@ -4137,31 +4154,6 @@ mod tests {
             highlight_html("人工智慧 and AI news", &["AI", "人工智慧"]),
             expected
         );
-    }
-
-    #[test]
-    fn highlight_merges_overlapping_term_ranges() {
-        // "learn" is contained in "learning"; ranges merge into one wrapper.
-        let out = highlight_html("machine learning", &["learn", "learning"]);
-        assert_eq!(out, "machine <mark>learning</mark>");
-    }
-
-    #[test]
-    fn highlight_no_match_returns_escaped_only() {
-        let out = highlight_html("Weather report", &["sunrise"]);
-        assert_eq!(out, "Weather report");
-    }
-
-    #[test]
-    fn highlight_escapes_html_special_chars() {
-        let out = highlight_html("<b>sunrise</b>", &["sunrise"]);
-        assert_eq!(out, "&lt;b&gt;<mark>sunrise</mark>&lt;/b&gt;");
-    }
-
-    #[test]
-    fn highlight_empty_terms_returns_escaped() {
-        assert_eq!(highlight_html("Hi <world>", &[]), "Hi &lt;world&gt;");
-        assert_eq!(highlight_html("Hi <world>", &[""]), "Hi &lt;world&gt;");
     }
 
     #[test]

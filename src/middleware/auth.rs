@@ -684,41 +684,24 @@ mod tests {
     }
 
     #[test]
-    fn response_is_publicly_cacheable_false_for_no_store() {
-        assert!(!response_is_publicly_cacheable(&resp_with_cache_control(
-            "no-store"
-        )));
-    }
-
-    #[test]
-    fn response_is_publicly_cacheable_false_for_private() {
-        assert!(!response_is_publicly_cacheable(&resp_with_cache_control(
-            "private, max-age=0"
-        )));
-    }
-
-    #[test]
-    fn response_is_publicly_cacheable_true_for_public_max_age() {
-        // The proxy's and feed icon's actual directive.
-        assert!(response_is_publicly_cacheable(&resp_with_cache_control(
-            "public, max-age=86400"
-        )));
-    }
-
-    #[test]
-    fn response_is_publicly_cacheable_true_when_neither_no_store_nor_private() {
-        // No `public` either — the rule only excludes no-store/private, it
-        // does not require an explicit `public`.
-        assert!(response_is_publicly_cacheable(&resp_with_cache_control(
-            "max-age=600"
-        )));
-    }
-
-    #[test]
-    fn response_is_publicly_cacheable_directive_match_is_case_insensitive() {
-        assert!(!response_is_publicly_cacheable(&resp_with_cache_control(
-            "No-Store"
-        )));
+    fn response_is_publicly_cacheable_by_directive() {
+        for (directive, cacheable) in [
+            ("no-store", false),
+            ("private, max-age=0", false),
+            // Directive names match case-insensitively.
+            ("No-Store", false),
+            // The proxy's and feed icon's actual directive.
+            ("public, max-age=86400", true),
+            // No `public` either — the rule only excludes no-store/private, it
+            // does not require an explicit `public`.
+            ("max-age=600", true),
+        ] {
+            assert_eq!(
+                response_is_publicly_cacheable(&resp_with_cache_control(directive)),
+                cacheable,
+                "{directive}"
+            );
+        }
     }
 
     #[test]
