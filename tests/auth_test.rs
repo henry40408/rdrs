@@ -908,9 +908,7 @@ async fn test_unmasquerade_not_masquerading() {
 async fn test_login_page() {
     let server = create_test_server(default_test_config()).await;
 
-    let response = server.get("/login").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/login").await;
     assert!(body.contains("Login"));
 }
 
@@ -1102,9 +1100,7 @@ async fn test_unread_page() {
     login_response.assert_status_ok();
     common::apply_csrf(&mut server, &login_response);
 
-    let response = server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/").await;
     // SSR layout (PR-10) — sidebar bootstrap JSON still inlined; no CSR shell.
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains(r#"id="rdrs-sidebar-bootstrap""#));
@@ -1145,9 +1141,7 @@ async fn test_admin_page_accessible_by_admin() {
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
 
-    let response = server.get("/admin").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/admin").await;
     assert!(body.contains("Admin Panel"));
 }
 
@@ -1213,9 +1207,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
 
-    let response = server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/").await;
     // Admin nav is rendered client-side by <rdrs-sidebar>; the initial HTML
     // carries `is_admin: true` in the sidebar bootstrap JSON.
     assert!(body.contains(r#""is_admin":true"#));
@@ -1246,9 +1238,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
 
-    let response = server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/").await;
     assert!(!body.contains("data-testid=\"nav-admin\""));
     assert!(!body.contains(r#"href="/admin""#));
 }
@@ -1351,9 +1341,7 @@ async fn test_flash_message_cleared_after_display() {
     let body = response.text();
     assert!(body.contains("First message"));
 
-    let response = server.get("/login").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/login").await;
     assert!(!body.contains("First message"));
 }
 

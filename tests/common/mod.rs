@@ -54,6 +54,14 @@ pub async fn create_test_app(config: Config) -> TestApp {
     }
 }
 
+/// `GET path`, assert a 200, and return the body.
+#[allow(dead_code)]
+pub async fn get_ok(server: &TestServer, path: &str) -> String {
+    let response = server.get(path).await;
+    response.assert_status_ok();
+    response.text()
+}
+
 /// Sign `username` in with the fixture password `vulture-mango-77-quilt`.
 #[allow(dead_code)]
 pub async fn login(server: &mut TestServer, username: &str) {

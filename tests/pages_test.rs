@@ -35,9 +35,7 @@ async fn test_unread_page_renders_ssr_layout() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/").await;
 
     // CSR shell must be gone from this route (SSR-first PR-10).
     assert!(!body.contains("<rdrs-entries-page>"));
@@ -59,9 +57,7 @@ async fn test_unread_page_shows_onboarding_when_no_feeds() {
     // misleading "All caught up" empty state.
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/").await;
 
     assert!(body.contains("data-testid=\"onboarding-guide\""));
     assert!(body.contains("Add your first feed"));
@@ -191,9 +187,7 @@ async fn test_simplified_entry_is_tagged_zh_hans() {
     .await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get(&format!("/?entry={entry_id}")).await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, &format!("/?entry={entry_id}")).await;
 
     assert!(
         body.contains(r#"data-testid="entry-title-link" lang="zh-Hans""#),
@@ -226,9 +220,7 @@ async fn test_traditional_entry_is_not_tagged() {
     .await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get(&format!("/?entry={entry_id}")).await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, &format!("/?entry={entry_id}")).await;
 
     assert!(
         !body.contains(r#"lang="zh-Hans""#),
@@ -243,9 +235,7 @@ async fn test_unread_page_entry_query_populates_reading_pane() {
     let entry_id = seed_one_entry(&app.db, "admin", "deep-link-ok").await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get(&format!("/?entry={entry_id}")).await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, &format!("/?entry={entry_id}")).await;
 
     // Reading pane is rendered with the deep-linked entry, not the empty state.
     assert!(
@@ -279,9 +269,7 @@ async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
     let (app, _) = app_signed_in_as("admin").await;
 
     // No entries seeded, so id 99999 cannot resolve.
-    let response = app.server.get("/?entry=99999").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/?entry=99999").await;
 
     // Invalid deep-link id must silently fall back to the empty pane —
     // the list page itself must still render.
@@ -354,9 +342,7 @@ async fn test_admin_page_while_masquerading() {
         .assert_status(StatusCode::SEE_OTHER);
 
     // Admin page should still be accessible
-    let response = app.server.get("/admin").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/admin").await;
     assert!(body.contains("Admin"));
 }
 
@@ -364,9 +350,7 @@ async fn test_admin_page_while_masquerading() {
 async fn test_user_settings_page_renders_ssr_content() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/user-settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/user-settings").await;
 
     // Old CSR markers gone.
     assert!(!body.contains("<rdrs-user-settings-page>"));
@@ -403,9 +387,7 @@ async fn test_user_settings_page_offers_number_field_suggestions() {
 
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/user-settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/user-settings").await;
 
     // Each input points at its list, and the list exists.
     for (input_id, list_id) in [
@@ -456,9 +438,7 @@ async fn test_user_settings_lists_api_tokens() {
     .await
     .unwrap();
 
-    let response = app.server.get("/user-settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/user-settings").await;
 
     assert!(body.contains("GReader API Tokens"));
     assert!(body.contains("FeedMe/1.0"));
@@ -638,9 +618,7 @@ async fn test_user_settings_renders_session_cards() {
     .await
     .unwrap();
 
-    let response = app.server.get("/user-settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/user-settings").await;
 
     // The full User-Agent is rendered, not a truncated or tooltip-only copy.
     assert!(body.contains("Mozilla/5.0 (X11; Linux x86_64) OtherDevice/1.0"));
@@ -658,9 +636,7 @@ async fn test_user_settings_renders_session_cards() {
 async fn test_settings_page_renders_ssr_content() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/settings").await;
 
     // SSR content — no more <rdrs-settings-page> element / page-script.
     assert!(!body.contains("<rdrs-settings-page>"));
@@ -696,9 +672,7 @@ async fn test_settings_page_reflects_custom_config() {
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/settings").await;
 
     assert!(body.contains("Custom-Agent/2.0"));
     assert!(body.contains("(custom)"));
@@ -727,9 +701,7 @@ async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/settings").await;
 
     // Image proxy secret status reflects the auto-generated runtime state.
     assert!(body.contains("Auto-generated"));
@@ -747,9 +719,7 @@ async fn test_settings_page_redacts_database_password() {
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/settings").await;
 
     assert!(
         !body.contains("sup3rs3cret"),
@@ -776,9 +746,7 @@ async fn test_login_page_hides_signup_when_disabled() {
     };
     let app = create_test_app(config).await;
 
-    let response = app.server.get("/login").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/login").await;
 
     // Register link should not be present or should be hidden
     // This depends on template logic
@@ -873,9 +841,7 @@ async fn test_entries_page_with_flash() {
 async fn test_entries_page_renders_ssr_layout() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/entries").await;
     // SSR layout: no CSR shell, no entries.js page script.
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(!body.contains("/static/js/pages/entries.js"));
@@ -886,9 +852,7 @@ async fn test_entries_page_renders_ssr_layout() {
 async fn test_summarized_entries_page_renders_ssr_layout() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/entries/summarized").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/entries/summarized").await;
     // SSR layout: no CSR shell, no entries.js page script.
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(!body.contains("/static/js/pages/entries.js"));
@@ -927,9 +891,7 @@ async fn test_user_settings_page_with_flash() {
 async fn test_regular_user_unread_page_no_admin_link() {
     let (app, _) = app_signed_in_as("user").await;
 
-    let response = app.server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/").await;
 
     // Should show username
     assert!(body.contains("user"));
@@ -1007,9 +969,7 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
 async fn test_read_entries_page() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/entries/read").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/entries/read").await;
     // SSR layout: no CSR shell.
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains("Read Entries") || body.contains("read"));
@@ -1019,9 +979,7 @@ async fn test_read_entries_page() {
 async fn test_starred_entries_page() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/entries/starred").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/entries/starred").await;
     // SSR layout: no CSR shell.
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains("Starred Entries") || body.contains("starred"));
@@ -1031,9 +989,7 @@ async fn test_starred_entries_page() {
 async fn test_summarized_entries_page() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/entries/summarized").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/entries/summarized").await;
     // SSR layout: no CSR shell.
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains("Summarized Entries") || body.contains("summarized"));
@@ -1043,9 +999,7 @@ async fn test_summarized_entries_page() {
 async fn test_search_page() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/search").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/search").await;
     // SSR page: form + empty-state hint, no CSR shell.
     assert!(body.contains("<h1>Search</h1>"));
     assert!(body.contains("<form method=\"get\" action=\"/search\""));
@@ -1101,9 +1055,7 @@ async fn test_search_page_with_results() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/search?q=Quokka").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/search?q=Quokka").await;
     assert!(body.contains("data-testid=\"search-results\""));
     // Title and snippet wrap query matches in <mark>; the un-matched fragment
     // ("Discovery in Western Australia") still appears verbatim.
@@ -1125,9 +1077,7 @@ async fn test_search_page_with_results() {
 async fn test_search_page_no_results() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/search?q=zzznotfoundzzz").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/search?q=zzznotfoundzzz").await;
     assert!(body.contains("Nothing matched"));
     assert!(body.contains("zzznotfoundzzz"));
     // Tier-1 empty-state with the no-results heading, behind the stable testid.
@@ -1140,9 +1090,7 @@ async fn test_search_page_invalid_query_shows_error_no_results() {
     let (app, _) = app_signed_in_as("admin").await;
 
     // "(rust OR" — unbalanced parenthesis, url-encoded.
-    let response = app.server.get("/search?q=%28rust%20OR").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/search?q=%28rust%20OR").await;
     assert!(body.contains("Search syntax error"));
     assert!(body.contains("data-testid=\"search-error\""));
     assert!(!body.contains("data-testid=\"search-results\""));
@@ -1152,9 +1100,7 @@ async fn test_search_page_invalid_query_shows_error_no_results() {
 async fn test_search_page_valid_structured_query_renders_without_error() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/search?q=is%3Aunread").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/search?q=is%3Aunread").await;
     assert!(!body.contains("Search syntax error"));
     assert!(!body.contains("data-testid=\"search-error\""));
 }
@@ -1163,9 +1109,7 @@ async fn test_search_page_valid_structured_query_renders_without_error() {
 async fn test_search_page_has_syntax_help_panel() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/search").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/search").await;
     assert!(body.contains("class=\"search-syntax-help\""));
     assert!(body.contains("Search syntax"));
     assert!(body.contains("is:unread"));
@@ -2724,9 +2668,7 @@ async fn test_feeds_page_renders_ssr_rows() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/feeds").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds").await;
 
     // SSR content includes the seeded feed title, category, and per-row
     // form actions wired to the PR-8 T1 endpoints.
@@ -2750,9 +2692,7 @@ async fn test_feeds_page_renders_ssr_rows() {
 async fn test_feeds_page_explains_freshness_rules() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/feeds").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds").await;
 
     assert!(
         body.contains("data-testid=\"feed-freshness-help\""),
@@ -2811,9 +2751,7 @@ async fn test_feed_edit_page_renders() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/feeds/1/edit").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds/1/edit").await;
 
     assert!(body.contains("<h1>Edit Feed</h1>"));
     assert!(body.contains("<form method=\"post\" action=\"/feeds/1/edit\">"));
@@ -2854,9 +2792,7 @@ async fn test_feed_edit_page_offers_http_setting_suggestions() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/feeds/1/edit").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds/1/edit").await;
 
     for (input_id, list_id) in [
         ("custom_user_agent", "user-agent-list"),
@@ -2918,9 +2854,7 @@ async fn test_feed_edit_page_omits_the_referrer_list_when_there_is_nothing_to_su
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/feeds/1/edit").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds/1/edit").await;
 
     assert!(
         !body.contains(r#"<datalist id="referrer-list">"#),
@@ -2982,9 +2916,7 @@ async fn test_unknown_route_logged_out_redirects_to_login() {
 async fn test_feeds_import_page_renders() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/feeds/import").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds/import").await;
 
     assert!(body.contains("<h1>Import OPML</h1>"));
     assert!(body.contains("enctype=\"multipart/form-data\""));
@@ -3015,9 +2947,7 @@ async fn test_categories_page_renders_ssr_content() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/categories").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/categories").await;
 
     // Old CSR markers gone.
     assert!(!body.contains("<rdrs-categories-page>"));
@@ -3040,9 +2970,7 @@ async fn test_categories_page_renders_ssr_content() {
 async fn test_categories_page_renders_empty_state() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/categories").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/categories").await;
 
     // No CSR shell on the SSR page.
     assert!(!body.contains("<rdrs-categories-page>"));
@@ -3055,9 +2983,7 @@ async fn test_categories_page_renders_empty_state() {
 async fn test_admin_page_renders_ssr_content() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/admin").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/admin").await;
 
     // Old CSR markers gone.
     assert!(!body.contains("<rdrs-admin-page>"));
@@ -3088,9 +3014,7 @@ async fn test_admin_page_explains_why_account_creation_is_unavailable() {
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/admin").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/admin").await;
 
     assert!(body.contains("<h2>Add an account</h2>"));
     assert!(body.contains("data-testid=\"admin-create-user-unavailable\""));
@@ -3132,9 +3056,7 @@ async fn test_feeds_page_filter_errors_only_renders_error_rows() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/feeds?filter=errors").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds?filter=errors").await;
     assert!(body.contains("Bad Feed"));
     assert!(!body.contains("Good Feed"));
     // Active filter pill is marked.
@@ -3179,9 +3101,7 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
 
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/feeds?category=1").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/feeds?category=1").await;
     assert!(body.contains("Feed In A"));
     assert!(!body.contains("Feed In B"));
     // The active category's <option> must carry `selected` so the filter
@@ -3222,9 +3142,7 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
 #[tokio::test]
 async fn test_login_page_does_not_load_logged_in_chrome() {
     let app = create_test_app(default_test_config()).await;
-    let response = app.server.get("/login").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/login").await;
 
     // None of the logged-in chrome should appear on the pre-login shell.
     assert!(!body.contains("rdrs-kb-help.js"));
@@ -3239,9 +3157,7 @@ async fn test_login_page_does_not_load_logged_in_chrome() {
 #[tokio::test]
 async fn test_setup_page_does_not_load_logged_in_chrome() {
     let app = create_test_app(default_test_config()).await;
-    let response = app.server.get("/setup").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/setup").await;
 
     assert!(!body.contains("rdrs-kb-help.js"));
     assert!(!body.contains("rdrs-sidebar.js"));
@@ -3257,9 +3173,7 @@ async fn test_logged_in_page_loads_full_chrome() {
 
     // /settings extends app_layout.html — same chrome as every other
     // logged-in route.
-    let response = app.server.get("/settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/settings").await;
 
     // All chrome scripts must be present.
     assert!(body.contains("rdrs-kb-help.js"));

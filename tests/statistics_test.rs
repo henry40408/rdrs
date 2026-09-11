@@ -76,9 +76,7 @@ async fn test_statistics_page_renders_ssr_content() {
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/statistics?period=all").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/statistics?period=all").await;
 
     // SSR content is present — period buttons, stats cards, headings.
     assert!(body.contains("stats-period-btn"));
@@ -119,9 +117,7 @@ async fn test_statistics_page_marks_the_selected_period_active() {
 async fn test_statistics_page_admin_sees_sitewide() {
     let (app, _) = app_signed_in_as("admin").await;
 
-    let response = app.server.get("/statistics").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/statistics").await;
     // The admin section heading is rendered for non-masquerading admins.
     assert!(body.contains("Site-wide Statistics"));
     assert!(body.contains("Total Users"));
@@ -181,9 +177,7 @@ async fn test_admin_database_stats_are_served_from_the_cache() {
 async fn test_statistics_page_user_no_sitewide() {
     let (app, _) = app_signed_in_as("user").await;
 
-    let response = app.server.get("/statistics").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/statistics").await;
     assert!(!body.contains("Site-wide Statistics"));
 }
 
@@ -225,9 +219,7 @@ async fn test_statistics_page_masquerade_hides_admin_section() {
         .await
         .assert_status(axum::http::StatusCode::SEE_OTHER);
 
-    let response = app.server.get("/statistics").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/statistics").await;
     assert!(!body.contains("Site-wide Statistics"));
 }
 
@@ -238,9 +230,7 @@ async fn test_statistics_page_embeds_sidebar_bootstrap() {
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/statistics").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/statistics").await;
     // The page embeds the sidebar payload inline so the sidebar paints
     // without a round trip on first visit.
     assert!(body.contains("id=\"rdrs-sidebar-bootstrap\""));
@@ -257,9 +247,7 @@ async fn test_statistics_page_renders_overview_counts() {
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/statistics?period=all").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&app.server, "/statistics?period=all").await;
     // Seeded data: 5 total entries, 3 read, 1 starred.
     assert!(body.contains("Total Entries"));
     // Quick sanity check — the seeded values appear in the page.

@@ -495,10 +495,7 @@ async fn test_delete_feed_other_user() {
 async fn test_export_opml_empty() {
     let server = authed_server().await;
 
-    let response = server.get("/reader/api/0/subscription/export").await;
-    response.assert_status_ok();
-
-    let body = response.text();
+    let body = common::get_ok(&server, "/reader/api/0/subscription/export").await;
     assert!(body.contains("<?xml") || body.contains("<opml"));
 }
 
@@ -521,10 +518,7 @@ async fn test_export_opml_with_feeds() {
         .await
         .assert_status_ok();
 
-    let response = server.get("/reader/api/0/subscription/export").await;
-    response.assert_status_ok();
-
-    let body = response.text();
+    let body = common::get_ok(&server, "/reader/api/0/subscription/export").await;
     assert!(body.contains("ExportTestCategory"));
     assert!(body.contains("export.example.com"));
 }
@@ -936,9 +930,7 @@ async fn test_update_theme_unauthorized() {
 async fn test_categories_page() {
     let server = authed_server().await;
 
-    let response = server.get("/categories").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/categories").await;
     // SSR page: heading + create form + row table rendered server-side.
     assert!(!body.contains("<rdrs-categories-page>"));
     assert!(!body.contains("/static/js/pages/categories.js"));
@@ -970,9 +962,7 @@ async fn test_pages_redirect_when_signed_out() {
 async fn test_feeds_page() {
     let server = authed_server().await;
 
-    let response = server.get("/feeds").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/feeds").await;
     // SSR page: heading, add form, table, filter bar.
     assert!(body.contains("<h1>Feeds</h1>"));
     assert!(body.contains("<form method=\"post\" action=\"/feeds\">"));
@@ -1004,9 +994,7 @@ async fn test_entry_page() {
 async fn test_user_settings_page() {
     let server = authed_server().await;
 
-    let response = server.get("/user-settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/user-settings").await;
     assert!(body.contains("Settings") || body.contains("settings"));
 }
 
@@ -1014,9 +1002,7 @@ async fn test_user_settings_page() {
 async fn test_settings_page() {
     let server = authed_server().await;
 
-    let response = server.get("/settings").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let body = common::get_ok(&server, "/settings").await;
     // SSR content — no longer a CSR shell.
     assert!(!body.contains("<rdrs-settings-page>"));
     assert!(!body.contains("/static/js/pages/settings.js"));
