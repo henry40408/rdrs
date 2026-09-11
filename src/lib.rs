@@ -19,6 +19,8 @@ pub mod middleware;
 pub mod models;
 pub mod secret;
 pub mod services;
+#[cfg(test)]
+mod test_support;
 pub mod utils;
 pub mod version;
 

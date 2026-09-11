@@ -596,17 +596,11 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
 mod tests {
     use super::*;
     use crate::models::user::Role;
-    use crate::models::{category, feed, user};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::{category, feed};
+    use crate::test_support::{seed_user, setup_db};
 
     async fn create_user_with_data(db: &Db) -> i64 {
-        let user_id = user::create_user(db, "testuser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(db, "testuser", Role::User).await.id;
         let cat = category::create_category(db, user_id, "Tech")
             .await
             .unwrap();
@@ -616,11 +610,7 @@ mod tests {
                 category_id: cat.id,
                 url: "https://example.com/feed",
                 title: Some("Test Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -632,10 +622,7 @@ mod tests {
     /// assertions. Separate from `create_user_with_data` because that one pins
     /// the username and feed URL, both of which are UNIQUE.
     async fn create_second_user_with_feed(db: &Db) -> (i64, i64) {
-        let user_id = user::create_user(db, "otheruser", "hash", Role::User)
-            .await
-            .unwrap()
-            .id;
+        let user_id = seed_user(db, "otheruser", Role::User).await.id;
         let cat = category::create_category(db, user_id, "Theirs")
             .await
             .unwrap();
@@ -645,11 +632,7 @@ mod tests {
                 category_id: cat.id,
                 url: "https://other.example.com/feed",
                 title: Some("Other Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -960,11 +943,7 @@ mod tests {
                 category_id: cat2.id,
                 url: "https://science.com/feed",
                 title: Some("Science Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

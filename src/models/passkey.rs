@@ -126,18 +126,13 @@ pub async fn delete_passkey(db: &Db, id: i64, user_id: i64) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::user::{self, Role};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::user::Role;
+    use crate::test_support::{seed_user, setup_db};
 
     #[tokio::test]
     async fn test_create_and_find_passkey() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let credential_id = vec![1, 2, 3, 4];
         let public_key = vec![5, 6, 7, 8];
@@ -171,9 +166,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_passkeys() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         create_passkey(&db, user.id, &[1], &[1], 0, "Passkey 1", None)
             .await
@@ -189,9 +182,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_counter() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Passkey", None)
             .await
@@ -209,9 +200,7 @@ mod tests {
     #[tokio::test]
     async fn test_rename_passkey() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Old Name", None)
             .await
@@ -227,9 +216,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_passkey() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Passkey", None)
             .await
@@ -243,12 +230,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_passkey_wrong_user() {
         let db = setup_db().await;
-        let user1 = user::create_user(&db, "user1", "hash", Role::User)
-            .await
-            .unwrap();
-        let user2 = user::create_user(&db, "user2", "hash", Role::User)
-            .await
-            .unwrap();
+        let user1 = seed_user(&db, "user1", Role::User).await;
+        let user2 = seed_user(&db, "user2", Role::User).await;
 
         let passkey = create_passkey(&db, user1.id, &[1], &[1], 0, "Passkey", None)
             .await
@@ -265,12 +248,8 @@ mod tests {
         // longer has any reason to read another account's, and nothing else
         // ever did.
         let db = setup_db().await;
-        let user1 = user::create_user(&db, "user1", "hash", Role::User)
-            .await
-            .unwrap();
-        let user2 = user::create_user(&db, "user2", "hash", Role::User)
-            .await
-            .unwrap();
+        let user1 = seed_user(&db, "user1", Role::User).await;
+        let user2 = seed_user(&db, "user2", Role::User).await;
 
         create_passkey(&db, user1.id, &[1], &[1], 0, "User1 Passkey", None)
             .await
@@ -287,12 +266,8 @@ mod tests {
     #[tokio::test]
     async fn test_rename_passkey_wrong_user() {
         let db = setup_db().await;
-        let user1 = user::create_user(&db, "user1", "hash", Role::User)
-            .await
-            .unwrap();
-        let user2 = user::create_user(&db, "user2", "hash", Role::User)
-            .await
-            .unwrap();
+        let user1 = seed_user(&db, "user1", Role::User).await;
+        let user2 = seed_user(&db, "user2", Role::User).await;
 
         let passkey = create_passkey(&db, user1.id, &[1], &[1], 0, "Passkey", None)
             .await

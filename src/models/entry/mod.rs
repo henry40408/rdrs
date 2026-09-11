@@ -1929,12 +1929,8 @@ mod tests {
     use super::*;
     use crate::models::category;
     use crate::models::feed;
-    use crate::models::user::{self, Role};
+    use crate::test_support::{create_test_user, setup_db};
     use chrono::TimeZone;
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
 
     fn ewf_with_base_parts(link: Option<&str>, site_url: Option<&str>) -> EntryWithFeed {
         let now = Utc::now();
@@ -1993,13 +1989,6 @@ mod tests {
         assert_eq!(ewf.content_base_url(), "https://feed.example/atom.xml");
     }
 
-    async fn create_test_user(db: &Db, username: &str) -> i64 {
-        user::create_user(db, username, "hash123", Role::User)
-            .await
-            .unwrap()
-            .id
-    }
-
     async fn create_test_category(db: &Db, user_id: i64, name: &str) -> i64 {
         category::create_category(db, user_id, name)
             .await
@@ -2014,11 +2003,7 @@ mod tests {
                 category_id,
                 url,
                 title: Some("Test Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -2863,11 +2848,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/rust-blog.xml",
                 title: Some("Rust Blog"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

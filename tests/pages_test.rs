@@ -2,79 +2,12 @@
 //! masquerading, and flash messages.
 
 mod common;
-use common::default_test_config;
-
-use std::sync::Arc;
+use common::{TestApp, create_test_app, default_test_config, login, setup_users};
 
 use axum::http::{StatusCode, header};
-use axum_test::TestServer;
 use chrono::TimeZone;
-use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
+use rdrs::{Config, Db};
 use serde_json::json;
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-}
-
-async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app);
-
-    TestApp { server, db }
-}
-
-async fn create_test_app(config: Config) -> TestApp {
-    create_test_app_named(config, "test_pages").await
-}
-
-/// Setup admin and regular user
-async fn setup_users(db: &Db) -> (i64, i64) {
-    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
-    let admin = rdrs::models::user::create_user(db, "admin", &password_hash, Role::Admin)
-        .await
-        .unwrap();
-
-    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
-    let user = rdrs::models::user::create_user(db, "user", &password_hash, Role::User)
-        .await
-        .unwrap();
-
-    (admin.id, user.id)
-}
-
-async fn login(server: &mut TestServer, username: &str) {
-    let login = server
-        .post("/api/session")
-        .json(&json!({
-            "username": username,
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-    login.assert_status_ok();
-    common::apply_csrf(server, &login);
-}
 
 // --- Page Rendering Tests ---
 
@@ -94,11 +27,7 @@ async fn test_unread_page_renders_ssr_layout() {
             category_id: cat.id,
             url: "https://example.com/feed.xml",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -193,11 +122,7 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
             category_id: cat.id,
             url: &format!("https://example.com/{slug}.xml"),
             title: Some(&format!("Feed {slug}")),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -234,11 +159,7 @@ async fn seed_entry_with_text(db: &Db, username: &str, slug: &str, title: &str, 
             category_id: cat.id,
             url: &format!("https://example.com/{slug}.xml"),
             title: Some(&format!("Feed {slug}")),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -264,7 +185,7 @@ async fn seed_entry_with_text(db: &Db, username: &str, slug: &str, title: &str, 
 /// font instead of dropping the codepoints `PingFang TC` lacks into another.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_simplified_entry_is_tagged_zh_hans() {
-    let mut app = create_test_app_named(default_test_config(), "test_lang_hans").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     let entry_id = seed_entry_with_text(
         &app.db,
@@ -299,7 +220,7 @@ async fn test_simplified_entry_is_tagged_zh_hans() {
 /// forcing it onto the Simplified cascade would restyle every glyph.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_traditional_entry_is_not_tagged() {
-    let mut app = create_test_app_named(default_test_config(), "test_lang_hant").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     let entry_id = seed_entry_with_text(
         &app.db,
@@ -323,7 +244,7 @@ async fn test_traditional_entry_is_not_tagged() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_populates_reading_pane() {
-    let mut app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     let entry_id = seed_one_entry(&app.db, "admin", "deep-link-ok").await;
     login(&mut app.server, "admin").await;
@@ -361,8 +282,7 @@ async fn test_unread_page_entry_query_populates_reading_pane() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_unread_entry_query_invalid").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -385,8 +305,7 @@ async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_unread_entry_query_other_user").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await; // creates `admin` and `user`
     // Entry belongs to `user`; we log in as `admin`.
     let entry_id = seed_one_entry(&app.db, "user", "cross-user").await;
@@ -411,7 +330,7 @@ async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
 async fn test_starred_entries_page_entry_query_populates_reading_pane() {
     // The helper is shared, but exercise one of the non-unread routes too
     // so the wiring on a second handler is covered.
-    let mut app = create_test_app_named(default_test_config(), "test_starred_entry_query_ok").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     let entry_id = seed_one_entry(&app.db, "admin", "starred-deep-link").await;
     login(&mut app.server, "admin").await;
@@ -1317,7 +1236,7 @@ async fn test_search_page_has_syntax_help_panel() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page() {
-    let mut app = create_test_app_named(default_test_config(), "test_category_entries_page").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1342,11 +1261,7 @@ async fn test_category_entries_page() {
             category_id: cat.id,
             url: "https://x/ce-feed-1",
             title: Some("Feed 1"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1357,11 +1272,7 @@ async fn test_category_entries_page() {
             category_id: cat.id,
             url: "https://x/ce-feed-2",
             title: Some("Feed 2"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1469,11 +1380,7 @@ async fn test_category_entries_page() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_not_found() {
-    let mut app = create_test_app_named(
-        default_test_config(),
-        "test_category_entries_page_not_found",
-    )
-    .await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1503,11 +1410,7 @@ async fn test_category_entries_page_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_other_user() {
-    let mut app = create_test_app_named(
-        default_test_config(),
-        "test_category_entries_page_other_user",
-    )
-    .await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1556,8 +1459,7 @@ async fn test_category_entries_page_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_load_more_fragment() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_category_entries_page_lm").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1582,11 +1484,7 @@ async fn test_category_entries_page_load_more_fragment() {
             category_id: cat.id,
             url: "https://x/clm-feed",
             title: Some("CLM Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1634,8 +1532,7 @@ async fn test_category_entries_page_load_more_fragment() {
 /// switching category closes the entry that belonged to the previous one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_pane_fragment() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_category_entries_page_pane").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1660,11 +1557,7 @@ async fn test_category_entries_page_pane_fragment() {
             category_id: cat.id,
             url: "https://x/cpane-feed",
             title: Some("CPane Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1721,7 +1614,7 @@ async fn test_category_entries_page_pane_fragment() {
 /// not reload the document either.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_pane_fragment() {
-    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page_pane").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1746,11 +1639,7 @@ async fn test_feed_entries_page_pane_fragment() {
             category_id: cat.id,
             url: "https://x/fp-feed",
             title: Some("FP Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1800,7 +1689,7 @@ async fn test_feed_entries_page_pane_fragment() {
 /// makes that list expand at all.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_marks_active_feed() {
-    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_active").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1825,11 +1714,7 @@ async fn test_feed_entries_page_marks_active_feed() {
             category_id: cat.id,
             url: "https://x/af-feed",
             title: Some("AF Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1866,8 +1751,7 @@ async fn test_feed_entries_page_marks_active_feed() {
 /// redirects back to the category page preserving `?q=`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_mark_read_scoped_search() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_category_mark_read_scoped").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -1892,11 +1776,7 @@ async fn test_category_mark_read_scoped_search() {
             category_id: cat.id,
             url: "https://x/mr-feed",
             title: Some("MR Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1973,7 +1853,7 @@ async fn test_category_mark_read_scoped_search() {
 /// category belonging to another account must 404 rather than leak its feeds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_sidebar_category_feeds_endpoint() {
-    let mut app = create_test_app_named(default_test_config(), "test_sidebar_category_feeds").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2001,11 +1881,7 @@ async fn test_sidebar_category_feeds_endpoint() {
             category_id: cat.id,
             url: "https://x/sf-feed",
             title: Some("SF Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2016,11 +1892,7 @@ async fn test_sidebar_category_feeds_endpoint() {
             category_id: other_cat.id,
             url: "https://x/sf-other-feed",
             title: Some("SF Other Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2119,8 +1991,7 @@ async fn test_sidebar_category_feeds_endpoint() {
 /// two controls to be safe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_hides_mark_above_while_searching() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_category_mark_above_search").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2145,11 +2016,7 @@ async fn test_category_entries_hides_mark_above_while_searching() {
             category_id: cat.id,
             url: "https://x/ma-feed",
             title: Some("MA Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2199,7 +2066,7 @@ async fn test_category_entries_hides_mark_above_while_searching() {
 /// round into the shared `mark_read_scoped` helper.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_mark_read_scoped_search() {
-    let mut app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2224,11 +2091,7 @@ async fn test_feed_mark_read_scoped_search() {
             category_id: cat.id,
             url: "https://x/fmr-feed",
             title: Some("FMR Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2307,11 +2170,7 @@ async fn test_feed_mark_read_scoped_search() {
 /// already-read match untouched.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
-    let mut app = create_test_app_named(
-        default_test_config(),
-        "test_category_matching_count_all_tab",
-    )
-    .await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2336,11 +2195,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
             category_id: cat.id,
             url: "https://x/mc-feed",
             title: Some("MC Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2425,7 +2280,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page() {
-    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2450,11 +2305,7 @@ async fn test_feed_entries_page() {
             category_id: cat.id,
             url: "https://x/fe-feed",
             title: Some("FE Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2575,8 +2426,7 @@ async fn test_feed_entries_page() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_status_filter() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_feed_entries_page_status").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2601,11 +2451,7 @@ async fn test_feed_entries_page_status_filter() {
             category_id: cat.id,
             url: "https://x/fst-feed",
             title: Some("FST"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2756,8 +2602,7 @@ async fn test_feed_entries_page_status_filter() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_not_found() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_feed_entries_page_not_found").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2787,8 +2632,7 @@ async fn test_feed_entries_page_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_other_user() {
-    let mut app =
-        create_test_app_named(default_test_config(), "test_feed_entries_page_other_user").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2819,11 +2663,7 @@ async fn test_feed_entries_page_other_user() {
             category_id: cat.id,
             url: "https://x/alice-feed",
             title: Some("Alice Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2849,7 +2689,7 @@ async fn test_feed_entries_page_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_load_more_fragment() {
-    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -2874,11 +2714,7 @@ async fn test_feed_entries_page_load_more_fragment() {
             category_id: cat.id,
             url: "https://x/lm-feed",
             title: Some("LM Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3519,7 +3355,7 @@ async fn test_logged_in_page_loads_full_chrome() {
 
 #[tokio::test]
 async fn test_unread_page_renders_entry_rows() {
-    let mut app = create_test_app_named(default_test_config(), "test_pages_unread_ssr").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -3550,11 +3386,8 @@ async fn test_unread_page_renders_entry_rows() {
             category_id: cat.id,
             url: "https://blog.example/feed",
             title: Some("Example Blog"),
-            description: None,
             site_url: Some("https://blog.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3658,7 +3491,7 @@ async fn test_unread_page_renders_entry_rows() {
 
 #[tokio::test]
 async fn test_entries_page_renders_ssr_rows() {
-    let mut app = create_test_app_named(default_test_config(), "test_pages_entries_ssr").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -3689,11 +3522,8 @@ async fn test_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://entries.example/feed",
             title: Some("Entries Blog"),
-            description: None,
             site_url: Some("https://entries.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3756,7 +3586,7 @@ async fn test_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_read_entries_page_renders_ssr_rows() {
-    let mut app = create_test_app_named(default_test_config(), "test_pages_read_ssr").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -3787,11 +3617,8 @@ async fn test_read_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://read.example/feed",
             title: Some("Read Blog"),
-            description: None,
             site_url: Some("https://read.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3866,7 +3693,7 @@ async fn test_read_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_starred_entries_page_renders_ssr_rows() {
-    let mut app = create_test_app_named(default_test_config(), "test_pages_starred_ssr").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -3897,11 +3724,8 @@ async fn test_starred_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://starred.example/feed",
             title: Some("Starred Blog"),
-            description: None,
             site_url: Some("https://starred.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3979,7 +3803,7 @@ async fn test_starred_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_summarized_entries_page_renders_ssr_rows() {
-    let mut app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4010,11 +3834,8 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://sum.example/feed",
             title: Some("Summary Blog"),
-            description: None,
             site_url: Some("https://sum.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4104,7 +3925,7 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_unread_load_more_uses_keyset_cursor() {
-    let mut app = create_test_app_named(default_test_config(), "test_unread_keyset").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4135,11 +3956,7 @@ async fn test_unread_load_more_uses_keyset_cursor() {
             category_id: cat.id,
             url: "https://x/keyset-feed",
             title: Some("K Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4249,11 +4066,7 @@ async fn seed_paging_account(app: &mut TestApp, name: &str, count: u32) -> i64 {
             category_id: cat.id,
             url: "https://x/paging-feed",
             title: Some("P Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4290,7 +4103,7 @@ async fn seed_paging_account(app: &mut TestApp, name: &str, count: u32) -> i64 {
 /// different size from the first.
 #[tokio::test]
 async fn test_entries_per_page_decides_what_a_list_renders() {
-    let mut app = create_test_app_named(default_test_config(), "test_per_page").await;
+    let mut app = create_test_app(default_test_config()).await;
     let user_id = seed_paging_account(&mut app, "pageuser", 25).await;
 
     rdrs::models::user_settings::upsert(&app.db, user_id, 10)
@@ -4340,7 +4153,7 @@ async fn test_entries_per_page_decides_what_a_list_renders() {
 /// reader's entire backlog in one response.
 #[tokio::test]
 async fn test_a_nonsense_stored_page_size_is_clamped() {
-    let mut app = create_test_app_named(default_test_config(), "test_per_page_clamp").await;
+    let mut app = create_test_app(default_test_config()).await;
     let user_id = seed_paging_account(&mut app, "clampuser", 25).await;
 
     rdrs::models::user_settings::upsert(&app.db, user_id, 10)
@@ -4371,7 +4184,7 @@ async fn test_a_nonsense_stored_page_size_is_clamped() {
 /// the neighbours navigation has always used.
 #[tokio::test]
 async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
-    let mut app = create_test_app_named(default_test_config(), "test_unread_snapshot").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4402,11 +4215,7 @@ async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
             category_id: cat.id,
             url: "https://x/snapshot-feed",
             title: Some("S Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4508,7 +4317,7 @@ async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
 /// change nothing — it is forwarded only so one template serves every list.
 #[tokio::test]
 async fn test_load_more_snapshot_is_inert_on_non_unread_views() {
-    let mut app = create_test_app_named(default_test_config(), "test_snapshot_inert").await;
+    let mut app = create_test_app(default_test_config()).await;
 
     app.server
         .post("/api/setup")
@@ -4533,11 +4342,7 @@ async fn test_load_more_snapshot_is_inert_on_non_unread_views() {
             category_id: cat.id,
             url: "https://x/inert-feed",
             title: Some("I Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4595,7 +4400,7 @@ async fn test_settings_page_groups_and_forward_auth() {
     config.auth_proxy_header = "Remote-User".to_string();
     config.trusted_proxy_networks = rdrs::config::parse_trusted_networks("10.0.0.0/8").unwrap();
     config.auth_proxy_admin_group = "admins".to_string();
-    let mut app = create_test_app_named(config, "test_settings_groups_fa").await;
+    let mut app = create_test_app(config).await;
 
     app.server
         .post("/api/setup")

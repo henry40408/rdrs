@@ -1,13 +1,90 @@
 //! Shared helpers for the integration test suites.
 //!
 //! Included via `mod common;` from each `tests/*.rs` binary. Only put helpers
-//! here that every (or nearly every) suite uses — per-suite `create_test_app`
-//! definitions stay in their own files because each needs a unique
-//! shared-memory database name to stay isolated from the other test binaries.
+//! here that more than one suite uses. Every app built here gets its own
+//! in-memory database, so no two tests share state.
+
+use std::sync::Arc;
 
 use axum_test::{TestResponse, TestServer};
 use base64::Engine as _;
-use rdrs::Config;
+use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
+
+/// Router state over a fresh in-memory database, wired the way `main` wires
+/// it but with test-sized caches. The summary channel's receiver is dropped,
+/// so nothing ever consumes a queued summary job.
+#[allow(dead_code)]
+pub async fn test_state(config: Config) -> AppState {
+    let (summary_tx, _) = services::create_summary_channel(10);
+    AppState {
+        fetcher: services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
+        db: Db::connect_in_memory().await.unwrap(),
+        webauthn: Arc::new(auth::create_webauthn(&config).unwrap()),
+        config: Arc::new(config),
+        summary_cache: services::create_summary_cache(100, 24),
+        summary_tx,
+        sidebar_cache: Arc::new(services::SidebarCache::default()),
+        admin_db_stats_cache: services::new_admin_db_stats_cache(),
+        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
+        events: services::EventBus::new(16),
+        shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: test_rate_limiter(),
+    }
+}
+
+/// A cookie-saving server over [`test_state`], with the database and state
+/// kept for tests that seed data or inspect a cache behind the router's back.
+#[allow(dead_code)]
+pub struct TestApp {
+    pub server: TestServer,
+    pub db: Db,
+    pub state: AppState,
+}
+
+#[allow(dead_code)]
+pub async fn create_test_app(config: Config) -> TestApp {
+    let state = test_state(config).await;
+    TestApp {
+        server: TestServer::builder()
+            .save_cookies()
+            .build(create_router(state.clone())),
+        db: state.db.clone(),
+        state,
+    }
+}
+
+/// Sign `username` in with the fixture password `vulture-mango-77-quilt`.
+#[allow(dead_code)]
+pub async fn login(server: &mut TestServer, username: &str) {
+    login_with(server, username, "vulture-mango-77-quilt").await;
+}
+
+/// Sign in over `POST /api/session` and pin the new session's CSRF token, the
+/// way a browser that just logged in would.
+#[allow(dead_code)]
+pub async fn login_with(server: &mut TestServer, username: &str, password: &str) {
+    let response = server
+        .post("/api/session")
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .await;
+    response.assert_status_ok();
+    apply_csrf(server, &response);
+}
+
+/// An `admin` (Admin) and a `user` (User), both with the fixture password.
+/// Returns `(admin_id, user_id)`.
+#[allow(dead_code)]
+pub async fn setup_users(db: &Db) -> (i64, i64) {
+    let hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
+    let admin = rdrs::models::user::create_user(db, "admin", &hash, Role::Admin)
+        .await
+        .unwrap();
+    let user = rdrs::models::user::create_user(db, "user", &hash, Role::User)
+        .await
+        .unwrap();
+    (admin.id, user.id)
+}
 
 /// A fresh, default-configured [`rdrs::middleware::RateLimiter`] for an
 /// `AppState` literal.

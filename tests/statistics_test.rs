@@ -2,106 +2,12 @@
 //! shared `/api/me` + `/api/sidebar` endpoints used by the chrome.
 
 mod common;
-
-use std::sync::Arc;
+use common::{create_test_app, default_test_config, login, setup_users};
 
 use axum::http::StatusCode;
-use axum_test::TestServer;
-use rdrs::models::{category, entry, feed, user};
-use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
-use serde_json::{Value, json};
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-    /// Held so a test can assert on what the cache is hiding, and on what
-    /// invalidating it reveals.
-    admin_db_stats_cache: services::AdminDbStatsCache,
-}
-
-async fn create_test_app(_name: &str) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let config = Config {
-        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
-        database_url: ":memory:".to_string(),
-        server_bind: "127.0.0.1:8080".parse().unwrap(),
-        multi_user_enabled: true,
-        secret: vec![0u8; 32],
-        secret_generated: false,
-        user_agent: "RDRS-Test/1.0".to_string(),
-        webauthn_rp_id: "localhost".to_string(),
-        webauthn_rp_origin: "http://localhost:8080".to_string(),
-        webauthn_rp_name: "rdrs-test".to_string(),
-        public_base_url: None,
-        cookie_secure: false,
-        auth_proxy_header: String::new(),
-        trusted_proxy_networks: Vec::new(),
-        auth_proxy_user_creation: false,
-        disable_local_auth: false,
-        auth_proxy_groups_header: String::new(),
-        auth_proxy_admin_group: String::new(),
-        auth_proxy_logout_url: None,
-        login_rate_limit_attempts: rdrs::middleware::rate_limit::LOGIN_MAX_ATTEMPTS,
-        login_rate_limit_window_secs: rdrs::middleware::rate_limit::LOGIN_WINDOW_SECS,
-        hsts: false,
-        hsts_max_age: 31_536_000,
-        hsts_include_subdomains: true,
-    };
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let admin_db_stats_cache = services::new_admin_db_stats_cache();
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: admin_db_stats_cache.clone(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app);
-    TestApp {
-        server,
-        db,
-        admin_db_stats_cache,
-    }
-}
-
-async fn setup_users(db: &Db) -> (i64, i64) {
-    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
-    let admin = user::create_user(db, "admin", &password_hash, Role::Admin)
-        .await
-        .unwrap();
-
-    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
-    let user = user::create_user(db, "user", &password_hash, Role::User)
-        .await
-        .unwrap();
-
-    (admin.id, user.id)
-}
-
-async fn login(server: &mut TestServer, username: &str) {
-    let login = server
-        .post("/api/session")
-        .json(&json!({
-            "username": username,
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-    login.assert_status_ok();
-    common::apply_csrf(server, &login);
-}
+use rdrs::Db;
+use rdrs::models::{category, entry, feed};
+use serde_json::Value;
 
 async fn seed_entries(db: &Db, admin_id: i64) {
     let cat = category::create_category(db, admin_id, "Tech")
@@ -113,11 +19,7 @@ async fn seed_entries(db: &Db, admin_id: i64) {
             category_id: cat.id,
             url: "https://example.com/feed",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -162,14 +64,14 @@ async fn seed_entries(db: &Db, admin_id: i64) {
 
 #[tokio::test]
 async fn test_statistics_page_requires_login() {
-    let app = create_test_app("test_stats_auth").await;
+    let app = create_test_app(default_test_config()).await;
     let response = app.server.get("/statistics").await;
     assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]
 async fn test_statistics_page_renders_ssr_content() {
-    let mut app = create_test_app("test_stats_ssr").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
@@ -194,7 +96,7 @@ async fn test_statistics_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_statistics_page_default_period_is_7d() {
-    let mut app = create_test_app("test_stats_default_period").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -207,7 +109,7 @@ async fn test_statistics_page_default_period_is_7d() {
 
 #[tokio::test]
 async fn test_statistics_page_period_30d() {
-    let mut app = create_test_app("test_stats_period_30d").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -219,7 +121,7 @@ async fn test_statistics_page_period_30d() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_period_falls_back_to_7d() {
-    let mut app = create_test_app("test_stats_invalid_period").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -231,7 +133,7 @@ async fn test_statistics_page_invalid_period_falls_back_to_7d() {
 
 #[tokio::test]
 async fn test_statistics_page_admin_sees_sitewide() {
-    let mut app = create_test_app("test_stats_admin").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -257,7 +159,7 @@ async fn test_statistics_page_admin_sees_sitewide() {
 /// slot is dropped.
 #[tokio::test]
 async fn test_admin_database_stats_are_served_from_the_cache() {
-    let mut app = create_test_app("test_stats_db_cache").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -281,8 +183,8 @@ async fn test_admin_database_stats_are_served_from_the_cache() {
         "the cached slot must still be serving the pre-seed count"
     );
 
-    app.admin_db_stats_cache.invalidate_all();
-    app.admin_db_stats_cache.run_pending_tasks();
+    app.state.admin_db_stats_cache.invalidate_all();
+    app.state.admin_db_stats_cache.run_pending_tasks();
 
     let fresh = app.server.get("/statistics").await;
     fresh.assert_status_ok();
@@ -297,7 +199,7 @@ async fn test_admin_database_stats_are_served_from_the_cache() {
 
 #[tokio::test]
 async fn test_statistics_page_user_no_sitewide() {
-    let mut app = create_test_app("test_stats_user_no_sitewide").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "user").await;
 
@@ -309,7 +211,7 @@ async fn test_statistics_page_user_no_sitewide() {
 
 #[tokio::test]
 async fn test_statistics_page_custom_period() {
-    let mut app = create_test_app("test_stats_custom").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -326,7 +228,7 @@ async fn test_statistics_page_custom_period() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_custom_range_falls_back() {
-    let mut app = create_test_app("test_stats_bad_custom").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -342,7 +244,7 @@ async fn test_statistics_page_invalid_custom_range_falls_back() {
 
 #[tokio::test]
 async fn test_statistics_page_masquerade_hides_admin_section() {
-    let mut app = create_test_app("test_stats_masq").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -359,7 +261,7 @@ async fn test_statistics_page_masquerade_hides_admin_section() {
 
 #[tokio::test]
 async fn test_statistics_page_embeds_sidebar_bootstrap() {
-    let mut app = create_test_app("test_stats_sidebar_bootstrap").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
@@ -378,7 +280,7 @@ async fn test_statistics_page_embeds_sidebar_bootstrap() {
 
 #[tokio::test]
 async fn test_statistics_page_renders_overview_counts() {
-    let mut app = create_test_app("test_stats_overview").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
@@ -396,7 +298,7 @@ async fn test_statistics_page_renders_overview_counts() {
 
 #[tokio::test]
 async fn test_statistics_page_direct_labels_single_max_day() {
-    let mut app = create_test_app("test_stats_is_max").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     // seed_entries marks entries 1..=3 read at 2026-03-15, so the daily-read
     // chart has a single busiest bucket within a custom window covering that
@@ -426,7 +328,7 @@ async fn test_statistics_page_direct_labels_single_max_day() {
 
 #[tokio::test]
 async fn test_api_me_returns_role_and_flags() {
-    let mut app = create_test_app("test_api_me").await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
@@ -441,7 +343,7 @@ async fn test_api_me_returns_role_and_flags() {
 
 #[tokio::test]
 async fn test_api_me_masquerade_flag_set() {
-    let mut app = create_test_app("test_api_me_masq").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
     app.server
@@ -460,7 +362,7 @@ async fn test_api_me_masquerade_flag_set() {
 
 #[tokio::test]
 async fn test_api_sidebar_returns_categories_with_unread() {
-    let mut app = create_test_app("test_api_sidebar").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&mut app.server, "admin").await;
@@ -479,7 +381,7 @@ async fn test_api_sidebar_returns_categories_with_unread() {
 
 #[tokio::test]
 async fn test_api_sidebar_total_summarized() {
-    let mut app = create_test_app("test_api_sidebar_total_summarized").await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
 

@@ -141,10 +141,7 @@ pub async fn delete_by_entity(db: &Db, entity_type: &str, entity_id: i64) -> App
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::test_support::setup_db;
 
     #[tokio::test]
     async fn test_upsert_and_find() {

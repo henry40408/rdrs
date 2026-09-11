@@ -3,57 +3,9 @@
 //! pixel survives the sanitiser and stays same-origin.
 
 mod common;
-use common::default_test_config;
+use common::{create_test_app, default_test_config, login};
 
-use std::sync::Arc;
-
-use axum_test::TestServer;
-use rdrs::{AppState, Config, Db, Role, auth, create_router, query_scalar, services};
-use serde_json::json;
-
-struct TestApp {
-    server: TestServer,
-    db: Db,
-}
-
-async fn create_test_app(config: Config) -> TestApp {
-    let db = Db::connect_in_memory().await.unwrap();
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
-        admin_db_stats_cache: services::new_admin_db_stats_cache(),
-        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
-        events: rdrs::services::EventBus::new(16),
-        shutdown: tokio_util::sync::CancellationToken::new(),
-        login_rate_limiter: common::test_rate_limiter(),
-    };
-
-    TestApp {
-        server: TestServer::builder()
-            .save_cookies()
-            .build(create_router(state)),
-        db,
-    }
-}
-
-async fn login(server: &mut TestServer, username: &str) {
-    let login = server
-        .post("/api/session")
-        .json(&json!({ "username": username, "password": "vulture-mango-77-quilt" }))
-        .await;
-    login.assert_status_ok();
-    common::apply_csrf(server, &login);
-}
+use rdrs::{Db, Role, query_scalar};
 
 async fn seed_users(db: &Db) {
     common::seed_account(db, "reader", "vulture-mango-77-quilt", Role::Admin).await;
@@ -80,11 +32,7 @@ async fn seed_feed(db: &Db, username: &str, label: &str, count: usize) -> Vec<i6
             category_id: cat.id,
             url: &format!("https://example.com/{username}-{label}.xml"),
             title: Some(label),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

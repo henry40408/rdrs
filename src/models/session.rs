@@ -437,18 +437,13 @@ pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::user::{self, Role};
-
-    async fn setup_db() -> Db {
-        Db::connect_in_memory().await.unwrap()
-    }
+    use crate::models::user::Role;
+    use crate::test_support::{seed_user, setup_db};
 
     #[tokio::test]
     async fn test_create_and_find_session() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
@@ -475,9 +470,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_session() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
@@ -491,12 +484,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_user_sessions() {
         let db = setup_db().await;
-        let user_a = user::create_user(&db, "usera", "hash", Role::User)
-            .await
-            .unwrap();
-        let user_b = user::create_user(&db, "userb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user_a = seed_user(&db, "usera", Role::User).await;
+        let user_b = seed_user(&db, "userb", Role::User).await;
 
         create_session(&db, user_a.id, "test-agent", "127.0.0.1")
             .await
@@ -518,12 +507,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_user_sessions_except() {
         let db = setup_db().await;
-        let user_a = user::create_user(&db, "usera", "hash", Role::User)
-            .await
-            .unwrap();
-        let user_b = user::create_user(&db, "userb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user_a = seed_user(&db, "usera", Role::User).await;
+        let user_b = seed_user(&db, "userb", Role::User).await;
 
         let keep = create_session(&db, user_a.id, "test-agent", "127.0.0.1")
             .await
@@ -562,12 +547,8 @@ mod tests {
     #[tokio::test]
     async fn delete_user_session_by_id_is_user_scoped() {
         let db = setup_db().await;
-        let user_a = user::create_user(&db, "usera", "hash", Role::User)
-            .await
-            .unwrap();
-        let user_b = user::create_user(&db, "userb", "hash", Role::User)
-            .await
-            .unwrap();
+        let user_a = seed_user(&db, "usera", Role::User).await;
+        let user_b = seed_user(&db, "userb", Role::User).await;
 
         let a_session = create_session(&db, user_a.id, "test-agent", "127.0.0.1")
             .await
@@ -620,12 +601,8 @@ mod tests {
     #[tokio::test]
     async fn test_masquerade() {
         let db = setup_db().await;
-        let admin = user::create_user(&db, "admin", "hash", Role::Admin)
-            .await
-            .unwrap();
-        let target = user::create_user(&db, "target", "hash", Role::User)
-            .await
-            .unwrap();
+        let admin = seed_user(&db, "admin", Role::Admin).await;
+        let target = seed_user(&db, "target", Role::User).await;
 
         let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
             .await
@@ -683,12 +660,8 @@ mod tests {
         // `expires_at` must survive it, or entering a masquerade would silently
         // reset the absolute cap that `compute_refreshed_expiry` enforces.
         let db = setup_db().await;
-        let admin = user::create_user(&db, "admin", "hash", Role::Admin)
-            .await
-            .unwrap();
-        let target = user::create_user(&db, "target", "hash", Role::User)
-            .await
-            .unwrap();
+        let admin = seed_user(&db, "admin", Role::Admin).await;
+        let target = seed_user(&db, "target", Role::User).await;
 
         let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
             .await
@@ -705,12 +678,8 @@ mod tests {
     #[tokio::test]
     async fn test_already_masquerading() {
         let db = setup_db().await;
-        let admin = user::create_user(&db, "admin", "hash", Role::Admin)
-            .await
-            .unwrap();
-        let target = user::create_user(&db, "target", "hash", Role::User)
-            .await
-            .unwrap();
+        let admin = seed_user(&db, "admin", Role::Admin).await;
+        let target = seed_user(&db, "target", Role::User).await;
 
         let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
             .await
@@ -728,9 +697,7 @@ mod tests {
     #[tokio::test]
     async fn test_not_masquerading() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "user", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "user", Role::User).await;
 
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
@@ -795,9 +762,7 @@ mod tests {
     #[tokio::test]
     async fn mark_authenticated_reopens_the_window() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -827,9 +792,7 @@ mod tests {
     #[tokio::test]
     async fn create_session_starts_inside_the_reauth_window() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -883,9 +846,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_if_needed_persists_new_expiry() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -922,9 +883,7 @@ mod tests {
     #[tokio::test]
     async fn rotate_token_replaces_token_and_keeps_the_old_one_in_grace() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -953,9 +912,7 @@ mod tests {
     #[tokio::test]
     async fn rotate_token_grace_lapses() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -990,9 +947,7 @@ mod tests {
         // The second must find nothing to do rather than chaining a second
         // rotation and evicting the first one's grace token.
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1020,9 +975,7 @@ mod tests {
         // A logout can arrive on the pre-rotation cookie; it must still end the
         // session rather than silently deleting nothing.
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1045,9 +998,7 @@ mod tests {
     #[tokio::test]
     async fn delete_user_sessions_except_keeps_a_session_named_by_its_grace_token() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let keep = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1077,9 +1028,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_if_needed_noop_for_fresh_session() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1090,9 +1039,7 @@ mod tests {
     #[tokio::test]
     async fn touch_last_seen_updates_when_stale() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1124,9 +1071,7 @@ mod tests {
     #[tokio::test]
     async fn touch_last_seen_noop_when_fresh() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1143,9 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn delete_expired_removes_only_expired() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
 
         let expired = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
@@ -1192,9 +1135,7 @@ mod tests {
     #[tokio::test]
     async fn delete_expired_is_noop_when_nothing_expired() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
@@ -1206,9 +1147,7 @@ mod tests {
     #[tokio::test]
     async fn delete_expired_boundary_is_inclusive() {
         let db = setup_db().await;
-        let user = user::create_user(&db, "testuser", "hash", Role::User)
-            .await
-            .unwrap();
+        let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
