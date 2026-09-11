@@ -226,6 +226,22 @@ const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id AS id, e.feed_id AS feed_id, e
 /// from a `LEFT JOIN image i` already present in the query.
 const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.full_content AS full_content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CAST(CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS BIGINT) AS has_icon, f.custom_referrer AS custom_referrer";
 
+/// Apply a dynamic query's binds in order: the loop every runtime-built
+/// query below shares.
+macro_rules! bind_all {
+    ($q:expr, $binds:expr) => {{
+        let mut q = $q;
+        for b in $binds {
+            q = match b {
+                Bind::Int(i) => q.bind(*i),
+                Bind::Text(s) => q.bind(s.as_str()),
+                Bind::Ts(t) => q.bind(*t),
+            };
+        }
+        q
+    }};
+}
+
 // --- dynamic-query execution helpers ---------------------------------------
 //
 // Several list/count queries are built at runtime (filter conditions + cursor)
@@ -240,27 +256,20 @@ async fn fetch_entries_with_feed(
 ) -> Result<Vec<EntryWithFeed>, sqlx::Error> {
     let rows = match db.inner() {
         DbInner::Sqlite(pool) => {
-            let mut q = sqlx::query_as::<sqlx::Sqlite, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.fetch_all(pool).await?
+            bind_all!(
+                sqlx::query_as::<sqlx::Sqlite, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_all(pool)
+            .await?
         }
         DbInner::Postgres(pool) => {
-            let mut q =
-                sqlx::query_as::<sqlx::Postgres, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.fetch_all(pool).await?
+            bind_all!(
+                sqlx::query_as::<sqlx::Postgres, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_all(pool)
+            .await?
         }
     };
     Ok(rows.into_iter().map(EntryWithFeed::from).collect())
@@ -269,26 +278,20 @@ async fn fetch_entries_with_feed(
 async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
     match db.inner() {
         DbInner::Sqlite(pool) => {
-            let mut q = sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.fetch_one(pool).await
+            bind_all!(
+                sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_one(pool)
+            .await
         }
         DbInner::Postgres(pool) => {
-            let mut q = sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.fetch_one(pool).await
+            bind_all!(
+                sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_one(pool)
+            .await
         }
     }
 }
@@ -301,26 +304,20 @@ async fn fetch_id_ts_rows(
 ) -> Result<Vec<(i64, i64)>, sqlx::Error> {
     match db.inner() {
         DbInner::Sqlite(pool) => {
-            let mut q = sqlx::query_as::<sqlx::Sqlite, (i64, i64)>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.fetch_all(pool).await
+            bind_all!(
+                sqlx::query_as::<sqlx::Sqlite, (i64, i64)>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_all(pool)
+            .await
         }
         DbInner::Postgres(pool) => {
-            let mut q = sqlx::query_as::<sqlx::Postgres, (i64, i64)>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.fetch_all(pool).await
+            bind_all!(
+                sqlx::query_as::<sqlx::Postgres, (i64, i64)>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_all(pool)
+            .await
         }
     }
 }
@@ -330,29 +327,20 @@ async fn fetch_id_ts_rows(
 async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sqlx::Error> {
     let _guard = db.admit().await;
     match db.inner() {
-        DbInner::Sqlite(pool) => {
-            let mut q = sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.execute(pool).await.map(|r| r.rows_affected())
-        }
-        DbInner::Postgres(pool) => {
-            let mut q =
-                sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql)));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.execute(pool).await.map(|r| r.rows_affected())
-        }
+        DbInner::Sqlite(pool) => bind_all!(
+            sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql)),
+            &binds
+        )
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected()),
+        DbInner::Postgres(pool) => bind_all!(
+            sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql))),
+            &binds
+        )
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected()),
     }
 }
 
@@ -363,29 +351,20 @@ async fn exec_dynamic_tx(
     binds: Vec<Bind>,
 ) -> Result<u64, sqlx::Error> {
     match tx {
-        Tx::Sqlite { tx: t, .. } => {
-            let mut q = sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.execute(&mut **t).await.map(|r| r.rows_affected())
-        }
-        Tx::Postgres(t) => {
-            let mut q =
-                sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql)));
-            for b in &binds {
-                q = match b {
-                    Bind::Int(i) => q.bind(*i),
-                    Bind::Text(s) => q.bind(s.as_str()),
-                    Bind::Ts(t) => q.bind(*t),
-                };
-            }
-            q.execute(&mut **t).await.map(|r| r.rows_affected())
-        }
+        Tx::Sqlite { tx: t, .. } => bind_all!(
+            sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql)),
+            &binds
+        )
+        .execute(&mut **t)
+        .await
+        .map(|r| r.rows_affected()),
+        Tx::Postgres(t) => bind_all!(
+            sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql))),
+            &binds
+        )
+        .execute(&mut **t)
+        .await
+        .map(|r| r.rows_affected()),
     }
 }
 
@@ -1648,26 +1627,20 @@ pub async fn find_neighbors(
     async fn one(db: &Db, sql: String, binds: Vec<Bind>) -> Result<Option<i64>, sqlx::Error> {
         match db.inner() {
             DbInner::Sqlite(pool) => {
-                let mut q = sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql));
-                for b in &binds {
-                    q = match b {
-                        Bind::Int(i) => q.bind(*i),
-                        Bind::Text(s) => q.bind(s.as_str()),
-                        Bind::Ts(t) => q.bind(*t),
-                    };
-                }
-                q.fetch_optional(pool).await
+                bind_all!(
+                    sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
+                    &binds
+                )
+                .fetch_optional(pool)
+                .await
             }
             DbInner::Postgres(pool) => {
-                let mut q = sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql));
-                for b in &binds {
-                    q = match b {
-                        Bind::Int(i) => q.bind(*i),
-                        Bind::Text(s) => q.bind(s.as_str()),
-                        Bind::Ts(t) => q.bind(*t),
-                    };
-                }
-                q.fetch_optional(pool).await
+                bind_all!(
+                    sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
+                    &binds
+                )
+                .fetch_optional(pool)
+                .await
             }
         }
     }
