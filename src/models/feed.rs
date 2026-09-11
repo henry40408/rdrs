@@ -37,6 +37,11 @@ pub fn url_to_bucket(url: &str) -> u8 {
 }
 
 /// Parameters for creating a new feed.
+///
+/// `Default` is for test fixtures, which only care about a field or two.
+/// Production call sites spell every field out, so adding one forces each of
+/// them to decide on it rather than silently inheriting `None`.
+#[derive(Default)]
 pub struct CreateFeedParams<'a> {
     pub category_id: i64,
     pub url: &'a str,
@@ -372,9 +377,7 @@ mod tests {
                 title: Some("Example Feed"),
                 description: Some("An example feed"),
                 site_url: Some("https://example.com"),
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -402,12 +405,7 @@ mod tests {
             &CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -417,12 +415,7 @@ mod tests {
             &CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await;
@@ -441,12 +434,7 @@ mod tests {
             &CreateFeedParams {
                 category_id: cat1,
                 url: "https://example.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -456,12 +444,7 @@ mod tests {
             &CreateFeedParams {
                 category_id: cat2,
                 url: "https://example.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await;
@@ -482,11 +465,7 @@ mod tests {
                 category_id: cat1,
                 url: "https://example1.com/feed.xml",
                 title: Some("Feed 1"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -497,11 +476,7 @@ mod tests {
                 category_id: cat2,
                 url: "https://example2.com/feed.xml",
                 title: Some("Feed 2"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -532,12 +507,7 @@ mod tests {
                 &CreateFeedParams {
                     category_id: cat1,
                     url,
-                    title: None,
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
+                    ..Default::default()
                 },
             )
             .await
@@ -548,12 +518,7 @@ mod tests {
             &CreateFeedParams {
                 category_id: cat2,
                 url: "https://example3.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -578,11 +543,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/feed.xml",
                 title: Some("Old Title"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -628,12 +589,7 @@ mod tests {
             &CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -654,12 +610,7 @@ mod tests {
             &CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
-                title: None,
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -692,11 +643,7 @@ mod tests {
                 category_id: c1,
                 url: "https://a/f",
                 title: Some("a"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -708,11 +655,7 @@ mod tests {
                 category_id: c2,
                 url: "https://b/f",
                 title: Some("b"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -744,12 +687,7 @@ mod tests {
                 &CreateFeedParams {
                     category_id,
                     url,
-                    title: None,
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
+                    ..Default::default()
                 },
             )
             .await

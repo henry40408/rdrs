@@ -80,11 +80,7 @@ async fn seed_feed(db: &Db, username: &str, label: &str, count: usize) -> Vec<i6
             category_id: cat.id,
             url: &format!("https://example.com/{username}-{label}.xml"),
             title: Some(label),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

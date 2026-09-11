@@ -267,11 +267,7 @@ mod tests {
                 category_id: cid,
                 url: "https://e.com/f.xml",
                 title: Some("F"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

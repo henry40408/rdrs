@@ -299,11 +299,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/feed.xml",
                 title: Some("Test Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -413,11 +409,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/feed.xml",
                 title: Some("Test Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -530,11 +522,7 @@ mod tests {
                 category_id: cat1,
                 url: "https://example.com/feed1.xml",
                 title: Some("Feed 1"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

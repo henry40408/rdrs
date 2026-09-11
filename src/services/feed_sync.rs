@@ -509,11 +509,7 @@ mod tests {
                 category_id: cat.id,
                 url,
                 title: Some("F"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -533,11 +529,8 @@ mod tests {
                 category_id: cat.id,
                 url,
                 title: Some("F"),
-                description: None,
-                site_url: None,
                 custom_user_agent: Some(custom_user_agent),
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

@@ -147,11 +147,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/feed.xml",
                 title: Some("Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -232,11 +228,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/feed.xml",
                 title: Some("Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

@@ -307,11 +307,7 @@ async fn seed_entry(db: &Db) -> (i64, i64) {
             category_id: cat.id,
             url: "https://x/no-js-feed",
             title: Some("No-JS Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

@@ -62,11 +62,7 @@ async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
             category_id: cat.id,
             url: "https://example.com/feed.xml",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -124,11 +120,7 @@ async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
             category_id: cat.id,
             url: "https://other.com/feed.xml",
             title: Some("Other Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -271,11 +263,7 @@ async fn test_list_entries_with_continuation() {
             category_id: cat.id,
             url: "https://example.com/feed.xml",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1757,11 +1745,7 @@ async fn test_stream_contents_with_continuation() {
             category_id: cat.id,
             url: "https://example.com/feed.xml",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

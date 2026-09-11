@@ -67,11 +67,7 @@ async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64,
             category_id: cat.id,
             url: &format!("https://example.com/{username}/feed.xml"),
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

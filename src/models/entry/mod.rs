@@ -2014,11 +2014,7 @@ mod tests {
                 category_id,
                 url,
                 title: Some("Test Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -2863,11 +2859,7 @@ mod tests {
                 category_id,
                 url: "https://example.com/rust-blog.xml",
                 title: Some("Rust Blog"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

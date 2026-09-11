@@ -113,11 +113,7 @@ async fn seed_entries(db: &Db, admin_id: i64) {
             category_id: cat.id,
             url: "https://example.com/feed",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

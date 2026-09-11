@@ -616,11 +616,7 @@ mod tests {
                 category_id: cat.id,
                 url: "https://example.com/feed",
                 title: Some("Test Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -645,11 +641,7 @@ mod tests {
                 category_id: cat.id,
                 url: "https://other.example.com/feed",
                 title: Some("Other Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await
@@ -960,11 +952,7 @@ mod tests {
                 category_id: cat2.id,
                 url: "https://science.com/feed",
                 title: Some("Science Feed"),
-                description: None,
-                site_url: None,
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
+                ..Default::default()
             },
         )
         .await

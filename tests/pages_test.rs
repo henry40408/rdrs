@@ -94,11 +94,7 @@ async fn test_unread_page_renders_ssr_layout() {
             category_id: cat.id,
             url: "https://example.com/feed.xml",
             title: Some("Test Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -193,11 +189,7 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
             category_id: cat.id,
             url: &format!("https://example.com/{slug}.xml"),
             title: Some(&format!("Feed {slug}")),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -234,11 +226,7 @@ async fn seed_entry_with_text(db: &Db, username: &str, slug: &str, title: &str, 
             category_id: cat.id,
             url: &format!("https://example.com/{slug}.xml"),
             title: Some(&format!("Feed {slug}")),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1342,11 +1330,7 @@ async fn test_category_entries_page() {
             category_id: cat.id,
             url: "https://x/ce-feed-1",
             title: Some("Feed 1"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1357,11 +1341,7 @@ async fn test_category_entries_page() {
             category_id: cat.id,
             url: "https://x/ce-feed-2",
             title: Some("Feed 2"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1582,11 +1562,7 @@ async fn test_category_entries_page_load_more_fragment() {
             category_id: cat.id,
             url: "https://x/clm-feed",
             title: Some("CLM Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1660,11 +1636,7 @@ async fn test_category_entries_page_pane_fragment() {
             category_id: cat.id,
             url: "https://x/cpane-feed",
             title: Some("CPane Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1746,11 +1718,7 @@ async fn test_feed_entries_page_pane_fragment() {
             category_id: cat.id,
             url: "https://x/fp-feed",
             title: Some("FP Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1825,11 +1793,7 @@ async fn test_feed_entries_page_marks_active_feed() {
             category_id: cat.id,
             url: "https://x/af-feed",
             title: Some("AF Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -1892,11 +1856,7 @@ async fn test_category_mark_read_scoped_search() {
             category_id: cat.id,
             url: "https://x/mr-feed",
             title: Some("MR Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2001,11 +1961,7 @@ async fn test_sidebar_category_feeds_endpoint() {
             category_id: cat.id,
             url: "https://x/sf-feed",
             title: Some("SF Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2016,11 +1972,7 @@ async fn test_sidebar_category_feeds_endpoint() {
             category_id: other_cat.id,
             url: "https://x/sf-other-feed",
             title: Some("SF Other Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2145,11 +2097,7 @@ async fn test_category_entries_hides_mark_above_while_searching() {
             category_id: cat.id,
             url: "https://x/ma-feed",
             title: Some("MA Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2224,11 +2172,7 @@ async fn test_feed_mark_read_scoped_search() {
             category_id: cat.id,
             url: "https://x/fmr-feed",
             title: Some("FMR Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2336,11 +2280,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
             category_id: cat.id,
             url: "https://x/mc-feed",
             title: Some("MC Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2450,11 +2390,7 @@ async fn test_feed_entries_page() {
             category_id: cat.id,
             url: "https://x/fe-feed",
             title: Some("FE Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2601,11 +2537,7 @@ async fn test_feed_entries_page_status_filter() {
             category_id: cat.id,
             url: "https://x/fst-feed",
             title: Some("FST"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2819,11 +2751,7 @@ async fn test_feed_entries_page_other_user() {
             category_id: cat.id,
             url: "https://x/alice-feed",
             title: Some("Alice Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -2874,11 +2802,7 @@ async fn test_feed_entries_page_load_more_fragment() {
             category_id: cat.id,
             url: "https://x/lm-feed",
             title: Some("LM Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3550,11 +3474,8 @@ async fn test_unread_page_renders_entry_rows() {
             category_id: cat.id,
             url: "https://blog.example/feed",
             title: Some("Example Blog"),
-            description: None,
             site_url: Some("https://blog.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3689,11 +3610,8 @@ async fn test_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://entries.example/feed",
             title: Some("Entries Blog"),
-            description: None,
             site_url: Some("https://entries.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3787,11 +3705,8 @@ async fn test_read_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://read.example/feed",
             title: Some("Read Blog"),
-            description: None,
             site_url: Some("https://read.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -3897,11 +3812,8 @@ async fn test_starred_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://starred.example/feed",
             title: Some("Starred Blog"),
-            description: None,
             site_url: Some("https://starred.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4010,11 +3922,8 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
             category_id: cat.id,
             url: "https://sum.example/feed",
             title: Some("Summary Blog"),
-            description: None,
             site_url: Some("https://sum.example"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4135,11 +4044,7 @@ async fn test_unread_load_more_uses_keyset_cursor() {
             category_id: cat.id,
             url: "https://x/keyset-feed",
             title: Some("K Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4249,11 +4154,7 @@ async fn seed_paging_account(app: &mut TestApp, name: &str, count: u32) -> i64 {
             category_id: cat.id,
             url: "https://x/paging-feed",
             title: Some("P Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4402,11 +4303,7 @@ async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
             category_id: cat.id,
             url: "https://x/snapshot-feed",
             title: Some("S Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
@@ -4533,11 +4430,7 @@ async fn test_load_more_snapshot_is_inert_on_non_unread_views() {
             category_id: cat.id,
             url: "https://x/inert-feed",
             title: Some("I Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

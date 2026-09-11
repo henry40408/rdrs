@@ -100,11 +100,8 @@ async fn create_test_feed(db: &Db, user_id: i64, cat_name: &str, feed_url: &str)
             category_id: cat.id,
             url: feed_url,
             title: Some("Test Feed"),
-            description: None,
             site_url: Some("https://example.com"),
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await

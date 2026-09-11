@@ -69,11 +69,7 @@ async fn seed_entries(db: &Db, username: &str, count: usize) -> Vec<i64> {
             category_id: cat.id,
             url: &format!("https://example.com/{username}.xml"),
             title: Some("Feed"),
-            description: None,
-            site_url: None,
-            custom_user_agent: None,
-            http2_disabled: None,
-            custom_referrer: None,
+            ..Default::default()
         },
     )
     .await
