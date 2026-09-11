@@ -3989,6 +3989,70 @@ async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
     }
 }
 
+/// The feed and category Load-More fragments aim their next form back at their
+/// own list. That path is built per request — it used to be leaked, once per
+/// Load More, to fit a `&'static str` field — so pin that it still comes out
+/// right now that it is owned instead.
+#[tokio::test]
+async fn test_scoped_load_more_form_targets_its_own_list() {
+    let (app, (admin_id, _)) = app_signed_in_as("admin").await;
+    rdrs::models::user_settings::upsert(&app.db, admin_id, 50)
+        .await
+        .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, admin_id, "L")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/load-more-feed",
+            title: Some("L Feed"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    // Three pages, so the page-2 fragment renders a Load-More form of its own.
+    for i in 0..160u32 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("lm-{i}"),
+            Some(&format!("L {i}")),
+            None,
+            None,
+            None,
+            None,
+            Some(
+                chrono::Utc
+                    .with_ymd_and_hms(2024, 1, 1, i / 3600, (i / 60) % 60, i % 60)
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
+    for base in [
+        format!("/categories/{}/entries", cat.id),
+        format!("/feeds/{}/entries", feed.id),
+    ] {
+        let page = common::get_ok(&app.server, &base).await;
+        let cursor = extract_after_value(&page)
+            .unwrap_or_else(|| panic!("{base}: page 1 has a Load-More form"));
+        let fragment = common::get_ok(
+            &app.server,
+            &format!("{base}?fragment=1&after={}", encode(&cursor)),
+        )
+        .await;
+        assert!(
+            fragment.contains(&format!(r#"id="load-more" method="get" action="{base}""#)),
+            "{base}: the next Load-More form must post back to this list:\n{fragment}"
+        );
+    }
+}
+
 /// The widening is scoped to unread views. Read / starred / summarized paginate
 /// on a different predicate entirely, so a snapshot on their Load-More form must
 /// change nothing — it is forwarded only so one template serves every list.

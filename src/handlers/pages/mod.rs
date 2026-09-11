@@ -441,7 +441,9 @@ async fn maybe_build_reading_pane(
 pub(crate) struct EntriesFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<String>,
-    pub path: &'static str,
+    /// The next Load-More form's action. Owned for the feed and category
+    /// lists, whose path carries the id.
+    pub path: Cow<'static, str>,
     /// Forwarded into the fragment's Load-More form so subsequent
     /// Load-More fetches keep the current `?status=` filter. `None` for
     /// the 5 PR-10 routes (their filters are path-based, not query).
@@ -789,7 +791,7 @@ pub async fn unread_page(
             EntriesFragmentTemplate {
                 entries,
                 next_cursor,
-                path: "/",
+                path: "/".into(),
                 status_filter: None,
                 q: None,
                 snapshot: query.snapshot.clone(),
@@ -1512,7 +1514,7 @@ async fn entries_tab_page(
             EntriesFragmentTemplate {
                 entries,
                 next_cursor,
-                path: tab.path,
+                path: tab.path.into(),
                 status_filter: None,
                 q: None,
                 snapshot: query.snapshot,
@@ -1895,7 +1897,7 @@ async fn scoped_entries_page(
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
-            path: Box::leak(scope.path.into_boxed_str()),
+            path: scope.path.into(),
             status_filter: query.status.clone(),
             q: search,
             snapshot: query.snapshot.clone(),
