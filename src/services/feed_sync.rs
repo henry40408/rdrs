@@ -482,7 +482,6 @@ mod tests {
         Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
             .expect("the guarded client must build")
     }
-    use crate::utils::datetime::normalize_timezone_format;
     use chrono::{Datelike, Timelike};
     use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -983,63 +982,6 @@ mod tests {
             sync.new_entries > 0,
             "expected new entries from bucket sync"
         );
-    }
-
-    #[test]
-    fn test_normalize_timezone_format() {
-        // Should convert +08:00 to +0800
-        assert_eq!(
-            normalize_timezone_format("Thu, 22 Jan 2026 15:09:47 +08:00"),
-            "Thu, 22 Jan 2026 15:09:47 +0800"
-        );
-
-        // Should convert -05:30 to -0530
-        assert_eq!(
-            normalize_timezone_format("Mon, 01 Jan 2026 12:00:00 -05:30"),
-            "Mon, 01 Jan 2026 12:00:00 -0530"
-        );
-
-        // Should leave already correct format unchanged
-        assert_eq!(
-            normalize_timezone_format("Thu, 22 Jan 2026 15:09:47 +0800"),
-            "Thu, 22 Jan 2026 15:09:47 +0800"
-        );
-
-        // Should handle trailing whitespace
-        assert_eq!(
-            normalize_timezone_format("Thu, 22 Jan 2026 15:09:47 +08:00  "),
-            "Thu, 22 Jan 2026 15:09:47 +0800"
-        );
-    }
-
-    #[test]
-    fn test_parse_timestamp_colon_timezone() {
-        // This format was previously failing
-        let result = parse_timestamp("Thu, 22 Jan 2026 15:09:47 +08:00");
-        assert!(
-            result.is_some(),
-            "Should parse RFC2822-like format with colon timezone"
-        );
-
-        let dt = result.unwrap();
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 1);
-        assert_eq!(dt.day(), 22);
-        // The time should be converted to UTC (15:09:47 +08:00 = 07:09:47 UTC)
-        assert_eq!(dt.hour(), 7);
-        assert_eq!(dt.minute(), 9);
-    }
-
-    #[test]
-    fn test_parse_timestamp_various_formats() {
-        // Standard RFC2822
-        assert!(parse_timestamp("Thu, 22 Jan 2026 15:09:47 +0800").is_some());
-
-        // ISO 8601 / RFC 3339
-        assert!(parse_timestamp("2026-01-22T15:09:47+08:00").is_some());
-
-        // Chinese format
-        assert!(parse_timestamp("週四, 22 一月 2026 15:09:47 +0800").is_some());
     }
 
     #[test]

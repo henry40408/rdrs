@@ -95,40 +95,26 @@ async fn test_statistics_page_renders_ssr_content() {
 }
 
 #[tokio::test]
-async fn test_statistics_page_default_period_is_7d() {
+async fn test_statistics_page_marks_the_selected_period_active() {
     let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&mut app.server, "admin").await;
 
-    let response = app.server.get("/statistics").await;
-    response.assert_status_ok();
-    let body = response.text();
-    // Default period is 7d — that button is marked active.
-    assert!(body.contains("class=\"stats-period-btn active\">7d"));
-}
-
-#[tokio::test]
-async fn test_statistics_page_period_30d() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
-
-    let response = app.server.get("/statistics?period=30d").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("class=\"stats-period-btn active\">30d"));
-}
-
-#[tokio::test]
-async fn test_statistics_page_invalid_period_falls_back_to_7d() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
-
-    let response = app.server.get("/statistics?period=invalid").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("class=\"stats-period-btn active\">7d"));
+    // No period and an unknown one both fall back to the 7d default.
+    for (query, active) in [
+        ("", "7d"),
+        ("?period=30d", "30d"),
+        ("?period=invalid", "7d"),
+    ] {
+        let response = app.server.get(&format!("/statistics{query}")).await;
+        response.assert_status_ok();
+        assert!(
+            response
+                .text()
+                .contains(&format!("class=\"stats-period-btn active\">{active}")),
+            "{query}"
+        );
+    }
 }
 
 #[tokio::test]

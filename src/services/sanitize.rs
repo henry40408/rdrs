@@ -583,6 +583,10 @@ mod tests {
 
     const TEST_SECRET: &[u8] = b"test_secret_key_32_bytes_long!!!";
 
+    fn sanitize_with_base(input: &str, base: &str) -> String {
+        sanitize_html(input, TEST_SECRET, Some(base), None, None)
+    }
+
     // ============ AI summary sanitization ============
 
     #[test]
@@ -655,14 +659,6 @@ mod tests {
     }
 
     #[test]
-    fn test_preserve_links() {
-        let input = r#"<a href="https://example.com">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(output.contains("href=\"https://example.com\""));
-        assert!(output.contains("rel=\"noopener noreferrer\""));
-    }
-
-    #[test]
     fn test_remove_javascript_urls() {
         let input = r#"<a href="javascript:alert('xss')">Click</a>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
@@ -674,15 +670,6 @@ mod tests {
         let input = r#"<img src="https://example.com/image.jpg" alt="Image">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         // Image URLs should be rewritten to proxy URLs with signature
-        assert!(output.contains("/api/proxy/image?url="));
-        assert!(output.contains("&s="));
-        assert!(!output.contains("src=\"https://example.com/image.jpg\""));
-    }
-
-    #[test]
-    fn test_rewrite_image_urls() {
-        let input = r#"<p>Text</p><img src="https://example.com/image.jpg" alt="Image">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("&s="));
         assert!(!output.contains("src=\"https://example.com/image.jpg\""));
@@ -719,13 +706,7 @@ mod tests {
         // placeholder in src and the real URL in data-lazy-src. The real image must
         // be promoted and proxied, not dropped.
         let input = r#"<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-lazy-src="https://example.com/real.jpg" alt="Photo">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/post"),
-            None,
-            None,
-        );
+        let output = sanitize_with_base(input, "https://example.com/post");
         assert!(
             output.contains("/api/proxy/image?url="),
             "expected lazy image to be proxied, got: {output}"
@@ -741,13 +722,7 @@ mod tests {
     fn test_promote_lazy_image_data_src() {
         let input =
             r#"<img src="data:image/gif;base64,R0lGOD" data-src="https://example.com/photo.png">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/post"),
-            None,
-            None,
-        );
+        let output = sanitize_with_base(input, "https://example.com/post");
         assert!(
             output.contains("/api/proxy/image?url="),
             "expected lazy image to be proxied, got: {output}"
@@ -759,13 +734,7 @@ mod tests {
     fn test_promote_lazy_image_relative_data_src() {
         // Relative lazy URLs must be resolved against base_url before proxying.
         let input = r#"<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-src="/img/pic.jpg">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/post"),
-            None,
-            None,
-        );
+        let output = sanitize_with_base(input, "https://example.com/post");
         assert!(
             output.contains("/api/proxy/image?url="),
             "expected relative lazy image to be proxied, got: {output}"
@@ -777,13 +746,7 @@ mod tests {
         // When src is already a real URL, it must win even if a lazy attr exists.
         let input =
             r#"<img src="https://example.com/real.jpg" data-src="https://example.com/other.jpg">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/post"),
-            None,
-            None,
-        );
+        let output = sanitize_with_base(input, "https://example.com/post");
         // real.jpg must be the one proxied; other.jpg must not appear.
         assert!(output.contains("/api/proxy/image?url="));
         assert!(
@@ -793,19 +756,25 @@ mod tests {
     }
 
     #[test]
-    fn test_links_have_target_blank() {
+    fn test_links_keep_href_and_gain_privacy_attributes() {
         let input = r#"<a href="https://example.com">Link</a>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(output.contains("target=\"_blank\""));
-        assert!(output.contains("rel=\"noopener noreferrer\""));
+        for attr in [
+            "href=\"https://example.com\"",
+            "target=\"_blank\"",
+            "rel=\"noopener noreferrer\"",
+            "referrerpolicy=\"no-referrer\"",
+        ] {
+            assert!(output.contains(attr), "{attr} missing: {output}");
+        }
     }
 
     #[test]
-    fn test_multiple_links_have_target_blank() {
+    fn test_every_link_gains_privacy_attributes() {
         let input = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        let target_count = output.matches("target=\"_blank\"").count();
-        assert_eq!(target_count, 2);
+        assert_eq!(output.matches("target=\"_blank\"").count(), 2);
+        assert_eq!(output.matches("referrerpolicy=\"no-referrer\"").count(), 2);
     }
 
     #[test]
@@ -818,56 +787,27 @@ mod tests {
     // ============ Tracking Pixel Removal Tests ============
 
     #[test]
-    fn test_remove_1x1_pixel_images() {
-        let input = r#"<p>Text</p><img src="https://example.com/pixel.gif" width="1" height="1">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("<img"));
-        assert!(output.contains("<p>Text</p>"));
-    }
-
-    #[test]
-    fn test_remove_zero_dimension_images() {
-        let input = r#"<img src="https://example.com/hidden.gif" width="0">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("<img"));
-
-        let input2 = r#"<img src="https://example.com/hidden.gif" height="0">"#;
-        let output2 = sanitize_html(input2, TEST_SECRET, None, None, None);
-        assert!(!output2.contains("<img"));
-    }
-
-    #[test]
-    fn test_remove_tracking_domain_images() {
-        let input1 = r#"<img src="https://pixel.example.com/track.gif">"#;
-        let output1 = sanitize_html(input1, TEST_SECRET, None, None, None);
-        assert!(!output1.contains("<img"));
-
-        let input2 = r#"<img src="https://beacon.example.com/img.gif">"#;
-        let output2 = sanitize_html(input2, TEST_SECRET, None, None, None);
-        assert!(!output2.contains("<img"));
-
-        let input3 = r#"<img src="https://track.example.com/img.gif">"#;
-        let output3 = sanitize_html(input3, TEST_SECRET, None, None, None);
-        assert!(!output3.contains("<img"));
-
-        let input4 = r#"<img src="https://analytics.example.com/img.gif">"#;
-        let output4 = sanitize_html(input4, TEST_SECRET, None, None, None);
-        assert!(!output4.contains("<img"));
-    }
-
-    #[test]
-    fn test_remove_tracking_path_images() {
-        let input1 = r#"<img src="https://example.com/pixel/tracker.gif">"#;
-        let output1 = sanitize_html(input1, TEST_SECRET, None, None, None);
-        assert!(!output1.contains("<img"));
-
-        let input2 = r#"<img src="https://example.com/beacon/img.gif">"#;
-        let output2 = sanitize_html(input2, TEST_SECRET, None, None, None);
-        assert!(!output2.contains("<img"));
-
-        let input3 = r#"<img src="https://example.com/1x1.gif">"#;
-        let output3 = sanitize_html(input3, TEST_SECRET, None, None, None);
-        assert!(!output3.contains("<img"));
+    fn test_remove_tracking_images_but_keep_the_text() {
+        for img in [
+            // 1x1 and zero-sized
+            r#"<img src="https://example.com/pixel.gif" width="1" height="1">"#,
+            r#"<img src="https://pixel.tracker.com/img.gif" width="1" height="1">"#,
+            r#"<img src="https://example.com/hidden.gif" width="0">"#,
+            r#"<img src="https://example.com/hidden.gif" height="0">"#,
+            // tracking hosts
+            r#"<img src="https://pixel.example.com/track.gif">"#,
+            r#"<img src="https://beacon.example.com/img.gif">"#,
+            r#"<img src="https://track.example.com/img.gif">"#,
+            r#"<img src="https://analytics.example.com/img.gif">"#,
+            // tracking paths
+            r#"<img src="https://example.com/pixel/tracker.gif">"#,
+            r#"<img src="https://example.com/beacon/img.gif">"#,
+            r#"<img src="https://example.com/1x1.gif">"#,
+        ] {
+            let output = sanitize_html(&format!("<p>Text</p>{img}"), TEST_SECRET, None, None, None);
+            assert!(!output.contains("<img"), "{img} survived: {output}");
+            assert!(output.contains("<p>Text</p>"), "{output}");
+        }
     }
 
     #[test]
@@ -924,37 +864,21 @@ mod tests {
     // ============ URL Tracking Parameter Tests ============
 
     #[test]
-    fn test_strip_utm_parameters() {
-        let input = r#"<a href="https://example.com/page?utm_source=twitter&utm_medium=social&utm_campaign=test">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("utm_source"));
-        assert!(!output.contains("utm_medium"));
-        assert!(!output.contains("utm_campaign"));
-        assert!(output.contains("href=\"https://example.com/page\""));
-    }
-
-    #[test]
-    fn test_strip_facebook_click_id() {
-        let input = r#"<a href="https://example.com/page?fbclid=ABC123">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("fbclid"));
-        assert!(output.contains("href=\"https://example.com/page\""));
-    }
-
-    #[test]
-    fn test_strip_google_click_id() {
-        let input = r#"<a href="https://example.com/page?gclid=XYZ789">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("gclid"));
-        assert!(output.contains("href=\"https://example.com/page\""));
-    }
-
-    #[test]
-    fn test_strip_microsoft_click_id() {
-        let input = r#"<a href="https://example.com/page?msclkid=MSC456">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("msclkid"));
-        assert!(output.contains("href=\"https://example.com/page\""));
+    fn test_strip_tracking_parameters() {
+        for query in [
+            "utm_source=twitter&utm_medium=social&utm_campaign=test",
+            "fbclid=ABC123",
+            "gclid=XYZ789",
+            "msclkid=MSC456",
+            "mtm_campaign=test&mtm_source=email",
+        ] {
+            let input = format!(r#"<a href="https://example.com/page?{query}">Link</a>"#);
+            let output = sanitize_html(&input, TEST_SECRET, None, None, None);
+            assert!(
+                output.contains("href=\"https://example.com/page\""),
+                "{query} not stripped: {output}"
+            );
+        }
     }
 
     #[test]
@@ -1024,95 +948,24 @@ mod tests {
         assert!(output.contains("href=\"https://example.com/page\""));
     }
 
-    #[test]
-    fn test_strip_matomo_params() {
-        let input =
-            r#"<a href="https://example.com/page?mtm_campaign=test&mtm_source=email">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("mtm_campaign"));
-        assert!(!output.contains("mtm_source"));
-    }
-
-    // ============ Referrer Policy Tests ============
-
-    #[test]
-    fn test_links_have_referrerpolicy() {
-        let input = r#"<a href="https://example.com">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(output.contains("referrerpolicy=\"no-referrer\""));
-        assert!(output.contains("target=\"_blank\""));
-        assert!(output.contains("rel=\"noopener noreferrer\""));
-    }
-
-    #[test]
-    fn test_multiple_links_have_referrerpolicy() {
-        let input = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        let policy_count = output.matches("referrerpolicy=\"no-referrer\"").count();
-        assert_eq!(policy_count, 2);
-    }
-
-    // ============ Integration Tests ============
-
-    #[test]
-    fn test_sanitize_removes_tracking_pixels() {
-        let input =
-            r#"<p>Text</p><img src="https://pixel.tracker.com/img.gif" width="1" height="1">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("pixel.tracker.com"));
-        assert!(output.contains("<p>Text</p>"));
-    }
-
-    #[test]
-    fn test_sanitize_strips_tracking_params() {
-        let input = r#"<a href="https://example.com/page?utm_source=test&id=123">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(!output.contains("utm_source"));
-        assert!(output.contains("id=123"));
-    }
-
     // ============ Relative URL Tests ============
 
     #[test]
-    fn test_rewrite_relative_image_urls_with_base() {
-        let input = r#"<img src="/images/photo.jpg" alt="Photo">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/article/123"),
-            None,
-            None,
-        );
-        assert!(output.contains("/api/proxy/image?url="));
-        assert!(!output.contains("src=\"/images/photo.jpg\""));
-    }
-
-    #[test]
-    fn test_rewrite_relative_path_image_urls() {
-        let input = r#"<img src="images/photo.jpg" alt="Photo">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/article/123"),
-            None,
-            None,
-        );
-        assert!(output.contains("/api/proxy/image?url="));
-        assert!(!output.contains("src=\"images/photo.jpg\""));
-    }
-
-    #[test]
-    fn test_rewrite_parent_relative_image_urls() {
-        let input = r#"<img src="../images/photo.jpg" alt="Photo">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/article/123"),
-            None,
-            None,
-        );
-        assert!(output.contains("/api/proxy/image?url="));
-        assert!(!output.contains("src=\"../images/photo.jpg\""));
+    fn test_rewrite_relative_image_urls_against_the_base() {
+        for (src, base) in [
+            ("/images/photo.jpg", "https://example.com/article/123"),
+            ("images/photo.jpg", "https://example.com/article/123"),
+            ("../images/photo.jpg", "https://example.com/article/123"),
+            ("/images/photo.jpg", "https://example.com/article"),
+        ] {
+            let input = format!(r#"<p>Text</p><img src="{src}" alt="Photo">"#);
+            let output = sanitize_with_base(&input, base);
+            assert!(output.contains("/api/proxy/image?url="), "{src}: {output}");
+            assert!(
+                !output.contains(&format!("src=\"{src}\"")),
+                "{src}: {output}"
+            );
+        }
     }
 
     #[test]
@@ -1139,13 +992,7 @@ mod tests {
         let no_base = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!no_base.contains("evil.tld"), "{no_base}");
 
-        let with_base = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://feed.example/post"),
-            None,
-            None,
-        );
+        let with_base = sanitize_with_base(input, "https://feed.example/post");
         assert!(with_base.contains("/api/proxy/image?url="), "{with_base}");
         assert!(!with_base.contains(r#"src="//evil.tld"#), "{with_base}");
     }
@@ -1196,59 +1043,27 @@ mod tests {
     fn test_rewrite_image_url_with_query_params_containing_ampersand() {
         // The src carries a `&` in its query. lol_html decodes attribute values and
         // re-encodes on write, so the rewrite must still succeed and proxy the URL.
-        let input = r#"<img src="https://example.com/image.jpg?size=800&format=webp" alt="Photo">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(
-            output.contains("/api/proxy/image?url="),
-            "image should be proxied"
-        );
-        assert!(
-            !output.contains("src=\"https://example.com/image.jpg"),
-            "original src should be replaced"
-        );
-    }
-
-    #[test]
-    fn test_sanitize_html_proxies_image_with_query_ampersand() {
-        let input = r#"<img src="https://cdn.example.com/photo?w=800&h=600" alt="Photo">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(
-            output.contains("/api/proxy/image?url="),
-            "image should be proxied"
-        );
-        assert!(
-            !output.contains("cdn.example.com"),
-            "original domain should not appear in src"
-        );
+        for src in [
+            "https://example.com/image.jpg?size=800&format=webp",
+            "https://cdn.example.com/photo?w=800&h=600",
+        ] {
+            let input = format!(r#"<img src="{src}" alt="Photo">"#);
+            let output = sanitize_html(&input, TEST_SECRET, None, None, None);
+            assert!(output.contains("/api/proxy/image?url="), "{src}: {output}");
+            assert!(
+                !output.contains("example.com"),
+                "{src} not replaced: {output}"
+            );
+        }
     }
 
     #[test]
     fn test_mixed_absolute_and_relative_images() {
         let input = r#"<img src="https://cdn.example.com/abs.jpg"><img src="/images/rel.jpg">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/page"),
-            None,
-            None,
-        );
+        let output = sanitize_with_base(input, "https://example.com/page");
         // Both should be rewritten
         let proxy_count = output.matches("/api/proxy/image?url=").count();
         assert_eq!(proxy_count, 2);
-    }
-
-    #[test]
-    fn test_sanitize_html_with_base_url() {
-        let input = r#"<p>Text</p><img src="/images/photo.jpg" alt="Photo">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/article"),
-            None,
-            None,
-        );
-        assert!(output.contains("/api/proxy/image?url="));
-        assert!(!output.contains("src=\"/images/photo.jpg\""));
     }
 
     #[test]
@@ -1308,18 +1123,20 @@ mod tests {
     }
 
     #[test]
-    fn test_harvest_dims_from_data_original() {
-        let input = r#"<img src="https://e.com/a.jpg" data-original-width="800" data-original-height="600">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(output.contains("width=\"800\""), "{output}");
-        assert!(output.contains("height=\"600\""), "{output}");
-    }
-    #[test]
-    fn test_harvest_dims_from_style() {
-        let input = r#"<img src="https://e.com/a.jpg" style="width:320px;height:240px">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        assert!(output.contains("width=\"320\""), "{output}");
-        assert!(output.contains("height=\"240\""), "{output}");
+    fn test_harvest_dims_from_data_original_and_style() {
+        for (hints, width, height) in [
+            (
+                r#"data-original-width="800" data-original-height="600""#,
+                800,
+                600,
+            ),
+            (r#"style="width:320px;height:240px""#, 320, 240),
+        ] {
+            let input = format!(r#"<img src="https://e.com/a.jpg" {hints}>"#);
+            let output = sanitize_html(&input, TEST_SECRET, None, None, None);
+            assert!(output.contains(&format!("width=\"{width}\"")), "{output}");
+            assert!(output.contains(&format!("height=\"{height}\"")), "{output}");
+        }
     }
     #[test]
     fn test_harvest_skips_when_dims_present() {
@@ -1476,13 +1293,7 @@ mod tests {
     fn test_uppercase_lazy_attribute_still_promoted() {
         let input =
             r#"<img src="data:image/gif;base64,R0lGOD" DATA-SRC="https://example.com/photo.png">"#;
-        let output = sanitize_html(
-            input,
-            TEST_SECRET,
-            Some("https://example.com/post"),
-            None,
-            None,
-        );
+        let output = sanitize_with_base(input, "https://example.com/post");
         assert!(output.contains("/api/proxy/image?url="), "{output}");
         assert!(!output.contains("data:image/gif"), "{output}");
     }

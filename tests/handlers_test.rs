@@ -149,11 +149,22 @@ async fn test_list_categories() {
 }
 
 #[tokio::test]
-async fn test_list_categories_unauthorized() {
+async fn test_api_requires_authentication() {
     let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/reader/api/0/tag/list").await;
-    response.assert_status_unauthorized();
+    for path in [
+        "/reader/api/0/tag/list",
+        "/reader/api/0/subscription/list",
+        "/reader/api/0/subscription/export",
+        "/api/user/settings/theme",
+        "/api/feeds/1/icon",
+        "/api/passkeys",
+    ] {
+        assert_eq!(
+            server.get(path).await.status_code(),
+            StatusCode::UNAUTHORIZED,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -233,61 +244,22 @@ async fn test_list_feeds_empty() {
 }
 
 #[tokio::test]
-async fn test_list_feeds_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/reader/api/0/subscription/list").await;
-    response.assert_status_unauthorized();
-}
-
-#[tokio::test]
-async fn test_update_feed_not_found() {
+async fn test_subscription_edit_of_an_unknown_feed_is_not_found() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    let form: Vec<(&str, &str)> = vec![
-        ("ac", "edit"),
-        ("s", "feed/https://nonexistent.com/feed.xml"),
-        ("t", "Test Feed"),
-    ];
-    let response = server
-        .post("/reader/api/0/subscription/edit")
-        .form(&form)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_get_feed_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    // subscription/edit ac=edit with non-existent feed returns 404
-    let form: Vec<(&str, &str)> = vec![
-        ("ac", "edit"),
-        ("s", "feed/https://nonexistent.com/feed.xml"),
-    ];
-    let response = server
-        .post("/reader/api/0/subscription/edit")
-        .form(&form)
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_delete_feed_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let form: Vec<(&str, &str)> = vec![
-        ("ac", "unsubscribe"),
-        ("s", "feed/https://nonexistent.com/feed.xml"),
-    ];
-    let response = server
-        .post("/reader/api/0/subscription/edit")
-        .form(&form)
-        .await;
-    response.assert_status_not_found();
+    let feed = "feed/https://nonexistent.com/feed.xml";
+    for form in [
+        vec![("ac", "edit"), ("s", feed), ("t", "Test Feed")],
+        vec![("ac", "edit"), ("s", feed)],
+        vec![("ac", "unsubscribe"), ("s", feed)],
+    ] {
+        let response = server
+            .post("/reader/api/0/subscription/edit")
+            .form(&form)
+            .await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{form:?}");
+    }
 }
 
 #[tokio::test]
@@ -539,14 +511,6 @@ async fn test_export_opml_empty() {
 }
 
 #[tokio::test]
-async fn test_export_opml_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/reader/api/0/subscription/export").await;
-    response.assert_status_unauthorized();
-}
-
-#[tokio::test]
 async fn test_export_opml_with_feeds() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
@@ -760,25 +724,19 @@ async fn test_list_entries_with_filters() {
 }
 
 #[tokio::test]
-async fn test_list_entries_invalid_category() {
+async fn test_stream_of_an_unknown_category_or_feed_is_not_found() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    let response = server
-        .get("/reader/api/0/stream/contents/user/-/label/NonExistent")
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_list_entries_invalid_feed() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let response = server
-        .get("/reader/api/0/stream/contents/feed/https://nonexistent.com/feed.xml")
-        .await;
-    response.assert_status_not_found();
+    for stream in [
+        "user/-/label/NonExistent",
+        "feed/https://nonexistent.com/feed.xml",
+    ] {
+        let response = server
+            .get(&format!("/reader/api/0/stream/contents/{stream}"))
+            .await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{stream}");
+    }
 }
 
 #[tokio::test]
@@ -796,42 +754,19 @@ async fn test_get_entry_not_found() {
 }
 
 #[tokio::test]
-async fn test_mark_entry_read_not_found() {
+async fn test_edit_tag_on_an_unknown_entry_is_not_found() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    let form_data: Vec<(&str, String)> = vec![
-        ("i", "9999".to_string()),
-        ("a", "user/-/state/com.google/read".to_string()),
-    ];
-    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_mark_entry_unread_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let form_data: Vec<(&str, String)> = vec![
-        ("i", "9999".to_string()),
-        ("r", "user/-/state/com.google/read".to_string()),
-    ];
-    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_toggle_entry_star_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let form_data: Vec<(&str, String)> = vec![
-        ("i", "9999".to_string()),
-        ("a", "user/-/state/com.google/starred".to_string()),
-    ];
-    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
-    response.assert_status_not_found();
+    for (op, tag) in [
+        ("a", "user/-/state/com.google/read"),
+        ("r", "user/-/state/com.google/read"),
+        ("a", "user/-/state/com.google/starred"),
+    ] {
+        let form = [("i", "9999"), (op, tag)];
+        let response = server.post("/reader/api/0/edit-tag").form(&form).await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{op}={tag}");
+    }
 }
 
 #[tokio::test]
@@ -844,41 +779,14 @@ async fn test_get_entry_neighbors_not_found() {
 }
 
 #[tokio::test]
-async fn test_fetch_full_content_not_found() {
+async fn test_entry_actions_on_an_unknown_entry_are_not_found() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    let response = server.post("/api/entries/9999/fetch-full-content").await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_summarize_entry_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let response = server.post("/api/entries/9999/summarize").await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_save_to_services_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let response = server.post("/api/entries/9999/save").await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_list_feed_entries_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let response = server
-        .get("/reader/api/0/stream/contents/feed/https://nonexistent.com/feed.xml")
-        .await;
-    response.assert_status_not_found();
+    for action in ["fetch-full-content", "summarize", "save"] {
+        let response = server.post(&format!("/api/entries/9999/{action}")).await;
+        assert_eq!(response.status_code(), StatusCode::NOT_FOUND, "{action}");
+    }
 }
 
 #[tokio::test]
@@ -986,47 +894,22 @@ async fn test_get_theme_default() {
 }
 
 #[tokio::test]
-async fn test_get_theme_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/api/user/settings/theme").await;
-    response.assert_status_unauthorized();
-}
-
-#[tokio::test]
-async fn test_update_theme_dark() {
+async fn test_update_theme() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    let response = server
-        .put("/api/user/settings/theme")
-        .json(&json!({ "theme": "dark" }))
-        .await;
+    for theme in ["dark", "light"] {
+        server
+            .put("/api/user/settings/theme")
+            .json(&json!({ "theme": theme }))
+            .await
+            .assert_status_ok();
 
-    response.assert_status_ok();
-
-    let response = server.get("/api/user/settings/theme").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["theme"], "dark");
-}
-
-#[tokio::test]
-async fn test_update_theme_light() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
-
-    let response = server
-        .put("/api/user/settings/theme")
-        .json(&json!({ "theme": "light" }))
-        .await;
-
-    response.assert_status_ok();
-
-    let response = server.get("/api/user/settings/theme").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["theme"], "light");
+        let response = server.get("/api/user/settings/theme").await;
+        response.assert_status_ok();
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["theme"], theme);
+    }
 }
 
 #[tokio::test]
@@ -1284,14 +1167,6 @@ async fn test_update_category_with_whitespace_name() {
 }
 
 // --- Additional Feed Icon Tests ---
-
-#[tokio::test]
-async fn test_get_feed_icon_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/api/feeds/1/icon").await;
-    response.assert_status_unauthorized();
-}
 
 #[tokio::test]
 async fn test_get_feed_icon_no_icon() {
@@ -1600,14 +1475,6 @@ async fn test_passkey_auth_finish_no_challenge() {
 
     let body: serde_json::Value = response.json();
     assert!(body["error"].as_str().unwrap().contains("Challenge"));
-}
-
-#[tokio::test]
-async fn test_list_passkeys_unauthorized() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/api/passkeys").await;
-    response.assert_status_unauthorized();
 }
 
 #[tokio::test]
