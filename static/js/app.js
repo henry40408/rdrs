@@ -1767,18 +1767,7 @@ function installMarkAsReadDropdown() {
             const message = n === null
                 ? `Marked${scopeSuffix || ' all'} entries as read.`
                 : `Marked ${n} ${n === 1 ? 'entry' : 'entries'}${scopeSuffix} as read.`;
-            const refreshed = await refreshEntriesList();
-            if (!refreshed) {
-                // No list pane, or the swap bailed: hand the message to the
-                // next document via the cookie.
-                window.flash?.set('success', message);
-                window.location.reload();
-                return;
-            }
-            // Shown rather than `set()`: the page it belongs to is still up.
-            window.flash?.success(message);
-            document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
-            return;
+            await finishBulkMarkRead(message);
         } catch (err) {
             const message = err.message || 'Failed to mark as read';
             if (window.flash) {
@@ -1918,6 +1907,22 @@ async function refreshEntriesList() {
     return applied;
 }
 
+/// Announce a finished bulk mark-as-read: re-render the list in place and show
+/// `message`, or, with no list to swap, carry it to the next document.
+async function finishBulkMarkRead(message) {
+    const refreshed = await refreshEntriesList();
+    if (!refreshed) {
+        // No list pane, or the swap bailed: hand the message to the next
+        // document via the cookie.
+        window.flash?.set('success', message);
+        window.location.reload();
+        return;
+    }
+    // Shown rather than `set()`: the page it belongs to is still up.
+    window.flash?.success(message);
+    document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
+}
+
 /// Send the list scroller back to the first row: a bulk mark-as-read answers
 /// with page 1 again, so the kept offset points at unrelated rows — or, after
 /// "Mark Above as Read", past the end of the list.
@@ -1962,18 +1967,7 @@ async function markLoadedEntriesAsRead(btn) {
         // usually smaller than the number posted.
         const n = affectedCount(resp) ?? ids.length;
         const message = `Marked ${n} ${n === 1 ? 'entry' : 'entries'} as read.`;
-        const refreshed = await refreshEntriesList();
-        if (!refreshed) {
-            // No list pane, or the swap bailed: hand the message to the next
-            // document via the cookie.
-            window.flash?.set('success', message);
-            window.location.reload();
-            return;
-        }
-        // Shown rather than `set()`: the page it belongs to is still up.
-        window.flash?.success(message);
-        document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
-        return;
+        await finishBulkMarkRead(message);
     } catch (err) {
         const message = err.message || 'Failed to mark entries as read';
         if (window.flash) { window.flash.error(message); } else { alert(message); }
