@@ -5,7 +5,7 @@
 mod common;
 use common::{TestApp, create_test_app, default_test_config};
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use axum_test::TestServer;
 use rdrs::models::{category, entry, feed, user};
 use rdrs::{Db, Role};
@@ -429,20 +429,26 @@ async fn test_mark_entry_unread() {
 }
 
 #[tokio::test]
-async fn test_list_entries_unread_only() {
+async fn test_list_entries_unread_only_and_read_only() {
     let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 3);
+    for (stream, count) in [
+        (
+            "user/-/state/com.google/reading-list?xt=user/-/state/com.google/read",
+            3,
+        ),
+        ("user/-/state/com.google/read", 2),
+    ] {
+        let response = app
+            .server
+            .get(&format!("/reader/api/0/stream/contents/{stream}"))
+            .await;
+        response.assert_status_ok();
+        let body: serde_json::Value = response.json();
+        assert_eq!(body["items"].as_array().unwrap().len(), count, "{stream}");
+    }
 }
 
 // --- Entry Star Tests (via edit-tag) ---
@@ -509,36 +515,24 @@ async fn test_unstar_entry() {
 async fn test_list_entries_starred_only() {
     let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
-    // Star first entry
-    star_entry(&app.server, &[entry_ids[0]]).await;
+    star_entry(&app.server, &[entry_ids[2]]).await;
 
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["_entryId"], entry_ids[0]);
-}
-
-#[tokio::test]
-async fn test_list_entries_read_only() {
-    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
-
-    mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/read")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2);
+    // The starred stream and the reading list filtered to starred (`it=`)
+    // both answer with exactly the one starred entry.
+    for stream in [
+        "user/-/state/com.google/starred",
+        "user/-/state/com.google/reading-list?it=user/-/state/com.google/starred",
+    ] {
+        let response = app
+            .server
+            .get(&format!("/reader/api/0/stream/contents/{stream}"))
+            .await;
+        response.assert_status_ok();
+        let body: serde_json::Value = response.json();
+        let items = body["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "{stream}");
+        assert_eq!(items[0]["_entryId"], entry_ids[2], "{stream}");
+    }
 }
 
 // --- Mark All Read Tests ---
@@ -1044,34 +1038,42 @@ async fn test_stream_contents_item_format() {
 
 // --- Cross-User Access Restriction Tests ---
 
+/// Reading or acting on another user's stream or entry is a 404, never a
+/// glimpse of it.
 #[tokio::test]
-async fn test_cannot_access_other_user_category_entries() {
+async fn test_cannot_reach_other_user_streams_or_entries() {
     let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
+    setup_test_data(&app.db).await;
+    let (_, _, _, other_entry_ids) = setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/label/Other%20User%20Category")
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_access_other_user_feed_entries() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/feed/https://other.com/feed.xml")
-        .await;
-    response.assert_status_not_found();
+    let entry = other_entry_ids[0];
+    for (method, path) in [
+        (
+            Method::GET,
+            "/reader/api/0/stream/contents/user/-/label/Other%20User%20Category".to_string(),
+        ),
+        (
+            Method::GET,
+            "/reader/api/0/stream/contents/feed/https://other.com/feed.xml".to_string(),
+        ),
+        (Method::GET, format!("/api/entries/{entry}/neighbors")),
+        (
+            Method::POST,
+            format!("/api/entries/{entry}/fetch-full-content"),
+        ),
+        (Method::POST, format!("/api/entries/{entry}/summarize")),
+        (Method::POST, format!("/api/entries/{entry}/save")),
+        (Method::GET, format!("/api/entries/{entry}/summary")),
+        (Method::DELETE, format!("/api/entries/{entry}/summary")),
+    ] {
+        let response = app.server.method(method.clone(), &path).await;
+        assert_eq!(
+            response.status_code(),
+            StatusCode::NOT_FOUND,
+            "{method} {path}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1159,182 +1161,44 @@ async fn test_cannot_mutate_other_user_feeds_or_categories() {
     }
 }
 
-#[tokio::test]
-async fn test_cannot_get_other_user_entry_neighbors() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .get(&format!("/api/entries/{}/neighbors", other_entry_ids[0]))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_fetch_full_content_other_user_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .post(&format!(
-            "/api/entries/{}/fetch-full-content",
-            other_entry_ids[0]
-        ))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_summarize_other_user_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .post(&format!("/api/entries/{}/summarize", other_entry_ids[0]))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_save_other_user_entry() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .post(&format!("/api/entries/{}/save", other_entry_ids[0]))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_get_other_user_entry_summary() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .get(&format!("/api/entries/{}/summary", other_entry_ids[0]))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
-async fn test_cannot_delete_other_user_entry_summary() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .delete(&format!("/api/entries/{}/summary", other_entry_ids[0]))
-        .await;
-    response.assert_status_not_found();
-}
-
 // --- Entry with No Link Tests (RDRS-specific, kept as-is) ---
 
 #[tokio::test]
-async fn test_fetch_full_content_entry_no_link() {
+async fn test_entry_actions_need_a_link() {
     let mut app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&mut app.server).await;
 
-    let response = app
-        .server
-        .post(&format!(
-            "/api/entries/{no_link_entry_id}/fetch-full-content"
-        ))
-        .await;
-    response.assert_status_bad_request();
-
-    let body: serde_json::Value = response.json();
-    assert!(body["error"].as_str().unwrap().contains("no link"));
-}
-
-#[tokio::test]
-async fn test_summarize_entry_no_link() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .post(&format!("/api/entries/{no_link_entry_id}/summarize"))
-        .await;
-    response.assert_status_bad_request();
-
-    let body: serde_json::Value = response.json();
-    assert!(body["error"].as_str().unwrap().contains("no link"));
-}
-
-#[tokio::test]
-async fn test_save_entry_no_link() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
-    login(&mut app.server).await;
-
-    let response = app
-        .server
-        .post(&format!("/api/entries/{no_link_entry_id}/save"))
-        .await;
-    response.assert_status_bad_request();
-
-    let body: serde_json::Value = response.json();
-    assert!(body["error"].as_str().unwrap().contains("no link"));
+    for action in ["fetch-full-content", "summarize", "save"] {
+        let response = app
+            .server
+            .post(&format!("/api/entries/{no_link_entry_id}/{action}"))
+            .await;
+        response.assert_status_bad_request();
+        let body: serde_json::Value = response.json();
+        assert!(
+            body["error"].as_str().unwrap().contains("no link"),
+            "{action}"
+        );
+    }
 }
 
 // --- Save/Summarize Without Config Tests (RDRS-specific, kept as-is) ---
 
 #[tokio::test]
-async fn test_summarize_entry_no_kagi_config() {
+async fn test_summarize_and_save_need_a_configured_service() {
     let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
-    let response = app
-        .server
-        .post(&format!("/api/entries/{}/summarize", entry_ids[0]))
-        .await;
-    response.assert_status_bad_request();
-
-    let body: serde_json::Value = response.json();
-    assert!(body["error"].as_str().unwrap().contains("Kagi"));
-}
-
-#[tokio::test]
-async fn test_save_entry_no_services_config() {
-    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
-
-    let response = app
-        .server
-        .post(&format!("/api/entries/{}/save", entry_ids[0]))
-        .await;
-    response.assert_status_bad_request();
-
-    let body: serde_json::Value = response.json();
-    assert!(body["error"].as_str().unwrap().contains("No save services"));
+    for (action, error) in [("summarize", "Kagi"), ("save", "No save services")] {
+        let response = app
+            .server
+            .post(&format!("/api/entries/{}/{action}", entry_ids[0]))
+            .await;
+        response.assert_status_bad_request();
+        let body: serde_json::Value = response.json();
+        assert!(body["error"].as_str().unwrap().contains(error), "{action}");
+    }
 }
 
 // --- Stream Item IDs Tests (item.rs coverage) ---
@@ -1380,39 +1244,18 @@ async fn test_stream_item_ids_with_count() {
 async fn test_stream_item_count() {
     let (app, _) = seeded_app().await;
 
-    let response = app.server.get("/reader/api/0/stream/items/count").await;
-    response.assert_status_ok();
-
-    let text = response.text();
-    assert_eq!(text, "5");
-}
-
-#[tokio::test]
-async fn test_stream_item_count_by_feed() {
-    let (app, _) = seeded_app().await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/items/count?s=feed/https://example.com/feed.xml")
+    for (query, count) in [
+        ("", "5"),
+        ("?s=feed/https://example.com/feed.xml", "5"),
+        ("?s=user/-/state/com.google/starred", "0"),
+    ] {
+        let body = common::get_ok(
+            &app.server,
+            &format!("/reader/api/0/stream/items/count{query}"),
+        )
         .await;
-    response.assert_status_ok();
-
-    let text = response.text();
-    assert_eq!(text, "5");
-}
-
-#[tokio::test]
-async fn test_stream_item_count_starred() {
-    let (app, _) = seeded_app().await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/items/count?s=user/-/state/com.google/starred")
-        .await;
-    response.assert_status_ok();
-
-    let text = response.text();
-    assert_eq!(text, "0");
+        assert_eq!(body, count, "{query}");
+    }
 }
 
 #[tokio::test]
@@ -1599,25 +1442,6 @@ async fn test_stream_contents_exclude_read() {
         !returned_ids.contains(&entry_ids[0]),
         "Read entry should be excluded from results"
     );
-}
-
-#[tokio::test]
-async fn test_stream_contents_include_starred() {
-    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
-
-    // Star one entry
-    star_entry(&app.server, &[entry_ids[2]]).await;
-
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?it=user/-/state/com.google/starred")
-        .await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["_entryId"], entry_ids[2]);
 }
 
 #[tokio::test]

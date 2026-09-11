@@ -2526,36 +2526,18 @@ async fn test_get_post_token() {
 }
 
 #[tokio::test]
-async fn test_preference_list() {
+async fn test_greader_stub_lists_are_empty() {
     let server = authed_server().await;
 
-    let response = server.get("/reader/api/0/preference/list").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body, json!({ "prefs": [] }));
-}
-
-#[tokio::test]
-async fn test_preference_stream_list() {
-    let server = authed_server().await;
-
-    let response = server.get("/reader/api/0/preference/stream/list").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body, json!({ "streamprefs": {} }));
-}
-
-#[tokio::test]
-async fn test_friend_list() {
-    let server = authed_server().await;
-
-    let response = server.get("/reader/api/0/friend/list").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body, json!({ "friends": [] }));
+    for (path, expected) in [
+        ("preference/list", json!({ "prefs": [] })),
+        ("preference/stream/list", json!({ "streamprefs": {} })),
+        ("friend/list", json!({ "friends": [] })),
+    ] {
+        let response = server.get(&format!("/reader/api/0/{path}")).await;
+        response.assert_status_ok();
+        assert_eq!(response.json::<serde_json::Value>(), expected, "{path}");
+    }
 }
 
 // ============================================================================
@@ -2564,57 +2546,64 @@ async fn test_friend_list() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_change_password_form_success() {
+async fn test_change_password_form() {
     let server = authed_server().await;
 
-    let response = server
-        .post("/user-settings/password")
-        .form(&json!({
-            "current_password": "vulture-mango-77-quilt",
-            "new_password": "heron-lantern-53-drift",
-            "confirm_password": "heron-lantern-53-drift",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/login");
+    // A mismatch changes nothing and stays on the page; the real change
+    // signs the session out. In that order, so the first leaves the second
+    // something to change.
+    for (confirm, location) in [
+        ("differentvalue", "/user-settings"),
+        ("heron-lantern-53-drift", "/login"),
+    ] {
+        let response = server
+            .post("/user-settings/password")
+            .form(&json!({
+                "current_password": "vulture-mango-77-quilt",
+                "new_password": "heron-lantern-53-drift",
+                "confirm_password": confirm,
+            }))
+            .await;
+        response.assert_status(StatusCode::SEE_OTHER);
+        assert_eq!(response.header(header::LOCATION), location, "{confirm}");
+    }
 }
 
+/// Settings forms answer 303 back to `/user-settings` whether they saved or,
+/// as with `entries_per_page=5` (below the minimum of 10), refused.
 #[tokio::test]
-async fn test_change_password_form_mismatch() {
+async fn test_settings_forms_redirect_back_to_the_page() {
     let server = authed_server().await;
 
-    let response = server
-        .post("/user-settings/password")
-        .form(&json!({
-            "current_password": "vulture-mango-77-quilt",
-            "new_password": "heron-lantern-53-drift",
-            "confirm_password": "differentvalue",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
-}
-
-#[tokio::test]
-async fn test_update_preferences_form() {
-    let server = authed_server().await;
-
-    let response = server
-        .post("/user-settings/preferences")
-        .form(&json!({
-            "theme": "dark",
-            "entries_per_page": 50,
-            "retention_read_days": 0,
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
+    for (path, form) in [
+        (
+            "preferences",
+            json!({ "theme": "dark", "entries_per_page": 50, "retention_read_days": 0 }),
+        ),
+        (
+            "preferences",
+            json!({ "theme": "system", "entries_per_page": 5, "retention_read_days": 0 }),
+        ),
+        (
+            "linkding",
+            json!({ "api_url": "https://linkding.example.com", "api_token": "secret-token" }),
+        ),
+        (
+            "kagi",
+            json!({ "session_link": "https://kagi.com/search?token=mysessiontoken", "language": "EN" }),
+        ),
+    ] {
+        let response = server
+            .post(&format!("/user-settings/{path}"))
+            .form(&form)
+            .await;
+        response.assert_status(StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.header(header::LOCATION),
+            "/user-settings",
+            "{form}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2660,42 +2649,6 @@ async fn test_update_preferences_form_sets_sidebar_prefs() {
     assert_eq!(sidebar["sidebar_hide_read"], false);
 }
 
-#[tokio::test]
-async fn test_update_preferences_form_validation() {
-    let server = authed_server().await;
-
-    // entries_per_page=5 is below MIN_ENTRIES_PER_PAGE (10), expect error path
-    let response = server
-        .post("/user-settings/preferences")
-        .form(&json!({
-            "theme": "system",
-            "entries_per_page": 5,
-            "retention_read_days": 0,
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
-}
-
-#[tokio::test]
-async fn test_update_linkding_form() {
-    let server = authed_server().await;
-
-    let response = server
-        .post("/user-settings/linkding")
-        .form(&json!({
-            "api_url": "https://linkding.example.com",
-            "api_token": "secret-token",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
-}
-
 /// End to end for the credential-at-rest fix: what the form stores must not be
 /// legible in the database, and must still come back out through the app.
 #[tokio::test]
@@ -2727,23 +2680,6 @@ async fn a_saved_linkding_token_is_encrypted_in_the_database() {
     // And the page still reports it as configured, i.e. the value round-trips.
     let page = app.server.get("/user-settings").await;
     assert!(page.text().contains("linkding.example.com"));
-}
-
-#[tokio::test]
-async fn test_update_kagi_form() {
-    let server = authed_server().await;
-
-    let response = server
-        .post("/user-settings/kagi")
-        .form(&json!({
-            "session_link": "https://kagi.com/search?token=mysessiontoken",
-            "language": "EN",
-        }))
-        .await;
-
-    response.assert_status(StatusCode::SEE_OTHER);
-    let location = response.header(header::LOCATION);
-    assert_eq!(location, "/user-settings");
 }
 
 #[tokio::test]

@@ -930,18 +930,20 @@ async fn test_setup_page_is_served_only_while_the_instance_is_empty() {
 }
 
 #[tokio::test]
-async fn test_validation_short_password() {
+async fn test_setup_rejects_a_short_password_or_an_empty_username() {
     let server = create_test_server(default_test_config()).await;
 
-    let response = server
-        .post("/api/setup")
-        .json(&json!({
-            "username": "admin",
-            "password": "short"
-        }))
-        .await;
-
-    response.assert_status_bad_request();
+    for (username, password) in [("admin", "short"), ("", "vulture-mango-77-quilt")] {
+        let response = server
+            .post("/api/setup")
+            .json(&json!({ "username": username, "password": password }))
+            .await;
+        assert_eq!(
+            response.status_code(),
+            StatusCode::BAD_REQUEST,
+            "{username:?} / {password:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1062,21 +1064,6 @@ async fn a_refused_setup_does_not_hash_the_password() {
 }
 
 #[tokio::test]
-async fn test_validation_empty_username() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server
-        .post("/api/setup")
-        .json(&json!({
-            "username": "",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
 async fn test_unread_page() {
     let mut server = create_test_server(default_test_config()).await;
 
@@ -1110,16 +1097,21 @@ async fn test_unread_page() {
 }
 
 #[tokio::test]
-async fn test_unread_page_unauthorized() {
+async fn test_pages_redirect_to_login_when_signed_out() {
     let server = create_test_server(default_test_config()).await;
 
-    let response = server.get("/").await;
     // Page routes redirect to login instead of returning 401
-    response.assert_status_see_other();
+    for path in ["/", "/admin"] {
+        assert_eq!(
+            server.get(path).await.status_code(),
+            StatusCode::SEE_OTHER,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
-async fn test_admin_page_accessible_by_admin() {
+async fn test_admin_sees_the_admin_panel_and_link() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
@@ -1130,19 +1122,15 @@ async fn test_admin_page_accessible_by_admin() {
         }))
         .await
         .assert_status(StatusCode::CREATED);
-
-    let __login = server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-    __login.assert_status_ok();
-    common::apply_csrf(&mut server, &__login);
+    common::login(&mut server, "admin").await;
 
     let body = common::get_ok(&server, "/admin").await;
     assert!(body.contains("Admin Panel"));
+
+    let body = common::get_ok(&server, "/").await;
+    // Admin nav is rendered client-side by <rdrs-sidebar>; the initial HTML
+    // carries `is_admin: true` in the sidebar bootstrap JSON.
+    assert!(body.contains(r#""is_admin":true"#));
 }
 
 #[tokio::test]
@@ -1173,44 +1161,6 @@ async fn test_admin_page_forbidden_for_regular_user() {
     let response = server.get("/admin").await;
     // Page routes redirect to login instead of returning 403
     response.assert_status_see_other();
-}
-
-#[tokio::test]
-async fn test_admin_page_unauthorized_without_login() {
-    let server = create_test_server(default_test_config()).await;
-
-    let response = server.get("/admin").await;
-    // Page routes redirect to login instead of returning 401
-    response.assert_status_see_other();
-}
-
-#[tokio::test]
-async fn test_unread_page_shows_admin_link_for_admin() {
-    let mut server = create_test_server(default_test_config()).await;
-
-    server
-        .post("/api/setup")
-        .json(&json!({
-            "username": "admin",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    let __login = server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await;
-    __login.assert_status_ok();
-    common::apply_csrf(&mut server, &__login);
-
-    let body = common::get_ok(&server, "/").await;
-    // Admin nav is rendered client-side by <rdrs-sidebar>; the initial HTML
-    // carries `is_admin: true` in the sidebar bootstrap JSON.
-    assert!(body.contains(r#""is_admin":true"#));
 }
 
 #[tokio::test]

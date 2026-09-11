@@ -1299,104 +1299,65 @@ mod tests {
     }
 
     #[test]
-    fn test_client_ip_untrusted_peer_ignores_xff() {
+    fn test_client_ip() {
         let cfg = Config {
             trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
             ..test_config()
         };
-        let peer: IpAddr = "203.0.113.1".parse().unwrap();
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("x-forwarded-for", "8.8.8.8".parse().unwrap());
-
-        assert_eq!(cfg.client_ip(Some(peer), &headers), peer);
-    }
-
-    /// KEY test: an append-mode proxy appends the real client to the RIGHT of
-    /// whatever the client itself sent, so a pre-populated spoof (`8.8.8.8`)
-    /// must not be believed — the right-most non-trusted entry is the client.
-    #[test]
-    fn test_client_ip_appendmode_spoof_uses_rightmost_untrusted() {
-        let cfg = Config {
-            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
-            ..test_config()
-        };
-        let peer: IpAddr = "10.0.0.1".parse().unwrap();
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("x-forwarded-for", "8.8.8.8, 203.0.113.9".parse().unwrap());
-
-        let expected: IpAddr = "203.0.113.9".parse().unwrap();
-        assert_eq!(cfg.client_ip(Some(peer), &headers), expected);
-    }
-
-    #[test]
-    fn test_client_ip_multi_trusted_hop_skips_trusted_entries() {
-        let cfg = Config {
-            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
-            ..test_config()
-        };
-        let peer: IpAddr = "10.0.0.1".parse().unwrap();
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.9, 10.0.0.5".parse().unwrap());
-
-        let expected: IpAddr = "203.0.113.9".parse().unwrap();
-        assert_eq!(cfg.client_ip(Some(peer), &headers), expected);
-    }
-
-    #[test]
-    fn test_client_ip_all_trusted_xff_falls_back_to_x_real_ip() {
-        let cfg = Config {
-            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
-            ..test_config()
-        };
-        let peer: IpAddr = "10.0.0.1".parse().unwrap();
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("x-forwarded-for", "10.0.0.5, 10.0.0.6".parse().unwrap());
-        headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
-
-        let expected: IpAddr = "198.51.100.7".parse().unwrap();
-        assert_eq!(cfg.client_ip(Some(peer), &headers), expected);
-    }
-
-    #[test]
-    fn test_client_ip_trusted_peer_no_forwarded_headers_returns_peer() {
-        let cfg = Config {
-            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
-            ..test_config()
-        };
-        let peer: IpAddr = "10.1.2.3".parse().unwrap();
-        let headers = axum::http::HeaderMap::new();
-
-        assert_eq!(cfg.client_ip(Some(peer), &headers), peer);
-    }
-
-    #[test]
-    fn test_client_ip_no_peer_returns_localhost() {
-        let cfg = Config {
-            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
-            ..test_config()
-        };
-        let headers = axum::http::HeaderMap::new();
-
-        assert_eq!(
-            cfg.client_ip(None, &headers),
-            IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
-        );
-    }
-
-    #[test]
-    fn test_client_ip_unparseable_rightmost_hop_does_not_fall_through_to_spoof() {
-        let cfg = Config {
-            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
-            ..test_config()
-        };
-        let peer: IpAddr = "10.0.0.1".parse().unwrap();
-        let mut headers = axum::http::HeaderMap::new();
-        // Attacker put a spoof on the left; the right-most (proxy-appended) token
-        // is malformed. We must NOT fall through to the spoofed 8.8.8.8; we bail to
-        // the trusted peer instead.
-        headers.insert("x-forwarded-for", "8.8.8.8, not-an-ip".parse().unwrap());
-
-        assert_eq!(cfg.client_ip(Some(peer), &headers), peer);
+        // (peer, X-Forwarded-For, X-Real-IP, expected client)
+        for (peer, xff, real_ip, expected) in [
+            // An untrusted peer's forwarding headers are ignored.
+            (Some("203.0.113.1"), Some("8.8.8.8"), None, "203.0.113.1"),
+            // KEY case: an append-mode proxy appends the real client to the
+            // RIGHT of whatever the client itself sent, so a pre-populated
+            // spoof (`8.8.8.8`) must not be believed — the right-most
+            // non-trusted entry is the client.
+            (
+                Some("10.0.0.1"),
+                Some("8.8.8.8, 203.0.113.9"),
+                None,
+                "203.0.113.9",
+            ),
+            // Trusted hops are skipped.
+            (
+                Some("10.0.0.1"),
+                Some("203.0.113.9, 10.0.0.5"),
+                None,
+                "203.0.113.9",
+            ),
+            // All-trusted XFF falls back to X-Real-IP.
+            (
+                Some("10.0.0.1"),
+                Some("10.0.0.5, 10.0.0.6"),
+                Some("198.51.100.7"),
+                "198.51.100.7",
+            ),
+            // A trusted peer with no forwarding headers is the client.
+            (Some("10.1.2.3"), None, None, "10.1.2.3"),
+            (None, None, None, "127.0.0.1"),
+            // The right-most (proxy-appended) token is malformed: bail to the
+            // trusted peer rather than fall through to the spoofed 8.8.8.8.
+            (
+                Some("10.0.0.1"),
+                Some("8.8.8.8, not-an-ip"),
+                None,
+                "10.0.0.1",
+            ),
+        ] {
+            let mut headers = axum::http::HeaderMap::new();
+            if let Some(xff) = xff {
+                headers.insert("x-forwarded-for", xff.parse().unwrap());
+            }
+            if let Some(real_ip) = real_ip {
+                headers.insert("x-real-ip", real_ip.parse().unwrap());
+            }
+            let peer = peer.map(|p| p.parse::<IpAddr>().unwrap());
+            assert_eq!(
+                cfg.client_ip(peer, &headers),
+                expected.parse::<IpAddr>().unwrap(),
+                "peer {peer:?}, XFF {xff:?}, X-Real-IP {real_ip:?}"
+            );
+        }
     }
 
     #[test]
