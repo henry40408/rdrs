@@ -390,255 +390,123 @@ pub fn pg_rewrite(sql: &str) -> String {
 // Each non-tx macro binds `$db` once, takes the write-priority admission
 // (`admit()` — a User op registers as in-flight; a Background op waits for SQLite
 // interactive idle; no-op on PG), runs the query while holding it, then releases.
+//
+// All ten expand through `__db_dispatch!`, which differs per macro only in the
+// `sqlx` constructor, the fetch method, and whether rows affected are mapped out.
 
-/// `SELECT` exactly one row as `$ty`.
+#[doc(hidden)]
 #[macro_export]
-macro_rules! query_one {
-    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
+macro_rules! __db_dispatch {
+    (db $db:expr; $($rest:tt)*) => {{
         let __db = $db;
         let __guard = __db.admit().await;
         let __r = match __db.inner() {
-            $crate::db::DbInner::Sqlite(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_one(pool).await
-            }
-            $crate::db::DbInner::Postgres(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_one(pool).await
-            }
+            $crate::db::DbInner::Sqlite(pool) => $crate::__db_dispatch!(@sqlite pool; $($rest)*),
+            $crate::db::DbInner::Postgres(pool) => $crate::__db_dispatch!(@pg pool; $($rest)*),
         };
         ::core::mem::drop(__guard);
         __r
     }};
+    (tx $tx:expr; $($rest:tt)*) => {
+        match $tx {
+            $crate::db::Tx::Sqlite { tx: t, .. } => $crate::__db_dispatch!(@sqlite &mut **t; $($rest)*),
+            $crate::db::Tx::Postgres(t) => $crate::__db_dispatch!(@pg &mut **t; $($rest)*),
+        }
+    };
+    (@sqlite $exec:expr; $ctor:ident [$($ty:ty)?] $method:ident $(=> $map:expr)?; $sql:expr $(, $bind:expr)*) => {{
+        #[allow(unused_mut)]
+        let mut q = ::sqlx::$ctor::<::sqlx::Sqlite $(, $ty)?>($sql);
+        $( q = q.bind($bind); )*
+        q.$method($exec).await $(.map($map))?
+    }};
+    (@pg $exec:expr; $ctor:ident [$($ty:ty)?] $method:ident $(=> $map:expr)?; $sql:expr $(, $bind:expr)*) => {{
+        #[allow(unused_mut)]
+        let mut q = ::sqlx::$ctor::<::sqlx::Postgres $(, $ty)?>(
+            ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+        );
+        $( q = q.bind($bind); )*
+        q.$method($exec).await $(.map($map))?
+    }};
+}
+
+/// `SELECT` exactly one row as `$ty`.
+#[macro_export]
+macro_rules! query_one {
+    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(db $db; query_as [$ty] fetch_one; $sql $(, $bind)*)
+    };
 }
 
 /// `SELECT` zero or one row as `Option<$ty>`.
 #[macro_export]
 macro_rules! query_opt {
-    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        let __db = $db;
-        let __guard = __db.admit().await;
-        let __r = match __db.inner() {
-            $crate::db::DbInner::Sqlite(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_optional(pool).await
-            }
-            $crate::db::DbInner::Postgres(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_optional(pool).await
-            }
-        };
-        ::core::mem::drop(__guard);
-        __r
-    }};
+    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(db $db; query_as [$ty] fetch_optional; $sql $(, $bind)*)
+    };
 }
 
 /// `SELECT` many rows as `Vec<$ty>`.
 #[macro_export]
 macro_rules! query_all {
-    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        let __db = $db;
-        let __guard = __db.admit().await;
-        let __r = match __db.inner() {
-            $crate::db::DbInner::Sqlite(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_all(pool).await
-            }
-            $crate::db::DbInner::Postgres(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_all(pool).await
-            }
-        };
-        ::core::mem::drop(__guard);
-        __r
-    }};
+    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(db $db; query_as [$ty] fetch_all; $sql $(, $bind)*)
+    };
 }
 
 /// `SELECT` a single scalar column as `$ty` (e.g. `COUNT(*)` as `i64`).
 #[macro_export]
 macro_rules! query_scalar {
-    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        let __db = $db;
-        let __guard = __db.admit().await;
-        let __r = match __db.inner() {
-            $crate::db::DbInner::Sqlite(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_scalar::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_one(pool).await
-            }
-            $crate::db::DbInner::Postgres(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_one(pool).await
-            }
-        };
-        ::core::mem::drop(__guard);
-        __r
-    }};
+    ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(db $db; query_scalar [$ty] fetch_one; $sql $(, $bind)*)
+    };
 }
 
 /// Run a statement (INSERT/UPDATE/DELETE) and return rows affected as `u64`.
 #[macro_export]
 macro_rules! db_execute {
-    ($db:expr, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        let __db = $db;
-        let __guard = __db.admit().await;
-        let __r = match __db.inner() {
-            $crate::db::DbInner::Sqlite(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query::<::sqlx::Sqlite>($sql);
-                $( q = q.bind($bind); )*
-                q.execute(pool).await.map(|r| r.rows_affected())
-            }
-            $crate::db::DbInner::Postgres(pool) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query::<::sqlx::Postgres>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.execute(pool).await.map(|r| r.rows_affected())
-            }
-        };
-        ::core::mem::drop(__guard);
-        __r
-    }};
+    ($db:expr, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(db $db; query [] execute => |r| r.rows_affected(); $sql $(, $bind)*)
+    };
 }
 
 /// `query_one!` against `&mut Tx`.
 #[macro_export]
 macro_rules! query_one_tx {
-    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $tx {
-            $crate::db::Tx::Sqlite { tx: t, .. } => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_one(&mut **t).await
-            }
-            $crate::db::Tx::Postgres(t) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_one(&mut **t).await
-            }
-        }
-    }};
+    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(tx $tx; query_as [$ty] fetch_one; $sql $(, $bind)*)
+    };
 }
 
 /// `query_opt!` against `&mut Tx`.
 #[macro_export]
 macro_rules! query_opt_tx {
-    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $tx {
-            $crate::db::Tx::Sqlite { tx: t, .. } => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_optional(&mut **t).await
-            }
-            $crate::db::Tx::Postgres(t) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_optional(&mut **t).await
-            }
-        }
-    }};
+    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(tx $tx; query_as [$ty] fetch_optional; $sql $(, $bind)*)
+    };
 }
 
 /// `query_all!` against `&mut Tx`.
 #[macro_export]
 macro_rules! query_all_tx {
-    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $tx {
-            $crate::db::Tx::Sqlite { tx: t, .. } => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_all(&mut **t).await
-            }
-            $crate::db::Tx::Postgres(t) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_all(&mut **t).await
-            }
-        }
-    }};
+    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(tx $tx; query_as [$ty] fetch_all; $sql $(, $bind)*)
+    };
 }
 
 /// `query_scalar!` against `&mut Tx`.
 #[macro_export]
 macro_rules! query_scalar_tx {
-    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $tx {
-            $crate::db::Tx::Sqlite { tx: t, .. } => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_scalar::<::sqlx::Sqlite, $ty>($sql);
-                $( q = q.bind($bind); )*
-                q.fetch_one(&mut **t).await
-            }
-            $crate::db::Tx::Postgres(t) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.fetch_one(&mut **t).await
-            }
-        }
-    }};
+    ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(tx $tx; query_scalar [$ty] fetch_one; $sql $(, $bind)*)
+    };
 }
 
 /// `db_execute!` against `&mut Tx`.
 #[macro_export]
 macro_rules! db_execute_tx {
-    ($tx:expr, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $tx {
-            $crate::db::Tx::Sqlite { tx: t, .. } => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query::<::sqlx::Sqlite>($sql);
-                $( q = q.bind($bind); )*
-                q.execute(&mut **t).await.map(|r| r.rows_affected())
-            }
-            $crate::db::Tx::Postgres(t) => {
-                #[allow(unused_mut)]
-                let mut q = ::sqlx::query::<::sqlx::Postgres>(
-                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
-                );
-                $( q = q.bind($bind); )*
-                q.execute(&mut **t).await.map(|r| r.rows_affected())
-            }
-        }
-    }};
+    ($tx:expr, $sql:expr $(, $bind:expr)* $(,)?) => {
+        $crate::__db_dispatch!(tx $tx; query [] execute => |r| r.rows_affected(); $sql $(, $bind)*)
+    };
 }
 
 #[cfg(test)]
