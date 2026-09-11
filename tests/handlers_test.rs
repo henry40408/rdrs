@@ -39,6 +39,13 @@ async fn setup_authenticated_user(server: &mut TestServer) {
     common::login(server, "testuser").await;
 }
 
+/// A server with [`setup_authenticated_user`] already run against it.
+async fn authed_server() -> TestServer {
+    let mut server = create_test_server(default_test_config()).await;
+    setup_authenticated_user(&mut server).await;
+    server
+}
+
 /// Helper to create a category via `GReader` rename-tag (s==dest creates idempotently)
 async fn create_category(server: &TestServer, name: &str) {
     let form = vec![
@@ -83,8 +90,7 @@ async fn get_folder_tag_names(server: &TestServer) -> Vec<String> {
 
 #[tokio::test]
 async fn test_create_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form = vec![
         ("s", "user/-/label/Tech News".to_string()),
@@ -100,8 +106,7 @@ async fn test_create_category() {
 
 #[tokio::test]
 async fn test_create_category_empty_name() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // Empty label name should fail validation in StreamId::parse
     let form = vec![
@@ -114,8 +119,7 @@ async fn test_create_category_empty_name() {
 
 #[tokio::test]
 async fn test_create_category_name_too_long() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let long_name = "a".repeat(101);
     let form = vec![
@@ -136,8 +140,7 @@ async fn test_create_category_name_too_long() {
 
 #[tokio::test]
 async fn test_list_categories() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "Tech").await;
     create_category(&server, "News").await;
@@ -169,8 +172,7 @@ async fn test_api_requires_authentication() {
 
 #[tokio::test]
 async fn test_get_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "Test Category").await;
 
@@ -180,8 +182,7 @@ async fn test_get_category() {
 
 #[tokio::test]
 async fn test_update_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "Old Name").await;
 
@@ -200,8 +201,7 @@ async fn test_update_category() {
 
 #[tokio::test]
 async fn test_update_category_empty_name() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "Test").await;
 
@@ -215,8 +215,7 @@ async fn test_update_category_empty_name() {
 
 #[tokio::test]
 async fn test_delete_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "To Delete").await;
 
@@ -233,8 +232,7 @@ async fn test_delete_category() {
 
 #[tokio::test]
 async fn test_list_feeds_empty() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
@@ -245,8 +243,7 @@ async fn test_list_feeds_empty() {
 
 #[tokio::test]
 async fn test_subscription_edit_of_an_unknown_feed_is_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let feed = "feed/https://nonexistent.com/feed.xml";
     for form in [
@@ -264,8 +261,7 @@ async fn test_subscription_edit_of_an_unknown_feed_is_not_found() {
 
 #[tokio::test]
 async fn test_get_feed_icon_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/api/feeds/9999/icon").await;
     response.assert_status_not_found();
@@ -273,8 +269,7 @@ async fn test_get_feed_icon_not_found() {
 
 #[tokio::test]
 async fn test_create_feed_empty_url() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![("ac", "subscribe"), ("s", "feed/")];
     let response = server
@@ -286,8 +281,7 @@ async fn test_create_feed_empty_url() {
 
 #[tokio::test]
 async fn test_create_feed_whitespace_url() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![("ac", "subscribe"), ("s", "feed/   ")];
     let response = server
@@ -305,8 +299,7 @@ async fn test_create_feed_whitespace_url() {
 
 #[tokio::test]
 async fn test_move_feed_to_different_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -500,8 +493,7 @@ async fn test_delete_feed_other_user() {
 
 #[tokio::test]
 async fn test_export_opml_empty() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/subscription/export").await;
     response.assert_status_ok();
@@ -512,8 +504,7 @@ async fn test_export_opml_empty() {
 
 #[tokio::test]
 async fn test_export_opml_with_feeds() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -540,8 +531,7 @@ async fn test_export_opml_with_feeds() {
 
 #[tokio::test]
 async fn test_import_opml_valid() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -587,8 +577,7 @@ async fn test_import_opml_unauthorized() {
 
 #[tokio::test]
 async fn test_import_opml_invalid() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/reader/api/0/subscription/import")
@@ -600,8 +589,7 @@ async fn test_import_opml_invalid() {
 
 #[tokio::test]
 async fn test_import_opml_duplicate_feeds_skipped() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -634,8 +622,7 @@ async fn test_import_opml_duplicate_feeds_skipped() {
 
 #[tokio::test]
 async fn test_import_opml_multiple_categories() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -671,8 +658,7 @@ async fn test_import_opml_multiple_categories() {
 
 #[tokio::test]
 async fn test_list_entries_empty() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
@@ -695,8 +681,7 @@ async fn test_list_entries_unauthorized() {
 
 #[tokio::test]
 async fn test_list_entries_with_pagination() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=10")
@@ -709,8 +694,7 @@ async fn test_list_entries_with_pagination() {
 
 #[tokio::test]
 async fn test_list_entries_with_filters() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
@@ -725,8 +709,7 @@ async fn test_list_entries_with_filters() {
 
 #[tokio::test]
 async fn test_stream_of_an_unknown_category_or_feed_is_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     for stream in [
         "user/-/label/NonExistent",
@@ -741,8 +724,7 @@ async fn test_stream_of_an_unknown_category_or_feed_is_not_found() {
 
 #[tokio::test]
 async fn test_get_entry_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // stream/items/contents with non-existent ID returns 200 with empty items
     let response = server
@@ -755,8 +737,7 @@ async fn test_get_entry_not_found() {
 
 #[tokio::test]
 async fn test_edit_tag_on_an_unknown_entry_is_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     for (op, tag) in [
         ("a", "user/-/state/com.google/read"),
@@ -771,8 +752,7 @@ async fn test_edit_tag_on_an_unknown_entry_is_not_found() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/api/entries/9999/neighbors").await;
     response.assert_status_not_found();
@@ -780,8 +760,7 @@ async fn test_get_entry_neighbors_not_found() {
 
 #[tokio::test]
 async fn test_entry_actions_on_an_unknown_entry_are_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     for action in ["fetch-full-content", "summarize", "save"] {
         let response = server.post(&format!("/api/entries/9999/{action}")).await;
@@ -791,8 +770,7 @@ async fn test_entry_actions_on_an_unknown_entry_are_not_found() {
 
 #[tokio::test]
 async fn test_get_unread_stats() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/unread-count").await;
     response.assert_status_ok();
@@ -803,8 +781,7 @@ async fn test_get_unread_stats() {
 
 #[tokio::test]
 async fn test_mark_all_read_all() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![("s", "user/-/state/com.google/reading-list")];
     let response = server
@@ -817,8 +794,7 @@ async fn test_mark_all_read_all() {
 
 #[tokio::test]
 async fn test_mark_all_read_older_than_days() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // Use timestamp in microseconds (7 days ago)
     let ts = (chrono::Utc::now().timestamp() - 7 * 86400) * 1_000_000;
@@ -837,8 +813,7 @@ async fn test_mark_all_read_older_than_days() {
 
 #[tokio::test]
 async fn test_mark_all_read_by_category_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![("s", "user/-/label/NonExistent")];
     let response = server
@@ -850,8 +825,7 @@ async fn test_mark_all_read_by_category_not_found() {
 
 #[tokio::test]
 async fn test_mark_all_read_by_feed_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![("s", "feed/https://nonexistent.com/feed.xml")];
     let response = server
@@ -863,8 +837,7 @@ async fn test_mark_all_read_by_feed_not_found() {
 
 #[tokio::test]
 async fn test_entries_filter_by_valid_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "TestCategory").await;
 
@@ -883,8 +856,7 @@ async fn test_entries_filter_by_valid_category() {
 
 #[tokio::test]
 async fn test_get_theme_default() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/api/user/settings/theme").await;
     response.assert_status_ok();
@@ -895,8 +867,7 @@ async fn test_get_theme_default() {
 
 #[tokio::test]
 async fn test_update_theme() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     for theme in ["dark", "light"] {
         server
@@ -914,8 +885,7 @@ async fn test_update_theme() {
 
 #[tokio::test]
 async fn test_update_theme_system() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     server
         .put("/api/user/settings/theme")
@@ -938,8 +908,7 @@ async fn test_update_theme_system() {
 
 #[tokio::test]
 async fn test_update_theme_invalid() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .put("/api/user/settings/theme")
@@ -965,8 +934,7 @@ async fn test_update_theme_unauthorized() {
 
 #[tokio::test]
 async fn test_categories_page() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/categories").await;
     response.assert_status_ok();
@@ -1000,8 +968,7 @@ async fn test_pages_redirect_when_signed_out() {
 
 #[tokio::test]
 async fn test_feeds_page() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/feeds").await;
     response.assert_status_ok();
@@ -1018,8 +985,7 @@ async fn test_feeds_page() {
 
 #[tokio::test]
 async fn test_entries_page() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/entries").await;
     response.assert_status_ok();
@@ -1027,8 +993,7 @@ async fn test_entries_page() {
 
 #[tokio::test]
 async fn test_entry_page() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // Entry page now redirects to the list page with ?entry= param
     let response = server.get("/entries/1").await;
@@ -1037,8 +1002,7 @@ async fn test_entry_page() {
 
 #[tokio::test]
 async fn test_user_settings_page() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/user-settings").await;
     response.assert_status_ok();
@@ -1048,8 +1012,7 @@ async fn test_user_settings_page() {
 
 #[tokio::test]
 async fn test_settings_page() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/settings").await;
     response.assert_status_ok();
@@ -1114,8 +1077,7 @@ async fn test_category_isolation_between_users() {
 
 #[tokio::test]
 async fn test_create_category_with_whitespace_name() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // Name with leading/trailing whitespace
     let form = vec![
@@ -1141,8 +1103,7 @@ async fn test_create_category_with_whitespace_name() {
 
 #[tokio::test]
 async fn test_update_category_with_whitespace_name() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     create_category(&server, "Original").await;
 
@@ -1409,8 +1370,7 @@ async fn test_passkey_register_start_unauthorized() {
 
 #[tokio::test]
 async fn test_passkey_register_start_authorized() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.post("/api/passkey/register/start").await;
     response.assert_status_ok();
@@ -1479,8 +1439,7 @@ async fn test_passkey_auth_finish_no_challenge() {
 
 #[tokio::test]
 async fn test_list_passkeys_empty() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/api/passkeys").await;
     response.assert_status_ok();
@@ -1502,8 +1461,7 @@ async fn test_rename_passkey_unauthorized() {
 
 #[tokio::test]
 async fn test_rename_passkey_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .put("/api/passkeys/9999")
@@ -1514,8 +1472,7 @@ async fn test_rename_passkey_not_found() {
 
 #[tokio::test]
 async fn test_rename_passkey_empty_name() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .put("/api/passkeys/1")
@@ -1534,8 +1491,7 @@ async fn test_delete_passkey_unauthorized() {
 
 #[tokio::test]
 async fn test_delete_passkey_not_found() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.delete("/api/passkeys/9999").await;
     response.assert_status_not_found();
@@ -1630,8 +1586,7 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
 
 #[tokio::test]
 async fn test_passkey_register_finish_empty_name() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     server.post("/api/passkey/register/start").await;
 
@@ -1659,8 +1614,7 @@ async fn test_passkey_register_finish_empty_name() {
 
 #[tokio::test]
 async fn test_passkey_register_finish_no_challenge() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/api/passkey/register/finish")
@@ -2160,8 +2114,7 @@ async fn test_offline_page_is_public_and_needs_no_auth() {
 
 #[tokio::test]
 async fn test_offline_page_stays_public_for_a_signed_in_reader() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // The interesting case. The service worker precaches this page from inside a
     // signed-in session, and the Cache API honours no `Cache-Control` at all —
@@ -2208,8 +2161,7 @@ async fn test_health_check_no_auth_required() {
 
 #[tokio::test]
 async fn test_subscription_list_with_feeds() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -2259,8 +2211,7 @@ async fn test_subscription_list_with_feeds() {
 
 #[tokio::test]
 async fn test_subscription_edit_subscribe_unreachable_url() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // subscription/edit ac=subscribe performs feed discovery before inserting.
     // An unreachable URL should result in a BAD_GATEWAY (502) error from discovery.
@@ -2277,8 +2228,7 @@ async fn test_subscription_edit_subscribe_unreachable_url() {
 
 #[tokio::test]
 async fn test_subscription_edit_unknown_action() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![
         ("ac", "invalid"),
@@ -2293,8 +2243,7 @@ async fn test_subscription_edit_unknown_action() {
 
 #[tokio::test]
 async fn test_quickadd_empty_url() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let form: Vec<(&str, &str)> = vec![("quickadd", "")];
     let response = server
@@ -2306,8 +2255,7 @@ async fn test_quickadd_empty_url() {
 
 #[tokio::test]
 async fn test_subscribed_true() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -2333,8 +2281,7 @@ async fn test_subscribed_true() {
 
 #[tokio::test]
 async fn test_subscribed_false() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .get("/reader/api/0/subscribed?s=feed/https://nonexistent.com/feed.xml")
@@ -2345,8 +2292,7 @@ async fn test_subscribed_false() {
 
 #[tokio::test]
 async fn test_subscribed_invalid_stream() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // "invalid" does not start with "feed/" so should fail validation
     let response = server.get("/reader/api/0/subscribed?s=invalid").await;
@@ -2355,8 +2301,7 @@ async fn test_subscribed_invalid_stream() {
 
 #[tokio::test]
 async fn test_export_opml_content_type() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/subscription/export").await;
     response.assert_status_ok();
@@ -2384,8 +2329,7 @@ async fn test_export_opml_content_type() {
 
 #[tokio::test]
 async fn test_import_opml_with_existing_category() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // Pre-create a category via rename-tag
     create_category(&server, "PreExistingCat").await;
@@ -2425,8 +2369,7 @@ async fn test_import_opml_with_existing_category() {
 
 #[tokio::test]
 async fn test_subscription_edit_edit_title() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -2582,8 +2525,7 @@ async fn test_greader_invalid_auth_header() {
 
 #[tokio::test]
 async fn test_get_post_token() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/token").await;
     response.assert_status_ok();
@@ -2599,8 +2541,7 @@ async fn test_get_post_token() {
 
 #[tokio::test]
 async fn test_preference_list() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/preference/list").await;
     response.assert_status_ok();
@@ -2611,8 +2552,7 @@ async fn test_preference_list() {
 
 #[tokio::test]
 async fn test_preference_stream_list() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/preference/stream/list").await;
     response.assert_status_ok();
@@ -2623,8 +2563,7 @@ async fn test_preference_stream_list() {
 
 #[tokio::test]
 async fn test_friend_list() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server.get("/reader/api/0/friend/list").await;
     response.assert_status_ok();
@@ -2640,8 +2579,7 @@ async fn test_friend_list() {
 
 #[tokio::test]
 async fn test_change_password_form_success() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/user-settings/password")
@@ -2659,8 +2597,7 @@ async fn test_change_password_form_success() {
 
 #[tokio::test]
 async fn test_change_password_form_mismatch() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/user-settings/password")
@@ -2678,8 +2615,7 @@ async fn test_change_password_form_mismatch() {
 
 #[tokio::test]
 async fn test_update_preferences_form() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/user-settings/preferences")
@@ -2697,8 +2633,7 @@ async fn test_update_preferences_form() {
 
 #[tokio::test]
 async fn test_update_preferences_form_sets_sidebar_prefs() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // Defaults before anything is submitted.
     let sidebar: serde_json::Value = server.get("/api/sidebar").await.json();
@@ -2741,8 +2676,7 @@ async fn test_update_preferences_form_sets_sidebar_prefs() {
 
 #[tokio::test]
 async fn test_update_preferences_form_validation() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     // entries_per_page=5 is below MIN_ENTRIES_PER_PAGE (10), expect error path
     let response = server
@@ -2761,8 +2695,7 @@ async fn test_update_preferences_form_validation() {
 
 #[tokio::test]
 async fn test_update_linkding_form() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/user-settings/linkding")
@@ -2812,8 +2745,7 @@ async fn a_saved_linkding_token_is_encrypted_in_the_database() {
 
 #[tokio::test]
 async fn test_update_kagi_form() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_authenticated_user(&mut server).await;
+    let server = authed_server().await;
 
     let response = server
         .post("/user-settings/kagi")

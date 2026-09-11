@@ -2,7 +2,7 @@
 //! shared `/api/me` + `/api/sidebar` endpoints used by the chrome.
 
 mod common;
-use common::{create_test_app, default_test_config, login, setup_users};
+use common::{app_signed_in_as, create_test_app, default_test_config, login, setup_users};
 
 use axum::http::StatusCode;
 use rdrs::Db;
@@ -96,9 +96,7 @@ async fn test_statistics_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_statistics_page_marks_the_selected_period_active() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, _) = app_signed_in_as("admin").await;
 
     // No period and an unknown one both fall back to the 7d default.
     for (query, active) in [
@@ -119,9 +117,7 @@ async fn test_statistics_page_marks_the_selected_period_active() {
 
 #[tokio::test]
 async fn test_statistics_page_admin_sees_sitewide() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, _) = app_signed_in_as("admin").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
@@ -145,9 +141,7 @@ async fn test_statistics_page_admin_sees_sitewide() {
 /// slot is dropped.
 #[tokio::test]
 async fn test_admin_database_stats_are_served_from_the_cache() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (admin_id, _user_id) = setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, (admin_id, _user_id)) = app_signed_in_as("admin").await;
 
     let first = app.server.get("/statistics").await;
     first.assert_status_ok();
@@ -185,9 +179,7 @@ async fn test_admin_database_stats_are_served_from_the_cache() {
 
 #[tokio::test]
 async fn test_statistics_page_user_no_sitewide() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "user").await;
+    let (app, _) = app_signed_in_as("user").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
@@ -197,9 +189,7 @@ async fn test_statistics_page_user_no_sitewide() {
 
 #[tokio::test]
 async fn test_statistics_page_custom_period() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, _) = app_signed_in_as("admin").await;
 
     let response = app
         .server
@@ -214,9 +204,7 @@ async fn test_statistics_page_custom_period() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_custom_range_falls_back() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, _) = app_signed_in_as("admin").await;
 
     let response = app
         .server
@@ -230,9 +218,7 @@ async fn test_statistics_page_invalid_custom_range_falls_back() {
 
 #[tokio::test]
 async fn test_statistics_page_masquerade_hides_admin_section() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_admin_id, user_id) = setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, (_admin_id, user_id)) = app_signed_in_as("admin").await;
 
     app.server
         .post(&format!("/admin/users/{user_id}/masquerade"))
@@ -314,9 +300,7 @@ async fn test_statistics_page_direct_labels_single_max_day() {
 
 #[tokio::test]
 async fn test_api_me_returns_role_and_flags() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, _) = app_signed_in_as("admin").await;
 
     let response = app.server.get("/api/me").await;
     response.assert_status_ok();
@@ -329,9 +313,7 @@ async fn test_api_me_returns_role_and_flags() {
 
 #[tokio::test]
 async fn test_api_me_masquerade_flag_set() {
-    let mut app = create_test_app(default_test_config()).await;
-    let (_admin_id, user_id) = setup_users(&app.db).await;
-    login(&mut app.server, "admin").await;
+    let (app, (_admin_id, user_id)) = app_signed_in_as("admin").await;
     app.server
         .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
