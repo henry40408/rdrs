@@ -1,6 +1,8 @@
 //! The first-line CSRF guard, exercised through the real router so its wiring
-//! into the layer stack is covered — the classification itself is unit-tested
-//! in `middleware::csrf`.
+//! into the layer stack is covered. The classification itself is
+//! `tower_http::csrf`'s and tested upstream; what is pinned here is the
+//! behaviour this app relies on, plus the synchronizer-token guard and the
+//! anonymous-session cookies behind it.
 
 mod common;
 use common::default_test_config;
@@ -99,6 +101,72 @@ async fn safe_get_is_never_blocked_cross_site() {
         .add_header("sec-fetch-site", "cross-site")
         .await;
     res.assert_status_ok();
+}
+
+/// With no `Sec-Fetch-Site` — Safari before 16.4 — the guard falls back to
+/// comparing the `Origin`'s full authority, port included, with `Host`.
+#[tokio::test]
+async fn origin_fallback_rejects_an_authority_that_differs_from_host() {
+    for (origin, host, why) in [
+        (
+            "http://app.example.com:9000",
+            "app.example.com:8080",
+            "another port on the same host is another origin, and cookies \
+             ignore ports, so it would arrive carrying the victim's session",
+        ),
+        (
+            "https://app.example.com:8443",
+            "app.example.com",
+            "a proxy that forwards Host without the port the browser used \
+             (nginx's `$host`) cannot be told apart from the case above",
+        ),
+        (
+            "https://other.example.com",
+            "app.example.com",
+            "a sibling subdomain is another origin",
+        ),
+        (
+            "null",
+            "app.example.com",
+            "an opaque origin is never legitimate for a mutation",
+        ),
+    ] {
+        let res = test_server()
+            .await
+            .post("/api/setup")
+            .add_header("origin", origin)
+            .add_header("host", host)
+            .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+            .await;
+        assert_eq!(
+            res.status_code(),
+            StatusCode::FORBIDDEN,
+            "Origin {origin} / Host {host} must be rejected: {why}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn origin_fallback_passes_an_authority_that_matches_host() {
+    for (origin, host) in [
+        ("https://app.example.com:8443", "app.example.com:8443"),
+        // A TLS-terminating proxy: the browser's `https://` Origin meets a
+        // scheme-less Host, and the comparison ignores scheme.
+        ("https://app.example.com", "app.example.com"),
+    ] {
+        let res = test_server()
+            .await
+            .post("/api/setup")
+            .add_header("origin", origin)
+            .add_header("host", host)
+            .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+            .await;
+        assert_eq!(
+            res.status_code(),
+            StatusCode::CREATED,
+            "Origin {origin} / Host {host} must reach the handler"
+        );
+    }
 }
 
 #[tokio::test]
@@ -506,8 +574,27 @@ async fn a_token_mismatch_is_logged_without_leaking_the_session_cookie() {
         .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await;
     cross_site.assert_status(StatusCode::FORBIDDEN);
+    let logged = logs.contents();
     assert!(
-        logs.contents().contains("csrf.cross_site"),
+        logged.contains("csrf.cross_site"),
         "a cross-site rejection must be told apart from a token mismatch"
+    );
+    assert!(
+        logged.contains("check=sec_fetch_site") && logged.contains("path=/api/setup"),
+        "the cross-site rejection must name the check and the request, got: {logged}"
+    );
+
+    // An old browser's rejection comes from the Origin fallback instead, and
+    // says so: that is the one a misconfigured proxy produces.
+    let fallback = server
+        .post("/api/setup")
+        .add_header("origin", "https://app.example.com:8443")
+        .add_header("host", "app.example.com")
+        .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    fallback.assert_status(StatusCode::FORBIDDEN);
+    assert!(
+        logs.contents().contains("check=origin_fallback"),
+        "an Origin-fallback rejection must be told apart from a Sec-Fetch-Site one"
     );
 }

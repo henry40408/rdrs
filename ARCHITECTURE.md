@@ -900,8 +900,9 @@ Native GReader `ClientLogin` tokens are unaffected, being the raw
 
 Two independent lines, so a bypass of one is not a bypass of both.
 
-- **First line — `middleware::csrf::csrf_origin_guard`** (in place). A
-  header-only, stateless check layered over the whole router. On every
+- **First line — `tower_http::csrf::CsrfLayer`** (in place), the Go 1.25
+  `CrossOriginProtection` scheme. A header-only, stateless check layered over
+  the whole router. On every
   state-changing method it allows only a `Sec-Fetch-Site` of `same-origin` or
   `none`, and rejects anything else — including `same-site`, which a browser
   sends for a sibling subdomain or another port on the same host. Neither is
@@ -910,13 +911,21 @@ Two independent lines, so a bypass of one is not a bypass of both.
   credentials attached. It once had the GReader surface to itself, which is what
   made this reachable; that surface now sits behind the token guard too, and
   this line stays strict so nothing else has to depend on it. Where
-  `Sec-Fetch-Site` is absent, an `Origin` whose host does
-  not match the request's `Host` is rejected (an opaque `Origin: null` counts as
-  cross-site); that comparison is host-only, so it survives a TLS-terminating
+  `Sec-Fetch-Site` is absent (Safari before 16.4), an `Origin` whose authority —
+  host *and port* — does not byte-match the request's own (the request-target
+  authority, else `Host`) is rejected, as is an opaque `Origin: null`. Matching
+  the port is what stops another service on the same host from passing as
+  same-origin. The comparison ignores scheme, so it survives a TLS-terminating
   proxy where the browser's `https://` `Origin` meets a scheme-less forwarded
-  `Host`. Requests with neither header — native GReader clients, `curl`,
-  server-to-server calls, all bearer-authenticated rather than
-  cookie-authenticated — are not a CSRF vector and pass through.
+  `Host`; it does not survive a proxy that forwards `Host` without the port the
+  browser used (nginx's `$host` on a non-default port), which README → Production
+  Notes tells operators to avoid. Requests with neither header — native GReader
+  clients, `curl`, server-to-server calls, all bearer-authenticated rather than
+  cookie-authenticated — are not a CSRF vector and pass through. The layer's
+  rejection builder never sees the request, so
+  `middleware::csrf::log_cross_site_rejection`, layered directly outside it,
+  pairs the request with the `ProtectionError` the layer attaches to its 403 and
+  logs which check fired (`check=sec_fetch_site` or `check=origin_fallback`).
 - **Second line — synchronizer token** (`middleware::csrf::csrf_guard`, in
   place). A per-session token, `secret::derive_csrf` = HMAC of the session token
   under the `csrf:` domain, so it needs no column and no query and cannot equal
