@@ -167,13 +167,19 @@ pub async fn log_cross_site_rejection(req: Request, next: Next) -> Response {
 
     let res = next.run(req).await;
     if let Some(err) = res.extensions().get::<ProtectionError>() {
+        // Bound here rather than written inline: llvm-cov reports a call inside
+        // a `tracing` field list as never executed, even when the event fires.
+        let check = rejected_by(err.kind());
+        let path = uri.path();
+        let sec_fetch_site = header_str(sec_fetch_site.as_ref());
+        let origin = header_str(origin.as_ref());
         tracing::warn!(
             event = "csrf.cross_site",
-            check = %rejected_by(err.kind()),
+            check = %check,
             method = %method,
-            path = %uri.path(),
-            sec_fetch_site = header_str(sec_fetch_site.as_ref()),
-            origin = header_str(origin.as_ref()),
+            path = %path,
+            sec_fetch_site,
+            origin,
             "rejected a state-changing request the browser reported as cross-site"
         );
     }
