@@ -1,8 +1,8 @@
 use askama::Template;
 use axum::{
     extract::{Path as AxumPath, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{Html, IntoResponse, Redirect, Response},
+    http::{HeaderMap, header},
+    response::{IntoResponse, Redirect, Response},
 };
 
 use crate::{
@@ -33,14 +33,15 @@ pub struct ReadingPaneFragment {
     pub csrf_token: String,
 }
 
-impl IntoResponse for ReadingPaneFragment {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
+crate::handlers::impl_html_response!(
+    ReadingPaneFragment,
+    ReadingPaneWithFlash,
+    SummarizePending,
+    SummarizeCleared,
+    SummaryFragment,
+    EntryActionMulti,
+    OpenEntryMulti,
+);
 
 /// One-shot flash payload for the swap-helper `<template data-flash>` block.
 /// `level` is one of `success | error | info | warning` — matching the
@@ -79,15 +80,6 @@ pub struct ReadingPaneWithFlash {
     pub csrf_token: String,
 }
 
-impl IntoResponse for ReadingPaneWithFlash {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Multi-target response for `POST /entries/{id}/summarize`. Swaps only
 /// the `#rp-summary-container` block so the reading-pane article body
 /// (which may currently hold an externally-fetched full-content view)
@@ -100,29 +92,11 @@ pub struct SummarizePending {
     pub csrf_token: String,
 }
 
-impl IntoResponse for SummarizePending {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Response for `POST /entries/{id}/summarize/cancel`. Swaps
 /// `#rp-summary-container` back to its empty state after a cancel / clear.
 #[derive(Template)]
 #[template(path = "_summary_cleared.html")]
 pub struct SummarizeCleared;
-
-impl IntoResponse for SummarizeCleared {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
 
 /// `GET /entries/{id}/summary/fragment` — re-renders `#rp-summary-container`
 /// for the entry's current summary state. Used by the SSE client to refresh
@@ -133,15 +107,6 @@ pub struct SummaryFragment {
     pub pane: ReadingPaneView,
     /// See [`ReadingPaneFragment::csrf_token`].
     pub csrf_token: String,
-}
-
-impl IntoResponse for SummaryFragment {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// `/{kind}/{id}/entries` with a purely numeric `{id}` — the scoped feed /
@@ -673,15 +638,6 @@ pub struct EntryActionMulti {
     pub csrf_token: String,
 }
 
-impl IntoResponse for EntryActionMulti {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Multi-target response for opening an entry: the reading pane and the
 /// now-read entry row. Returned by `GET /entries/{id}/fragment` so a title-link
 /// click both shows the entry and clears its unread state in one round trip. The
@@ -693,15 +649,6 @@ pub struct OpenEntryMulti {
     pub r: EntryRowView,
     /// See [`ReadingPaneFragment::csrf_token`].
     pub csrf_token: String,
-}
-
-impl IntoResponse for OpenEntryMulti {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
 }
 
 /// Answer an entry-action POST. The swap helper's `fetch()` gets the

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::{Db, DbInner, Tx};
 use crate::error::{AppError, AppResult};
 use crate::utils::text::strip_to_search_text;
-use crate::{db_execute, query_all, query_opt, query_opt_tx, query_scalar};
+use crate::{db_execute, query_opt, query_opt_tx, query_scalar};
 
 mod filters;
 pub mod query;
@@ -482,21 +482,6 @@ pub async fn find_by_guid_and_feed(db: &Db, guid: &str, feed_id: i64) -> AppResu
          FROM entry WHERE guid = $1 AND feed_id = $2",
         guid,
         feed_id
-    )
-    .map_err(AppError::Database)
-}
-
-pub async fn list_by_feed(db: &Db, feed_id: i64, limit: i64, offset: i64) -> AppResult<Vec<Entry>> {
-    query_all!(
-        db,
-        Entry,
-        "SELECT id, feed_id, guid, title, link, content, full_content, summary, author, \
-         published_at, read_at, starred_at, created_at, updated_at \
-         FROM entry WHERE feed_id = $1 \
-         ORDER BY COALESCE(published_at, created_at) DESC LIMIT $2 OFFSET $3",
-        feed_id,
-        limit,
-        offset
     )
     .map_err(AppError::Database)
 }
@@ -1141,21 +1126,6 @@ pub async fn mark_as_read(db: &Db, id: i64) -> AppResult<Entry> {
     find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
-pub async fn mark_as_unread(db: &Db, id: i64) -> AppResult<Entry> {
-    let rows = db_execute!(
-        db,
-        "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = $1",
-        id
-    )
-    .map_err(AppError::Database)?;
-
-    if rows == 0 {
-        return Err(AppError::EntryNotFound);
-    }
-
-    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
-}
-
 /// Explicitly star an entry (set `starred_at` if not already set).
 pub async fn star_entry(db: &Db, id: i64) -> AppResult<Entry> {
     let rows = db_execute!(
@@ -1183,28 +1153,6 @@ pub async fn unstar_entry(db: &Db, id: i64) -> AppResult<Entry> {
 
     if rows == 0 {
         return Err(AppError::EntryNotFound);
-    }
-
-    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
-}
-
-pub async fn toggle_star(db: &Db, id: i64) -> AppResult<Entry> {
-    let entry = find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)?;
-
-    if entry.starred_at.is_some() {
-        db_execute!(
-            db,
-            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = $1",
-            id
-        )
-        .map_err(AppError::Database)?;
-    } else {
-        db_execute!(
-            db,
-            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = $1",
-            id
-        )
-        .map_err(AppError::Database)?;
     }
 
     find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
@@ -1847,44 +1795,8 @@ pub async fn mark_read_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppRe
     .await
 }
 
-/// Bulk mark the given entries as unread, scoped to the user's feeds.
-pub async fn mark_unread_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
-    update_entries_by_ids(
-        db,
-        user_id,
-        entry_ids,
-        "read_at = NULL, updated_at = datetime('now')",
-        "",
-    )
-    .await
-}
-
-/// Bulk star the given entries (only those not already starred), scoped to the
-/// user's feeds.
-pub async fn star_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
-    update_entries_by_ids(
-        db,
-        user_id,
-        entry_ids,
-        "starred_at = datetime('now'), updated_at = datetime('now')",
-        " AND starred_at IS NULL",
-    )
-    .await
-}
-
-/// Bulk unstar the given entries, scoped to the user's feeds.
-pub async fn unstar_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
-    update_entries_by_ids(
-        db,
-        user_id,
-        entry_ids,
-        "starred_at = NULL, updated_at = datetime('now')",
-        "",
-    )
-    .await
-}
-
-/// Transactional variant of [`mark_unread_by_ids`] (`GReader` `edit_tag`).
+/// Bulk mark the given entries as unread, scoped to the user's feeds, inside
+/// `GReader` `edit_tag`'s transaction.
 pub async fn mark_unread_by_ids_tx(
     tx: &mut Tx<'_>,
     user_id: i64,
@@ -1900,7 +1812,8 @@ pub async fn mark_unread_by_ids_tx(
     .await
 }
 
-/// Transactional variant of [`star_by_ids`] (`GReader` `edit_tag`).
+/// Bulk star the given entries (only those not already starred), scoped to
+/// the user's feeds, inside `GReader` `edit_tag`'s transaction.
 pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
@@ -1912,7 +1825,8 @@ pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) ->
     .await
 }
 
-/// Transactional variant of [`unstar_by_ids`] (`GReader` `edit_tag`).
+/// Bulk unstar the given entries, scoped to the user's feeds, inside
+/// `GReader` `edit_tag`'s transaction.
 pub async fn unstar_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
@@ -2195,9 +2109,6 @@ mod tests {
 
         let read = mark_as_read(&db, entry.id).await.unwrap();
         assert!(read.read_at.is_some());
-
-        let unread = mark_as_unread(&db, entry.id).await.unwrap();
-        assert!(unread.read_at.is_none());
     }
 
     #[tokio::test]
@@ -2348,44 +2259,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_toggle_star() {
-        let db = setup_db().await;
-        let user_id = create_test_user(&db, "testuser").await;
-        let category_id = create_test_category(&db, user_id, "Tech").await;
-        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
-
-        let (entry, _) = upsert_entry(
-            &db,
-            feed_id,
-            "guid-123",
-            Some("Test"),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert!(entry.starred_at.is_none());
-
-        let starred = toggle_star(&db, entry.id).await.unwrap();
-        assert!(starred.starred_at.is_some());
-
-        let unstarred = toggle_star(&db, entry.id).await.unwrap();
-        assert!(unstarred.starred_at.is_none());
-    }
-
-    #[tokio::test]
     async fn test_count_unread() {
         let db = setup_db().await;
         let user_id = create_test_user(&db, "testuser").await;
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
+        let mut ids = Vec::new();
         for i in 0..5 {
-            upsert_entry(
+            let (entry, _) = upsert_entry(
                 &db,
                 feed_id,
                 &format!("guid-{i}"),
@@ -2398,13 +2280,13 @@ mod tests {
             )
             .await
             .unwrap();
+            ids.push(entry.id);
         }
 
         assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 5);
 
-        let entries = list_by_feed(&db, feed_id, 10, 0).await.unwrap();
-        mark_as_read(&db, entries[0].id).await.unwrap();
-        mark_as_read(&db, entries[1].id).await.unwrap();
+        mark_as_read(&db, ids[0]).await.unwrap();
+        mark_as_read(&db, ids[1]).await.unwrap();
 
         assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 3);
     }
@@ -2580,7 +2462,7 @@ mod tests {
 
         mark_as_read(&db, entry1.id).await.unwrap();
         // Star entry2
-        toggle_star(&db, entry2.id).await.unwrap();
+        star_entry(&db, entry2.id).await.unwrap();
 
         // Search for "Rust" with unread_only - should only return entry2
         let filter = EntryFilter {
@@ -3452,7 +3334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_star_unstar_and_mark_unread_by_ids() {
+    async fn test_star_unstar_and_mark_unread_by_ids_tx() {
         let db = setup_db().await;
         let user_id = create_test_user(&db, "testuser").await;
         let user2_id = create_test_user(&db, "testuser2").await;
@@ -3481,8 +3363,19 @@ mod tests {
         .await
         .unwrap();
 
+        // Each call commits before the next read: the in-memory pool has one
+        // connection, which an open transaction would hold.
+        macro_rules! in_tx {
+            ($db:expr, $f:ident($($arg:expr),*)) => {{
+                let mut tx = $db.begin().await.unwrap();
+                let n = $f(&mut tx, $($arg),*).await.unwrap();
+                tx.commit().await.unwrap();
+                n
+            }};
+        }
+
         // Star e1, e2 — only currently-unstarred rows count
-        let starred = star_by_ids(&db, user_id, &[e1.id, e2.id]).await.unwrap();
+        let starred = in_tx!(db, star_by_ids_tx(user_id, &[e1.id, e2.id]));
         assert_eq!(starred, 2);
         assert!(
             find_by_id(&db, e1.id)
@@ -3494,10 +3387,10 @@ mod tests {
         );
 
         // Starring again is a no-op (already starred)
-        assert_eq!(star_by_ids(&db, user_id, &[e1.id, e2.id]).await.unwrap(), 0);
+        assert_eq!(in_tx!(db, star_by_ids_tx(user_id, &[e1.id, e2.id])), 0);
 
         // Ownership scope: cannot star another user's entry
-        assert_eq!(star_by_ids(&db, user_id, &[other.id]).await.unwrap(), 0);
+        assert_eq!(in_tx!(db, star_by_ids_tx(user_id, &[other.id])), 0);
         assert!(
             find_by_id(&db, other.id)
                 .await
@@ -3508,7 +3401,7 @@ mod tests {
         );
 
         // Unstar e1
-        assert_eq!(unstar_by_ids(&db, user_id, &[e1.id]).await.unwrap(), 1);
+        assert_eq!(in_tx!(db, unstar_by_ids_tx(user_id, &[e1.id])), 1);
         assert!(
             find_by_id(&db, e1.id)
                 .await
@@ -3525,15 +3418,13 @@ mod tests {
             2
         );
         assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 0);
-        let unread = mark_unread_by_ids(&db, user_id, &[e1.id, e2.id])
-            .await
-            .unwrap();
+        let unread = in_tx!(db, mark_unread_by_ids_tx(user_id, &[e1.id, e2.id]));
         assert_eq!(unread, 2);
         assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 2);
 
         // Empty input is a no-op
-        assert_eq!(star_by_ids(&db, user_id, &[]).await.unwrap(), 0);
-        assert_eq!(mark_unread_by_ids(&db, user_id, &[]).await.unwrap(), 0);
+        assert_eq!(in_tx!(db, star_by_ids_tx(user_id, &[])), 0);
+        assert_eq!(in_tx!(db, mark_unread_by_ids_tx(user_id, &[])), 0);
     }
 
     #[tokio::test]
