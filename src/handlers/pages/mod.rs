@@ -1463,6 +1463,92 @@ pub async fn feeds_import_page(
     )
 }
 
+/// What sets one `/entries` tab (All, Read, Starred, Summarized) apart from
+/// the others; [`entries_tab_page`] does the rest.
+struct EntriesTab {
+    path: &'static str,
+    title: &'static str,
+    active: &'static str,
+    empty_title: &'static str,
+    empty_detail: &'static str,
+    mark_as_read_scope: Option<&'static str>,
+    filter: entry::EntryFilter,
+}
+
+/// Serves an `/entries` tab rendered fully server-side. `?fragment=1&after=N`
+/// returns an `EntriesFragmentTemplate` (prefix-rerender from 0 to
+/// `after + page_size`).
+async fn entries_tab_page(
+    tab: EntriesTab,
+    auth_user: PageAuthUser,
+    state: AppState,
+    flash: Flash,
+    query: EntriesQuery,
+) -> Response {
+    let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
+    let fragment = query.fragment == Some(1);
+    let cursor = if fragment {
+        query
+            .after
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse)
+    } else {
+        None
+    };
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        tab.filter,
+        entry::EntrySortOrder::PublishedAt,
+        page_size,
+        cursor,
+    )
+    .await;
+
+    if fragment {
+        return (
+            flash,
+            EntriesFragmentTemplate {
+                entries,
+                next_cursor,
+                path: tab.path,
+                status_filter: None,
+                q: None,
+                snapshot: query.snapshot,
+                csrf_token: auth_user.csrf_token,
+            },
+        )
+            .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
+    (
+        flash,
+        EntriesPageTemplate {
+            title: tab.title.into(),
+            git_version: crate::GIT_VERSION,
+            layout,
+            entries,
+            reading_pane,
+            next_cursor,
+            csrf_token: auth_user.csrf_token.clone(),
+            entries_layout: EntriesLayoutContext {
+                active: tab.active,
+                empty_title: tab.empty_title,
+                empty_detail: tab.empty_detail,
+                path: tab.path.to_string(),
+                show_tab_bar: true,
+                mark_as_read_scope: tab.mark_as_read_scope.map(str::to_string),
+                snapshot_at: snapshot_now(),
+                ..Default::default()
+            },
+        },
+    )
+        .into_response()
+}
+
 /// Serves `/entries` (no filter) rendered fully server-side. `?fragment=1&after=N`
 /// returns an `EntriesFragmentTemplate` (prefix-rerender from 0 to
 /// `after + page_size`).
@@ -1472,74 +1558,16 @@ pub async fn entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    let user_id = auth_user.user.id;
-    let page_size = entries_page_size(&state, user_id).await;
-    let filter = entry::EntryFilter::default();
-
-    if query.fragment == Some(1) {
-        let cursor = query
-            .after
-            .as_deref()
-            .and_then(entry::ContinuationCursor::parse);
-        let (entries, next_cursor) = build_entries_page(
-            &state,
-            user_id,
-            filter,
-            entry::EntrySortOrder::PublishedAt,
-            page_size,
-            cursor,
-        )
-        .await;
-        return (
-            flash,
-            EntriesFragmentTemplate {
-                entries,
-                next_cursor,
-                path: "/entries",
-                status_filter: None,
-                q: None,
-                snapshot: query.snapshot.clone(),
-                csrf_token: auth_user.csrf_token.clone(),
-            },
-        )
-            .into_response();
-    }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
-    let (entries, next_cursor) = build_entries_page(
-        &state,
-        user_id,
-        filter,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        None,
-    )
-    .await;
-    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
-
-    (
-        flash,
-        EntriesPageTemplate {
-            title: "Entries".into(),
-            git_version: crate::GIT_VERSION,
-            layout,
-            entries,
-            reading_pane,
-            next_cursor,
-            csrf_token: auth_user.csrf_token.clone(),
-            entries_layout: EntriesLayoutContext {
-                active: "all",
-                empty_title: "Nothing to read yet",
-                empty_detail: "Subscribe to a few feeds and their entries will gather here.",
-                path: "/entries".to_string(),
-                show_tab_bar: true,
-                mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
-                snapshot_at: snapshot_now(),
-                ..Default::default()
-            },
-        },
-    )
-        .into_response()
+    let tab = EntriesTab {
+        path: "/entries",
+        title: "Entries",
+        active: "all",
+        empty_title: "Nothing to read yet",
+        empty_detail: "Subscribe to a few feeds and their entries will gather here.",
+        mark_as_read_scope: Some("user/-/state/com.google/reading-list"),
+        filter: entry::EntryFilter::default(),
+    };
+    entries_tab_page(tab, auth_user, state, flash, query).await
 }
 
 /// Query parameters for the entry page redirect.
@@ -1653,76 +1681,19 @@ pub async fn read_entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    let user_id = auth_user.user.id;
-    let page_size = entries_page_size(&state, user_id).await;
-    let filter = entry::EntryFilter {
-        read_only: true,
-        ..Default::default()
-    };
-
-    if query.fragment == Some(1) {
-        let cursor = query
-            .after
-            .as_deref()
-            .and_then(entry::ContinuationCursor::parse);
-        let (entries, next_cursor) = build_entries_page(
-            &state,
-            user_id,
-            filter,
-            entry::EntrySortOrder::PublishedAt,
-            page_size,
-            cursor,
-        )
-        .await;
-        return (
-            flash,
-            EntriesFragmentTemplate {
-                entries,
-                next_cursor,
-                path: "/entries/read",
-                status_filter: None,
-                q: None,
-                snapshot: query.snapshot.clone(),
-                csrf_token: auth_user.csrf_token.clone(),
-            },
-        )
-            .into_response();
-    }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
-    let (entries, next_cursor) = build_entries_page(
-        &state,
-        user_id,
-        filter,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        None,
-    )
-    .await;
-    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
-
-    (
-        flash,
-        EntriesPageTemplate {
-            title: "Read Entries".into(),
-            git_version: crate::GIT_VERSION,
-            layout,
-            entries,
-            reading_pane,
-            next_cursor,
-            csrf_token: auth_user.csrf_token.clone(),
-            entries_layout: EntriesLayoutContext {
-                active: "read",
-                empty_title: "No read entries yet",
-                empty_detail: "Entries stay here once you've opened and read them.",
-                path: "/entries/read".to_string(),
-                show_tab_bar: true,
-                snapshot_at: snapshot_now(),
-                ..Default::default()
-            },
+    let tab = EntriesTab {
+        path: "/entries/read",
+        title: "Read Entries",
+        active: "read",
+        empty_title: "No read entries yet",
+        empty_detail: "Entries stay here once you've opened and read them.",
+        mark_as_read_scope: None,
+        filter: entry::EntryFilter {
+            read_only: true,
+            ..Default::default()
         },
-    )
-        .into_response()
+    };
+    entries_tab_page(tab, auth_user, state, flash, query).await
 }
 
 /// Serves `/entries/starred` rendered fully server-side. `?fragment=1&after=N`
@@ -1734,76 +1705,19 @@ pub async fn starred_entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    let user_id = auth_user.user.id;
-    let page_size = entries_page_size(&state, user_id).await;
-    let filter = entry::EntryFilter {
-        starred_only: true,
-        ..Default::default()
-    };
-
-    if query.fragment == Some(1) {
-        let cursor = query
-            .after
-            .as_deref()
-            .and_then(entry::ContinuationCursor::parse);
-        let (entries, next_cursor) = build_entries_page(
-            &state,
-            user_id,
-            filter,
-            entry::EntrySortOrder::PublishedAt,
-            page_size,
-            cursor,
-        )
-        .await;
-        return (
-            flash,
-            EntriesFragmentTemplate {
-                entries,
-                next_cursor,
-                path: "/entries/starred",
-                status_filter: None,
-                q: None,
-                snapshot: query.snapshot.clone(),
-                csrf_token: auth_user.csrf_token.clone(),
-            },
-        )
-            .into_response();
-    }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
-    let (entries, next_cursor) = build_entries_page(
-        &state,
-        user_id,
-        filter,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        None,
-    )
-    .await;
-    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
-
-    (
-        flash,
-        EntriesPageTemplate {
-            title: "Starred Entries".into(),
-            git_version: crate::GIT_VERSION,
-            layout,
-            entries,
-            reading_pane,
-            next_cursor,
-            csrf_token: auth_user.csrf_token.clone(),
-            entries_layout: EntriesLayoutContext {
-                active: "starred",
-                empty_title: "No starred entries",
-                empty_detail: "Star an entry and it'll wait for you here.",
-                path: "/entries/starred".to_string(),
-                show_tab_bar: true,
-                snapshot_at: snapshot_now(),
-                ..Default::default()
-            },
+    let tab = EntriesTab {
+        path: "/entries/starred",
+        title: "Starred Entries",
+        active: "starred",
+        empty_title: "No starred entries",
+        empty_detail: "Star an entry and it'll wait for you here.",
+        mark_as_read_scope: None,
+        filter: entry::EntryFilter {
+            starred_only: true,
+            ..Default::default()
         },
-    )
-        .into_response()
+    };
+    entries_tab_page(tab, auth_user, state, flash, query).await
 }
 
 /// Serves `/entries/offline` — the entries this reader's browser is holding
@@ -1879,121 +1793,79 @@ pub async fn summarized_entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    let user_id = auth_user.user.id;
-    let page_size = entries_page_size(&state, user_id).await;
-    let filter = entry::EntryFilter {
-        has_summary: Some(true),
-        ..Default::default()
-    };
-
-    if query.fragment == Some(1) {
-        let cursor = query
-            .after
-            .as_deref()
-            .and_then(entry::ContinuationCursor::parse);
-        let (entries, next_cursor) = build_entries_page(
-            &state,
-            user_id,
-            filter,
-            entry::EntrySortOrder::PublishedAt,
-            page_size,
-            cursor,
-        )
-        .await;
-        return (
-            flash,
-            EntriesFragmentTemplate {
-                entries,
-                next_cursor,
-                path: "/entries/summarized",
-                status_filter: None,
-                q: None,
-                snapshot: query.snapshot.clone(),
-                csrf_token: auth_user.csrf_token.clone(),
-            },
-        )
-            .into_response();
-    }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
-    let (entries, next_cursor) = build_entries_page(
-        &state,
-        user_id,
-        filter,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        None,
-    )
-    .await;
-    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
-
-    (
-        flash,
-        EntriesPageTemplate {
-            title: "Summarized Entries".into(),
-            git_version: crate::GIT_VERSION,
-            layout,
-            entries,
-            reading_pane,
-            next_cursor,
-            csrf_token: auth_user.csrf_token.clone(),
-            entries_layout: EntriesLayoutContext {
-                active: "summarized",
-                empty_title: "No summaries yet",
-                empty_detail: "Entries you summarize are collected on this page.",
-                path: "/entries/summarized".to_string(),
-                show_tab_bar: true,
-                snapshot_at: snapshot_now(),
-                ..Default::default()
-            },
+    let tab = EntriesTab {
+        path: "/entries/summarized",
+        title: "Summarized Entries",
+        active: "summarized",
+        empty_title: "No summaries yet",
+        empty_detail: "Entries you summarize are collected on this page.",
+        mark_as_read_scope: None,
+        filter: entry::EntryFilter {
+            has_summary: Some(true),
+            ..Default::default()
         },
-    )
-        .into_response()
+    };
+    entries_tab_page(tab, auth_user, state, flash, query).await
 }
 
-/// `GET /categories/{id}/entries` — SSR list of entries from every feed
-/// in a single category. Supports `?fragment=1&after=N` Load-More.
-pub async fn category_entries_page(
+/// What sets one scoped list — a category's or a feed's — apart from the
+/// other; [`scoped_entries_page`] does the rest.
+struct EntriesScope {
+    /// `/categories/{id}/entries` or `/feeds/{id}/entries`: the page, its
+    /// Load-More target and its scoped-search action alike.
+    path: String,
+    title: String,
+    category_id: Option<i64>,
+    feed_id: Option<i64>,
+    mark_as_read_scope: String,
+    breadcrumb_items: Vec<BreadcrumbItem>,
+    empty_title: &'static str,
+    empty_detail: &'static str,
+    header_feed_icon_id: Option<i64>,
+    active_category_id: i64,
+}
+
+/// The status tabs above a scoped list. The base URL (no `?status=`) is the
+/// Unread tab.
+fn filter_tabs(base: &str, status: Option<&str>) -> Vec<FilterTab> {
+    [
+        ("All", Some("all")),
+        ("Unread", None),
+        ("Read", Some("read")),
+        ("Starred", Some("starred")),
+    ]
+    .into_iter()
+    .map(|(label, value)| FilterTab {
+        label: label.to_string(),
+        href: value.map_or_else(|| base.to_string(), |v| format!("{base}?status={v}")),
+        active: status == value || (value.is_none() && status == Some("unread")),
+    })
+    .collect()
+}
+
+/// Serves a category's or a feed's entry list: the full page, the Load-More
+/// fragment (`?fragment=1&after=N`), the search-refresh fragment
+/// (`?fragment=1`) or the sidebar-navigation fragment (`?pane=1`).
+async fn scoped_entries_page(
+    scope: EntriesScope,
     auth_user: PageAuthUser,
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Query(query): Query<EntriesQuery>,
+    state: AppState,
     flash: Flash,
-) -> Result<Response, AppError> {
+    query: EntriesQuery,
+) -> Response {
     let user_id = auth_user.user.id;
     let page_size = entries_page_size(&state, user_id).await;
 
-    let lookup = async {
-        let cat = category::find_by_id_and_user(&state.db, id, user_id)
-            .await?
-            .ok_or(AppError::CategoryNotFound)?;
-        Ok::<_, AppError>(cat.name)
-    }
-    .await;
-
-    let category_name = match lookup {
-        Ok(name) => name,
-        Err(AppError::CategoryNotFound) => {
-            let page = render_not_found(
-                &state,
-                &auth_user,
-                &flash,
-                "Category not found",
-                "This category doesn't exist or you don't have access to it.",
-            )
-            .await;
-            return Ok((flash, page).into_response());
-        }
-        Err(e) => return Err(e),
-    };
-
+    // Default status is "unread": the base URL (no `?status=`) shows
+    // unread + starred-but-unread entries. `?status=all` explicitly
+    // overrides the default.
     let status = query.status.as_deref();
-    let effective_status = status.unwrap_or("unread");
     let mut filter = entry::EntryFilter {
-        category_id: Some(id),
+        category_id: scope.category_id,
+        feed_id: scope.feed_id,
         ..Default::default()
     };
-    match effective_status {
+    match status.unwrap_or("unread") {
         "all" => {}
         "read" => filter.read_only = true,
         "starred" => filter.starred_only = true,
@@ -2019,20 +1891,17 @@ pub async fn category_entries_page(
     )
     .await;
 
-    let path = format!("/categories/{id}/entries");
-    let status_filter = query.status.clone();
-
     if query.fragment == Some(1) && query.after.is_some() {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
-            path: Box::leak(path.into_boxed_str()),
-            status_filter,
-            q: search.clone(),
+            path: Box::leak(scope.path.into_boxed_str()),
+            status_filter: query.status.clone(),
+            q: search,
             snapshot: query.snapshot.clone(),
             csrf_token: auth_user.csrf_token.clone(),
         };
-        return Ok((flash, fragment).into_response());
+        return (flash, fragment).into_response();
     }
 
     // From a dedicated filter, not the tab-influenced `filter` above:
@@ -2041,7 +1910,8 @@ pub async fn category_entries_page(
     // that rather than the tab's rows.
     let matching_count = if let Some(ref s) = search {
         let mark_filter = entry::EntryFilter {
-            category_id: Some(id),
+            category_id: scope.category_id,
+            feed_id: scope.feed_id,
             search: Some(s.clone()),
             unread_only: true,
             ..Default::default()
@@ -2053,66 +1923,33 @@ pub async fn category_entries_page(
         None
     };
 
-    let mark_as_read_scope = Some(format!("user/-/label/{category_name}"));
-    let base = format!("/categories/{id}/entries");
-    let filter_tabs = Some(vec![
-        FilterTab {
-            label: "All".to_string(),
-            href: format!("{base}?status=all"),
-            active: status == Some("all"),
-        },
-        FilterTab {
-            label: "Unread".to_string(),
-            href: base.clone(),
-            active: status.is_none() || status == Some("unread"),
-        },
-        FilterTab {
-            label: "Read".to_string(),
-            href: format!("{base}?status=read"),
-            active: status == Some("read"),
-        },
-        FilterTab {
-            label: "Starred".to_string(),
-            href: format!("{base}?status=starred"),
-            active: status == Some("starred"),
-        },
-    ]);
-    let breadcrumb_items = vec![
-        BreadcrumbItem {
-            label: "Categories".to_string(),
-            href: Some("/categories".to_string()),
-        },
-        BreadcrumbItem {
-            label: category_name.clone(),
-            href: None,
-        },
-    ];
-
     let entries_layout = EntriesLayoutContext {
         active: "",
-        empty_title: "Nothing in this category",
-        empty_detail: "The feeds in this category haven't brought in any entries yet.",
-        path,
-        mark_as_read_scope,
-        breadcrumb_items,
-        active_category_id: Some(id),
-        filter_tabs,
-        status_filter,
+        empty_title: scope.empty_title,
+        empty_detail: scope.empty_detail,
+        filter_tabs: Some(filter_tabs(&scope.path, status)),
+        search_action: Some(scope.path.clone()),
+        path: scope.path,
+        mark_as_read_scope: Some(scope.mark_as_read_scope),
+        breadcrumb_items: scope.breadcrumb_items,
+        header_feed_icon_id: scope.header_feed_icon_id,
+        active_category_id: Some(scope.active_category_id),
+        active_feed_id: scope.feed_id,
+        status_filter: query.status.clone(),
         // Hidden while a scoped search is active: "Mark Above as Read" marks the
         // rows in the DOM, which under a search means only the matches —
         // indistinguishable at a glance from "Mark N matching as Read" above it,
         // while one of the two reads as "everything older than here".
         show_mark_above: search.is_none(),
         snapshot_at: snapshot_now(),
-        search: search.clone(),
-        search_action: Some(format!("/categories/{id}/entries")),
+        search,
         matching_count,
         ..Default::default()
     };
 
     // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
     if query.fragment == Some(1) {
-        return Ok((
+        return (
             flash,
             EntriesRefreshFragmentTemplate {
                 entries,
@@ -2121,31 +1958,31 @@ pub async fn category_entries_page(
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
-            .into_response());
+            .into_response();
     }
 
-    // Category-switch fragment (pane=1): the whole left column + an emptied
-    // reading pane. No `?entry=` handling here on purpose — switching category
-    // closes the open entry.
+    // Sidebar-navigation fragment (pane=1): the whole left column plus an
+    // emptied reading pane, so picking a category or feed out of the sidebar
+    // doesn't reload the document. No `?entry=` handling here on purpose —
+    // switching closes the open entry.
     if query.pane == Some(1) {
-        return Ok((
+        return (
             flash,
             EntriesPaneFragmentTemplate {
-                title: category_name,
+                title: scope.title,
                 entries,
                 next_cursor,
                 entries_layout,
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
-            .into_response());
+            .into_response();
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
-
     let template = EntriesPageTemplate {
-        title: category_name.into(),
+        title: scope.title.into(),
         git_version: crate::GIT_VERSION,
         layout,
         entries,
@@ -2154,8 +1991,52 @@ pub async fn category_entries_page(
         entries_layout,
         csrf_token: auth_user.csrf_token.clone(),
     };
+    (flash, template).into_response()
+}
 
-    Ok((flash, template).into_response())
+/// `GET /categories/{id}/entries` — SSR list of entries from every feed
+/// in a single category. Supports `?fragment=1&after=N` Load-More.
+pub async fn category_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<EntriesQuery>,
+    flash: Flash,
+) -> Result<Response, AppError> {
+    let Some(cat) = category::find_by_id_and_user(&state.db, id, auth_user.user.id).await? else {
+        let page = render_not_found(
+            &state,
+            &auth_user,
+            &flash,
+            "Category not found",
+            "This category doesn't exist or you don't have access to it.",
+        )
+        .await;
+        return Ok((flash, page).into_response());
+    };
+
+    let scope = EntriesScope {
+        path: format!("/categories/{id}/entries"),
+        mark_as_read_scope: format!("user/-/label/{}", cat.name),
+        breadcrumb_items: vec![
+            BreadcrumbItem {
+                label: "Categories".to_string(),
+                href: Some("/categories".to_string()),
+            },
+            BreadcrumbItem {
+                label: cat.name.clone(),
+                href: None,
+            },
+        ],
+        title: cat.name,
+        category_id: Some(id),
+        feed_id: None,
+        empty_title: "Nothing in this category",
+        empty_detail: "The feeds in this category haven't brought in any entries yet.",
+        header_feed_icon_id: None,
+        active_category_id: id,
+    };
+    Ok(scoped_entries_page(scope, auth_user, state, flash, query).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -2264,7 +2145,6 @@ pub async fn feed_entries_page(
     flash: Flash,
 ) -> Result<Response, AppError> {
     let user_id = auth_user.user.id;
-    let page_size = entries_page_size(&state, user_id).await;
 
     let lookup = async {
         let f = feed::find_by_id(&state.db, id)
@@ -2303,181 +2183,32 @@ pub async fn feed_entries_page(
         Err(e) => return Err(e),
     };
 
-    // Default status is "unread": the base URL (no `?status=`) shows
-    // unread + starred-but-unread entries. `?status=all` explicitly
-    // overrides the default.
-    let status = query.status.as_deref();
-    let effective_status = status.unwrap_or("unread");
-    let mut filter = entry::EntryFilter {
+    let scope = EntriesScope {
+        path: format!("/feeds/{id}/entries"),
+        mark_as_read_scope: format!("feed/{feed_url}"),
+        breadcrumb_items: vec![
+            BreadcrumbItem {
+                label: "Feeds".to_string(),
+                href: Some("/feeds".to_string()),
+            },
+            BreadcrumbItem {
+                label: cat_name,
+                href: Some(format!("/categories/{cat_id}/entries")),
+            },
+            BreadcrumbItem {
+                label: feed_title.clone(),
+                href: None,
+            },
+        ],
+        title: feed_title,
+        category_id: None,
         feed_id: Some(id),
-        ..Default::default()
-    };
-    match effective_status {
-        "all" => {}
-        "read" => filter.read_only = true,
-        "starred" => filter.starred_only = true,
-        _ => filter.unread_only = true,
-    }
-    // Only consulted when the view is unread-only, and only ever present on a
-    // Load-More request. See [`EntriesQuery::snapshot`].
-    filter.read_after = query.snapshot.clone();
-    let search = query.q.clone().filter(|s| !s.trim().is_empty());
-    filter.search = search.clone();
-    let cursor = query
-        .after
-        .as_deref()
-        .and_then(entry::ContinuationCursor::parse);
-
-    let (entries, next_cursor) = build_entries_page(
-        &state,
-        user_id,
-        filter,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        cursor,
-    )
-    .await;
-
-    let path = format!("/feeds/{id}/entries");
-    let status_filter = query.status.clone();
-
-    if query.fragment == Some(1) && query.after.is_some() {
-        let fragment = EntriesFragmentTemplate {
-            entries,
-            next_cursor,
-            path: Box::leak(path.into_boxed_str()),
-            status_filter,
-            q: search.clone(),
-            snapshot: query.snapshot.clone(),
-            csrf_token: auth_user.csrf_token.clone(),
-        };
-        return Ok((flash, fragment).into_response());
-    }
-
-    // From a dedicated filter, not the tab-influenced `filter` above:
-    // `mark_read_by_filter` only ever touches `read_at IS NULL` rows regardless
-    // of the active status tab, so the count beside "Mark N matching" must match
-    // that rather than the tab's rows.
-    let matching_count = if let Some(ref s) = search {
-        let mark_filter = entry::EntryFilter {
-            feed_id: Some(id),
-            search: Some(s.clone()),
-            unread_only: true,
-            ..Default::default()
-        };
-        entry::count_by_user(&state.db, user_id, &mark_filter)
-            .await
-            .ok()
-    } else {
-        None
-    };
-
-    let mark_as_read_scope = Some(format!("feed/{feed_url}"));
-    let base = format!("/feeds/{id}/entries");
-    let filter_tabs = Some(vec![
-        FilterTab {
-            label: "All".to_string(),
-            href: format!("{base}?status=all"),
-            active: status == Some("all"),
-        },
-        FilterTab {
-            label: "Unread".to_string(),
-            href: base.clone(),
-            active: status.is_none() || status == Some("unread"),
-        },
-        FilterTab {
-            label: "Read".to_string(),
-            href: format!("{base}?status=read"),
-            active: status == Some("read"),
-        },
-        FilterTab {
-            label: "Starred".to_string(),
-            href: format!("{base}?status=starred"),
-            active: status == Some("starred"),
-        },
-    ]);
-    let breadcrumb_items = vec![
-        BreadcrumbItem {
-            label: "Feeds".to_string(),
-            href: Some("/feeds".to_string()),
-        },
-        BreadcrumbItem {
-            label: cat_name,
-            href: Some(format!("/categories/{cat_id}/entries")),
-        },
-        BreadcrumbItem {
-            label: feed_title.clone(),
-            href: None,
-        },
-    ];
-
-    let entries_layout = EntriesLayoutContext {
-        active: "",
         empty_title: "Nothing in this feed",
         empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
-        path,
-        mark_as_read_scope,
-        breadcrumb_items,
-        header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
-        active_category_id: Some(cat_id),
-        active_feed_id: Some(id),
-        filter_tabs,
-        status_filter,
-        // See the category page: the matching button owns a filtered list.
-        show_mark_above: search.is_none(),
-        snapshot_at: snapshot_now(),
-        search: search.clone(),
-        search_action: Some(format!("/feeds/{id}/entries")),
-        matching_count,
-        ..Default::default()
+        header_feed_icon_id: feed_has_icon.then_some(id),
+        active_category_id: cat_id,
     };
-
-    // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
-    if query.fragment == Some(1) {
-        return Ok((
-            flash,
-            EntriesRefreshFragmentTemplate {
-                entries,
-                next_cursor,
-                entries_layout,
-                csrf_token: auth_user.csrf_token.clone(),
-            },
-        )
-            .into_response());
-    }
-
-    // Sidebar-navigation fragment (pane=1): same contract as the category page —
-    // the whole left column plus an emptied reading pane, so picking a feed out
-    // of the sidebar doesn't reload the document.
-    if query.pane == Some(1) {
-        return Ok((
-            flash,
-            EntriesPaneFragmentTemplate {
-                title: feed_title,
-                entries,
-                next_cursor,
-                entries_layout,
-                csrf_token: auth_user.csrf_token.clone(),
-            },
-        )
-            .into_response());
-    }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
-    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
-
-    let template = EntriesPageTemplate {
-        title: feed_title.into(),
-        git_version: crate::GIT_VERSION,
-        layout,
-        entries,
-        reading_pane,
-        next_cursor,
-        entries_layout,
-        csrf_token: auth_user.csrf_token.clone(),
-    };
-
-    Ok((flash, template).into_response())
+    Ok(scoped_entries_page(scope, auth_user, state, flash, query).await)
 }
 
 #[derive(serde::Deserialize)]
