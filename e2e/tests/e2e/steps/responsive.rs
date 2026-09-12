@@ -641,6 +641,51 @@ async fn flash_shown(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.css(".banner").await.map(|_| ())
 }
 
+/// The dot and the dismiss button are grid items in an `align-items: start`
+/// row, so each carries its own offset to the message beside it. Both are
+/// centred on the first line box, which is what a single-line banner reads as
+/// level; the pair used hand-tuned constants (`0.45em`, `1px`) that put the
+/// dismiss glyph a pixel below the dot.
+#[then("the flash banner's dot and dismiss are centred on its first line")]
+async fn banner_dot_and_dismiss_centred(world: &mut RdrsWorld) -> Result<()> {
+    let measured = world
+        .driver()?
+        .eval(
+            r"
+            const banner = document.querySelector('.banner');
+            const body = banner.querySelector('.banner-body').getBoundingClientRect();
+            const line = parseFloat(getComputedStyle(banner).lineHeight);
+            const dot = banner.querySelector('.banner-icon').getBoundingClientRect();
+            const svg = banner.querySelector('.banner-dismiss svg.ico');
+            const box = svg.getBoundingClientRect();
+            const use = svg.querySelector('use');
+            const ink = (use || svg).getBBox();
+            const vb = svg.viewBox.baseVal;
+            const scale = use ? 1 : box.height / (vb && vb.height ? vb.height : box.height);
+            return {
+              lineCentre: body.top + line / 2,
+              dotCentre: dot.top + dot.height / 2,
+              dismissCentre: box.top + (ink.y + ink.height / 2) * scale,
+            };
+            ",
+        )
+        .await?;
+    let centre = measured["lineCentre"].as_f64().unwrap_or_default();
+    for part in ["dotCentre", "dismissCentre"] {
+        let at = measured[part]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("the banner has no {part}"))?;
+        // Half a pixel: the offsets are exact arithmetic on the line height, so
+        // only subpixel rounding is left. The bug this catches is a whole one.
+        ensure!(
+            (at - centre).abs() <= 0.5,
+            "the banner's {part} sits at {at}, {:+.2}px off the first line's centre at {centre}",
+            at - centre
+        );
+    }
+    Ok(())
+}
+
 #[then("the flash banner sits below the hamburger")]
 async fn banner_below_hamburger(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
