@@ -12,6 +12,15 @@ description = "Browser E2E tests and screenshot pipeline for rdrs"
 # keeps that boundary.
 [workspace]
 
+# Full DWARF for six binaries that each statically link thirtyfour, tokio,
+# reqwest and sqlx costs ~500M of `target/` (2.3G -> 1.8G on a clean
+# `--all-targets` build), and the type information is never read: an E2E failure
+# is diagnosed from cucumber output and the browser, not a debugger. Line tables
+# keep `file:line` in panic backtraces, which is the part that does get used --
+# `debug = 0` would save a further 400M but takes the step's line number with it.
+[profile.dev]
+debug = "line-tables-only"
+
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8"
