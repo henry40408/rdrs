@@ -1607,6 +1607,11 @@ td input[type="text"] {
 .banner-stack:focus { outline: none; }
 
 .banner {
+    /* The first line's height, as a length the dot and the dismiss button can
+       both centre themselves on. Written out of `--font-sm` rather than as an
+       `em` or `lh`, which would resolve against each child's own font-size —
+       the dismiss button sets its own. */
+    --banner-line: calc(1.45 * var(--font-sm));
     display: grid;
     grid-template-columns: auto 1fr auto auto;
     align-items: start;
@@ -1617,15 +1622,17 @@ td input[type="text"] {
     border: 1px solid var(--color-border-light);
     border-left-width: 3px;
     font-size: var(--font-sm);
-    line-height: 1.45;
+    line-height: var(--banner-line);
 }
 
-/* 8px coloured dot, vertically aligned with the first line of text. */
+/* 8px coloured dot, centred on the first line of text — the row is
+   `align-items: start`, so each item offsets itself. The hand-tuned 0.45em this
+   replaces left the dot 0.75px low. */
 .banner-icon {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-top: 0.45em;
+    margin-top: calc((var(--banner-line) - 8px) / 2);
     flex: none;
     background: var(--color-text-muted);
 }
@@ -1660,7 +1667,9 @@ td input[type="text"] {
     font-size: var(--font-base);
     line-height: 1;
     padding: 0;
-    margin-top: 1px;
+    /* Centred on the first line like the dot; the 1px this replaces sat the
+       glyph 2.14px below the message's cap height. */
+    margin-top: calc((var(--banner-line) - 22px) / 2);
 }
 .banner-dismiss:hover {
     background: var(--color-bg-tertiary);

@@ -87,6 +87,11 @@ Feature: Responsive layout
   Scenario: Flash banner is vertically centered on a wide touch tablet
     Then the flash banner is vertically centered on a wide touch tablet
 
+  Scenario: Flash banner dot and dismiss sit on the message's first line
+    When I open the inbox
+    And a flash banner is shown
+    Then the flash banner's dot and dismiss are centred on its first line
+
   @tablet
   Scenario: Sidebar is a drawer on tablet
     Given I am viewing on a tablet screen
