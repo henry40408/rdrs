@@ -68,6 +68,14 @@ Feature: Reading entries
     And I click the "Retry" summary action
     Then the reading pane shows a summary
 
+  Scenario: Icons sit level with the text beside them
+    Given the user has Kagi configured
+    And the entry titled "Test Entry 3" has a failed summary
+    When I open the inbox
+    And I click the entry titled "Test Entry 3"
+    Then I see the summary error banner
+    And every icon beside text is centred on the text
+
   Scenario: Single-feed view filters by that feed
     When I open the entries page for feed "Reading Feed"
     Then I see 5 entries in the entry list

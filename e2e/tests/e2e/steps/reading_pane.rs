@@ -489,6 +489,100 @@ async fn click_summary_action(world: &mut RdrsWorld, label: String) -> Result<()
     no_summary_error(world).await
 }
 
+// ── Icon alignment ───────────────────────────────────────────────────────────
+
+/// Every icon drawn beside text must centre on the text's cap height. Centring
+/// the two *boxes* is not enough: where the glyphs sit inside a line box is up
+/// to the font's ascent and descent, and a flex row (or a `flex-start` banner
+/// whose icon is shorter than its line) centres boxes, not ink.
+///
+/// Swept page-wide rather than per control — pane actions, neighbour buttons,
+/// the summary error banner, the sidebar — so an icon added later is covered
+/// without anyone remembering to extend this. The stacked icon-over-label
+/// mobile bar is skipped: nothing there shares a line.
+#[then("every icon beside text is centred on the text")]
+async fn icons_centred_on_text(world: &mut RdrsWorld) -> Result<()> {
+    let measured = world
+        .driver()?
+        .eval(
+            r"
+            const ctx = document.createElement('canvas').getContext('2d');
+            const shown = (el) =>
+              el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+            return Array.from(document.querySelectorAll('svg.ico'))
+              .filter(shown)
+              .map((svg) => {
+                const host = svg.closest('button, a, .summary-error-banner, .sidebar-item');
+                if (!host || getComputedStyle(host).flexDirection === 'column') return null;
+                const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+                let text = null;
+                while (!text && walker.nextNode()) {
+                  const node = walker.currentNode;
+                  const parent = node.parentElement;
+                  if (node.data.trim() && !parent.closest('kbd') && shown(parent)) text = node;
+                }
+                if (!text) return null;
+                // A zero-size inline-block rests on the baseline. It goes in a
+                // wrapper with the text so that, when the text is a flex
+                // container's bare child, it shares the text's line instead of
+                // becoming a flex item of its own.
+                const line = document.createElement('span');
+                const probe = document.createElement('span');
+                probe.style.display = 'inline-block';
+                text.replaceWith(line);
+                line.append(text, probe);
+                const baseline = probe.getBoundingClientRect().top;
+                line.replaceWith(text);
+                const style = getComputedStyle(text.parentElement);
+                ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                const capCentre = baseline - ctx.measureText('H').actualBoundingBoxAscent / 2;
+                // The ink, not the viewport: a glyph need not fill its 24-unit
+                // box evenly. A sprite `<use>` reports its box in CSS pixels; an
+                // inline icon in its own viewBox units.
+                const box = svg.getBoundingClientRect();
+                const use = svg.querySelector('use');
+                const ink = (use || svg).getBBox();
+                const scale = use ? 1 : box.height / (svg.viewBox.baseVal?.height || box.height);
+                const iconCentre = box.top + (ink.y + ink.height / 2) * scale;
+                return {
+                  label: text.data.trim(),
+                  offset: iconCentre - capCentre,
+                };
+              })
+              .filter(Boolean);
+            ",
+        )
+        .await?;
+    let rows = measured.as_array().cloned().unwrap_or_default();
+    ensure!(
+        rows.iter().any(|row| row["label"]
+            .as_str()
+            .is_some_and(|label| label.starts_with("Summarization failed"))),
+        "the sweep never reached the summary error banner: {rows:?}"
+    );
+    let off: Vec<String> = rows
+        .iter()
+        .filter_map(|row| {
+            let offset = row["offset"].as_f64()?;
+            // A pixel of slack: rounding the ascent, the descent and the icon's
+            // box each moves the ink a fraction. The misalignment this catches
+            // is two.
+            (offset.abs() > 1.0).then(|| {
+                format!(
+                    "`{}` ({offset:+.2}px)",
+                    row["label"].as_str().unwrap_or("(unlabelled)")
+                )
+            })
+        })
+        .collect();
+    ensure!(
+        off.is_empty(),
+        "icons off their text's cap-height centre (positive is low): {}",
+        off.join(", ")
+    );
+    Ok(())
+}
+
 // ── The address bar ──────────────────────────────────────────────────────────
 
 /// `performSwap` rewrites the URL after a `#reading-pane` swap (`pushState` on
