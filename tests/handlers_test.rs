@@ -1933,6 +1933,28 @@ async fn test_static_star_font_serves_and_css_scopes_it() {
     }
 }
 
+/// Safari repaints the title link's hover color short of the CJK fallback
+/// glyphs' tops, leaving a strip of the old color over the first line; the
+/// link's inline vertical padding is what grows the repainted rect. Measured in
+/// a real `WKWebView`: without it 620+ stale pixels, with it none.
+#[tokio::test]
+async fn test_reading_pane_title_link_pads_over_cjk_glyph_overflow() {
+    let server = create_test_server(default_test_config()).await;
+    let css = server.get("/static/css/app.css").await.text();
+
+    let link = css
+        .split("\n.reading-pane-title a {")
+        .nth(1)
+        .expect(".reading-pane-title a rule must exist")
+        .split('}')
+        .next()
+        .unwrap();
+    assert!(
+        link.contains("padding-block: 0.15em;"),
+        "the title link must pad over the CJK glyph overflow, got: {link}"
+    );
+}
+
 #[tokio::test]
 async fn test_static_font_not_found() {
     let server = create_test_server(default_test_config()).await;
