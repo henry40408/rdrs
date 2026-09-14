@@ -495,10 +495,14 @@ pub async fn reauthenticate(
 /// cosmetic gap.
 pub async fn logout_form(
     State(state): State<AppState>,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request_headers: HeaderMap,
     jar: CookieJar,
-    auth_user: AuthUser,
+    auth_user: Result<AuthUser, AppError>,
 ) -> AppResult<Response> {
-    let (headers, jar, body) = destroy_session(&state, jar, auth_user).await?;
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let (headers, jar, body) =
+        destroy_session(&state, jar, auth_user, peer, &request_headers).await?;
 
     let flash = logged_out_flash(&body);
 
@@ -507,15 +511,19 @@ pub async fn logout_form(
 
 pub async fn logout(
     State(state): State<AppState>,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request_headers: HeaderMap,
     jar: CookieJar,
-    auth_user: AuthUser,
+    auth_user: Result<AuthUser, AppError>,
 ) -> AppResult<(
     [(HeaderName, HeaderValue); 1],
     CookieJar,
     SetFlash,
     Json<LogoutResponse>,
 )> {
-    let (headers, jar, body) = destroy_session(&state, jar, auth_user).await?;
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let (headers, jar, body) =
+        destroy_session(&state, jar, auth_user, peer, &request_headers).await?;
     // The banner is set here rather than by the caller's JavaScript. A flash
     // cookie is signed (see `middleware::flash`), so only the server can mint
     // one — and the client only needs to navigate afterwards.
@@ -542,14 +550,37 @@ fn logged_out_flash(body: &LogoutResponse) -> SetFlash {
 /// under, and work out where the caller should land. Both the JSON and the form
 /// endpoint go through this so a change to cookie removal cannot apply to only
 /// one of them.
+///
+/// A session that is already gone is not an error here. The idle timeout, a
+/// revocation, or a restart under a new `RDRS_SECRET` can end it while the tab
+/// still shows a Sign Out button; rejecting that click with a 401 reported a
+/// failure although the reader was signed out, and left the dead cookies and
+/// the sidebar mirror in `sessionStorage` behind.
 async fn destroy_session(
     state: &AppState,
     jar: CookieJar,
-    auth_user: AuthUser,
+    auth_user: Result<AuthUser, AppError>,
+    peer: Option<std::net::IpAddr>,
+    request_headers: &HeaderMap,
 ) -> AppResult<([(HeaderName, HeaderValue); 1], CookieJar, LogoutResponse)> {
-    let token = auth_user.session.session_token.clone();
-    session::delete_session(&state.db, &token).await?;
-    audit::session_destroyed(&state.config.secret, &token, auth_user.user.id, "logout");
+    let via_forward_auth = match auth_user {
+        Ok(auth_user) => {
+            let token = auth_user.session.session_token.clone();
+            session::delete_session(&state.db, &token).await?;
+            audit::session_destroyed(&state.config.secret, &token, auth_user.user.id, "logout");
+            auth_user.via_forward_auth
+        }
+        // Nothing to destroy or audit. The proxy header still decides the
+        // banner: under forward-auth the next request re-mints a session, and
+        // "You have been logged out." would be a lie.
+        Err(AppError::Unauthorized) => crate::middleware::forward_auth::forward_auth_identity(
+            &state.config,
+            peer,
+            request_headers,
+        )
+        .is_some(),
+        Err(e) => return Err(e),
+    };
 
     // Removal must match the Path=/ the cookie was set with, or the browser keeps
     // the now-invalid session_token cookie. The readable CSRF cookie is cleared
@@ -600,7 +631,7 @@ async fn destroy_session(
             .add(host_csrf_removal),
         LogoutResponse {
             redirect_to,
-            via_forward_auth: auth_user.via_forward_auth,
+            via_forward_auth,
             logout_url_configured,
         },
     ))

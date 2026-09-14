@@ -626,6 +626,73 @@ async fn test_logout() {
     server.get("/api/user").await.assert_status_unauthorized();
 }
 
+/// Set up an account, sign in, then end the session behind the browser's back —
+/// the idle timeout, an admin revoking it, or a restart under a new secret.
+/// Returns the CSRF token the page would still be holding.
+async fn sign_in_then_lose_the_session(server: &mut TestServer, db: &Db) -> String {
+    let created = server
+        .post("/api/setup")
+        .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    created.assert_status(StatusCode::CREATED);
+    let user_id = created.json::<serde_json::Value>()["id"].as_i64().unwrap();
+    let login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    login.assert_status_ok();
+    let csrf = login.cookie("csrf_token").value().to_string();
+
+    rdrs::models::session::delete_user_sessions(db, user_id)
+        .await
+        .unwrap();
+    server.get("/api/user").await.assert_status_unauthorized();
+    csrf
+}
+
+/// A tab left open past its session still has a Sign Out button. Clicking it
+/// used to 401 and flash "Logout failed" although the reader was, in fact,
+/// signed out; the end state they asked for already holds, so say so — and
+/// still clear the cookies and site data the dead session left behind.
+#[tokio::test]
+async fn test_logout_after_the_session_already_ended_still_signs_out() {
+    let (mut server, db) = build_server(default_test_config()).await;
+    let csrf = sign_in_then_lose_the_session(&mut server, &db).await;
+
+    let res = server
+        .delete("/api/session")
+        .add_header("x-csrf-token", csrf)
+        .await;
+    res.assert_status_ok();
+    let body = res.json::<serde_json::Value>();
+    assert_eq!(body["redirect_to"], "/login");
+    assert_eq!(body["via_forward_auth"], false);
+    assert!(common::flash_text(&res).contains("You have been logged out."));
+    assert_eq!(
+        res.headers().get("clear-site-data").unwrap(),
+        "\"cache\", \"storage\""
+    );
+    assert!(
+        set_cookie_headers(&res)
+            .iter()
+            .any(|c| c.starts_with("session_token=;") || c.starts_with("session_token=\"\"")),
+        "the dead session cookie must still be removed: {:?}",
+        set_cookie_headers(&res)
+    );
+}
+
+/// The scriptless form is the same Sign Out and must not 401 either.
+#[tokio::test]
+async fn test_logout_form_after_the_session_already_ended_still_signs_out() {
+    let (mut server, db) = build_server(default_test_config()).await;
+    let csrf = sign_in_then_lose_the_session(&mut server, &db).await;
+
+    let res = server.post("/logout").form(&[("_csrf", csrf)]).await;
+    res.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(res.header(header::LOCATION), "/login");
+    assert!(common::flash_text(&res).contains("You have been logged out."));
+}
+
 // Coverage for password change moved to tests/handlers_test.rs
 // (test_change_password_form_*) since the JSON PUT endpoint was removed in
 // favour of the SSR form-action endpoint at POST /user-settings/password.

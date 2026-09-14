@@ -428,6 +428,37 @@ async fn test_logout_reports_via_forward_auth() {
     assert_eq!(body["logout_url_configured"], false);
 }
 
+/// Signing out of a session that already ended is accepted, but under
+/// forward-auth the proxy re-mints one on the next request — so it must still
+/// report `via_forward_auth` and warn, not claim "You have been logged out."
+#[tokio::test]
+async fn test_logout_after_the_session_ended_still_reports_via_forward_auth() {
+    let (mut server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    })
+    .await;
+    seed_user(&db, "kate", rdrs::models::user::Role::User).await;
+    let login = server.get("/").add_header("Remote-User", "kate").await;
+    apply_csrf(&mut server, &login);
+
+    let user = rdrs::models::user::find_by_username(&db, "kate")
+        .await
+        .unwrap()
+        .unwrap();
+    rdrs::models::session::delete_user_sessions(&db, user.id)
+        .await
+        .unwrap();
+
+    let res = server
+        .delete("/api/session")
+        .add_header("Remote-User", "kate")
+        .await;
+    res.assert_status_ok();
+    let body: serde_json::Value = res.json();
+    assert_eq!(body["via_forward_auth"], true);
+    assert!(common::flash_text(&res).contains("log out at your proxy"));
+}
+
 #[tokio::test]
 async fn test_logout_password_session_reports_via_forward_auth_false() {
     // Same server config as above (forward-auth configured, loopback
