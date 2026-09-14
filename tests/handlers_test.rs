@@ -1933,36 +1933,25 @@ async fn test_static_star_font_serves_and_css_scopes_it() {
     }
 }
 
-/// Safari repaints an inline link's hover color only within its line boxes, and
-/// CJK fallback glyphs rise past those, so the title's hover must recolor the
-/// padded heading block instead or an iPad leaves a stripe of the old color.
+/// Safari repaints the title link's hover color short of the CJK fallback
+/// glyphs' tops, leaving a strip of the old color over the first line; the
+/// link's inline vertical padding is what grows the repainted rect. Measured in
+/// a real `WKWebView`: without it 620+ stale pixels, with it none.
 #[tokio::test]
-async fn test_reading_pane_title_hover_repaints_the_heading_block() {
+async fn test_reading_pane_title_link_pads_over_cjk_glyph_overflow() {
     let server = create_test_server(default_test_config()).await;
     let css = server.get("/static/css/app.css").await.text();
 
-    let rule = |selector: &str| -> String {
-        css.split(&format!("\n{selector} {{"))
-            .nth(1)
-            .unwrap_or_else(|| panic!("{selector} rule must exist"))
-            .split('}')
-            .next()
-            .unwrap()
-            .to_string()
-    };
-
-    let title = rule(".reading-pane-title");
+    let link = css
+        .split("\n.reading-pane-title a {")
+        .nth(1)
+        .expect(".reading-pane-title a rule must exist")
+        .split('}')
+        .next()
+        .unwrap();
     assert!(
-        title.contains("padding-top: 0.1em;") && title.contains("margin-top: -0.1em;"),
-        "the heading must pad over the glyph overflow without moving, got: {title}"
-    );
-    assert!(
-        rule(".reading-pane-title:has(a:hover)").contains("color: var(--color-accent);"),
-        "hover must recolor the heading block"
-    );
-    assert!(
-        !css.contains(".reading-pane-title a:hover"),
-        "recoloring only the inline link reintroduces the WebKit repaint stripe"
+        link.contains("padding-block: 0.15em;"),
+        "the title link must pad over the CJK glyph overflow, got: {link}"
     );
 }
 

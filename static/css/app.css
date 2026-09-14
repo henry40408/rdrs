@@ -944,21 +944,17 @@ body:has(.nav-fallback) .main-content {
     font-weight: 500;
     line-height: 1.14;
     letter-spacing: -0.02em;
-    /* CJK falls back to PingFang/Hiragino, whose ink rises 0.8-1.6px above
-       the line box Newsreader sizes. WebKit repaints a color change only
-       within the line box, leaving a strip of the old color over the first
-       line; the padding (cancelled by the margin) pulls that ink inside the
-       heading's own box, which a block repaint always covers. */
-    padding-top: 0.1em;
-    margin-top: -0.1em;
     margin-bottom: 13px;
     color: var(--color-text);
     text-wrap: pretty;
 }
-.reading-pane-title a { color: inherit; text-decoration: none; }
-/* Recolor the heading rather than the inline link so WebKit repaints the
-   padded block, not just the link's line boxes. */
-.reading-pane-title:has(a:hover) { color: var(--color-accent); }
+/* CJK falls back to PingFang/Hiragino, whose glyphs rise above what WebKit
+   repaints when the link changes color, leaving a strip of the old color over
+   the first line (Safari, iPad). Inline vertical padding doesn't move the
+   layout but grows the rect WebKit repaints. Recoloring the <h1> instead, or
+   a taller line-height, leaves the strip in place. */
+.reading-pane-title a { color: inherit; text-decoration: none; padding-block: 0.15em; }
+.reading-pane-title a:hover { color: var(--color-accent); }
 
 /* Byline: author (+ published) under the headline. */
 .byline {
