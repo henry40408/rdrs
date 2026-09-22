@@ -12,16 +12,7 @@ version = 2
 # `ignore` holds advisory IDs we've reviewed and consciously accept; each entry
 # records why it is safe here and what would let us drop it.
 yanked = "deny"
-ignore = [
-    # core2 is unmaintained and all versions are yanked; pulled in transitively
-    # with no maintained drop-in replacement available yet. The crate spec
-    # silences the separate `yanked = "deny"` check for the same crate.
-    "RUSTSEC-2026-0105",
-    "core2@0.4.0",
-    # paste (proc-macro helper) is no longer maintained; still pulled in
-    # transitively, no maintained replacement wired up.
-    "RUSTSEC-2024-0436",
-]
+ignore = []
 
 [licenses]
 version = 2
