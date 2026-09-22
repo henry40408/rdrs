@@ -21,13 +21,6 @@ ignore = [
     # paste (proc-macro helper) is no longer maintained; still pulled in
     # transitively, no maintained replacement wired up.
     "RUSTSEC-2024-0436",
-    # rustls accepts TLS 1.3 handshake messages across encryption level
-    # boundaries (same bug class as Go's CVE-2025-61730). Reached only through
-    # reqwest's outbound feed fetches as a client; the transcript stays
-    # authenticated, so this cannot alter or complete a handshake. Fixed in
-    # rustls 0.23.45, which is inside the 168h dependency cooldown until
-    # 2026-09-21 — drop this entry once the bump lands.
-    "RUSTSEC-2026-0285",
 ]
 
 [licenses]
