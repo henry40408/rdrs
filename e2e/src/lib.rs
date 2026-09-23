@@ -28,10 +28,6 @@ pub fn random_slug() -> String {
 }
 
 /// The first cell of every row in a step's (single-column) data table.
-///
-/// # Errors
-///
-/// Fails when the step carries no table.
 pub fn first_column(step: &cucumber::gherkin::Step) -> anyhow::Result<Vec<String>> {
     let table = step
         .table

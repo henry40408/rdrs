@@ -131,10 +131,6 @@ pub trait Dom {
 
 /// Clicks an element once it is clickable; `WebElement::click` happily clicks
 /// a still-disabled control (e.g. Summarize before neighbors load).
-///
-/// # Errors
-///
-/// Fails when the element never becomes clickable.
 pub async fn click_when_ready(element: &WebElement) -> Result<()> {
     element
         .wait_until()
@@ -147,8 +143,6 @@ pub async fn click_when_ready(element: &WebElement) -> Result<()> {
 }
 
 /// [`Dom::submit_css`] for an element handle.
-///
-/// # Errors
 ///
 /// Fails when the click does not replace the document.
 pub async fn submit_element(driver: &WebDriver, element: &WebElement) -> Result<()> {
