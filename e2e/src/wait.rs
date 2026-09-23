@@ -27,8 +27,6 @@ fn is_stale(error: &anyhow::Error) -> bool {
 /// Polls `probe` until it reports the expected value; a timeout names the last
 /// value seen.
 ///
-/// # Errors
-///
 /// Fails when `probe` errors, or when the value has still not matched by
 /// [`WAIT_TIMEOUT`].
 pub async fn eventually_eq<T, E, F, Fut>(what: &str, expected: E, mut probe: F) -> Result<()>
@@ -60,8 +58,6 @@ where
 
 /// Polls `probe` until it reports `true`.
 ///
-/// # Errors
-///
 /// Fails when `probe` errors, or when it has still not held by
 /// [`WAIT_TIMEOUT`].
 pub async fn eventually<F, Fut>(what: &str, probe: F) -> Result<()>
@@ -74,8 +70,6 @@ where
 
 /// [`eventually`] with its own deadline, for background work (e.g.
 /// summarization) that can legitimately outlast [`WAIT_TIMEOUT`].
-///
-/// # Errors
 ///
 /// Fails when `probe` errors, or when it has still not held by `timeout`.
 pub async fn eventually_within<F, Fut>(
@@ -105,8 +99,6 @@ where
 /// Polls `probe` until it reports the same value `samples` times running, for
 /// state with no known target (e.g. pane actions that may be "not ready" or
 /// "deliberately inert").
-///
-/// # Errors
 ///
 /// Fails when `probe` errors, or when the value never holds still by
 /// [`WAIT_TIMEOUT`].
@@ -144,8 +136,6 @@ where
 
 /// Polls `probe` until it reports a value, handing it back.
 ///
-/// # Errors
-///
 /// Fails when `probe` errors, or when it has still reported `None` by
 /// [`WAIT_TIMEOUT`].
 pub async fn eventually_some<T, F, Fut>(what: &str, mut probe: F) -> Result<T>
@@ -173,8 +163,6 @@ where
 ///
 /// `action` must find its element *inside* the closure, or it replays the same
 /// dead reference.
-///
-/// # Errors
 ///
 /// Fails at once on any non-stale error, or after [`WAIT_TIMEOUT`] of staleness.
 pub async fn despite_swaps<T, F, Fut>(what: &str, mut action: F) -> Result<T>

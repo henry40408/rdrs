@@ -51,8 +51,6 @@ pub struct Browser {
 impl Browser {
     /// Starts a headless session with the page's scripts on or off.
     ///
-    /// # Errors
-    ///
     /// Fails when no local browser is installed, when the driver cannot be
     /// downloaded, or when the session cannot be created.
     pub async fn open(scripting: Scripting) -> Result<Self> {
@@ -96,10 +94,6 @@ impl Browser {
 
     /// Downloads the driver once up front, so parallel sessions on a cold
     /// cache (every CI run) don't all download it and contend on its lock file.
-    ///
-    /// # Errors
-    ///
-    /// Fails for the same reasons [`Browser::open`] does.
     pub async fn prepare() -> Result<()> {
         Self::open(Scripting::Enabled).await?.quit().await
     }
@@ -116,10 +110,6 @@ impl Browser {
 
     /// Resizes the viewport exactly via CDP; `WebDriver` window sizes include
     /// chrome, which would miss exact breakpoints.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn set_viewport(&mut self, viewport: Viewport) -> Result<()> {
         self.driver
             .cdp()
@@ -139,10 +129,6 @@ impl Browser {
 
     /// Emulates a touch device, the only way to flip `(hover: none)` /
     /// `(pointer: coarse)`; `setEmulatedMedia` ignores both.
-    ///
-    /// # Errors
-    ///
-    /// Fails when either CDP command is refused.
     pub async fn set_touch(&self, enabled: bool) -> Result<()> {
         self.driver
             .cdp()
@@ -155,10 +141,6 @@ impl Browser {
     }
 
     /// Emulates `prefers-color-scheme` (the app's system-follow path).
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn emulate_color_scheme(&self, scheme: &str) -> Result<()> {
         self.driver
             .cdp()
@@ -175,10 +157,6 @@ impl Browser {
 
     /// Takes the browser offline. Unlike [`crate::network::Action::Abort`]
     /// (page-target only), this also reaches the service worker.
-    ///
-    /// # Errors
-    ///
-    /// Fails when either CDP command is refused.
     pub async fn set_offline(&self, offline: bool) -> Result<()> {
         // `emulateNetworkConditions` is a no-op until the domain is enabled.
         self.driver
@@ -202,10 +180,6 @@ impl Browser {
     }
 
     /// Grants clipboard access; headless `clipboard.writeText` rejects without it.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn grant_clipboard(&self) -> Result<()> {
         self.driver
             .cdp()
@@ -221,10 +195,6 @@ impl Browser {
 
     /// Does the element overlap the viewport at all? (`WebElement::rect` is in
     /// document coordinates.) Works under `@nojs` too.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the script cannot run.
     pub async fn is_in_viewport(&self, element: &WebElement) -> Result<bool> {
         let visible = self
             .driver
@@ -245,10 +215,6 @@ impl Browser {
     }
 
     /// Ends the session.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the driver refuses to close.
     pub async fn quit(self) -> Result<()> {
         self.driver.quit().await?;
         Ok(())
