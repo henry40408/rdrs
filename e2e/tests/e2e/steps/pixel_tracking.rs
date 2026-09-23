@@ -1,5 +1,4 @@
-//! Open tracking: the opt-in, the pixel a real browser fetches, and the two
-//! pages that read the counts back.
+//! Open tracking: the opt-in, the pixel fetch, and the count pages.
 
 use anyhow::{Context, Result};
 use cucumber::{given, then, when};
@@ -9,8 +8,7 @@ use rdrs_e2e::world::RdrsWorld;
 
 const PREFERENCES_FORM: &str = r#"form[action="/user-settings/preferences"]"#;
 
-/// Turn tracking on through the real form, which is what one scenario is
-/// actually about.
+/// Turns tracking on through the real form.
 #[when("I turn on open tracking")]
 async fn turn_on_tracking(world: &mut RdrsWorld) -> Result<()> {
     world.goto("/user-settings").await?;
@@ -22,19 +20,15 @@ async fn turn_on_tracking(world: &mut RdrsWorld) -> Result<()> {
     world.expect_path("/user-settings").await
 }
 
-/// The same opt-in as a precondition. Seeded rather than driven, because
-/// entries created before the opt-in carry no pixel — a scenario that needs a
-/// rate has to enable tracking before it seeds its feed, and paying a page load
-/// for that in every one of them buys nothing.
+/// Seeded rather than driven; must run before the feed is seeded, since
+/// earlier entries carry no pixel.
 #[given("I have open tracking turned on")]
 async fn tracking_turned_on(world: &mut RdrsWorld) -> Result<()> {
     let user_id = world.user_id().await?;
     world.seed().enable_pixel_tracking(user_id).await
 }
 
-/// Every entry of the feed just seeded, recorded as opened. Stands in for an
-/// external client that fetched each pixel during a sync — the case a
-/// browser-driven scenario cannot reach.
+/// Marks every entry of the feed opened, as an external client would.
 #[given(expr = "every entry in {string} has been opened")]
 async fn every_entry_opened(world: &mut RdrsWorld, feed_title: String) -> Result<()> {
     let user_id = world.user_id().await?;
@@ -59,10 +53,8 @@ async fn has_no_open_rate_column(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// The pixel `<img>` inside the rendered article, as the browser sees it after
-/// the swap. Same-origin and un-proxied is the whole property under test — the
-/// sanitiser would have stripped a 1x1 image and rewritten its `src` through
-/// `/api/proxy/image`, so finding it here proves injection ran afterwards.
+/// Pixel `src`s in the rendered article. The sanitiser would have proxied a
+/// 1x1 image, so a same-origin `src` proves injection ran afterwards.
 async fn pixel_srcs(driver: &thirtyfour::WebDriver) -> Result<Vec<String>> {
     let value = driver
         .eval(
@@ -97,7 +89,7 @@ async fn pane_carries_pixel(world: &mut RdrsWorld) -> Result<()> {
 #[then("the reading pane carries no tracking pixel")]
 async fn pane_carries_no_pixel(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
-    // The pane has to be there first, or this passes on an empty page.
+    // Wait for the pane, or this passes on an empty page.
     driver.expect_text_somewhere("Test Entry 1").await?;
     let srcs = pixel_srcs(driver).await?;
     anyhow::ensure!(

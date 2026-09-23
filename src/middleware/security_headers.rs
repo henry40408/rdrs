@@ -1,65 +1,28 @@
-//! Response security headers, in two layers.
+//! Response security headers: [`set_security_headers`] (CSP and friends, always
+//! installed) and [`set_hsts`] (only on HTTPS deployments).
 //!
-//! [`set_security_headers`] carries the fixed set — CSP, `X-Content-Type-Options`,
-//! `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`,
-//! `Cross-Origin-Opener-Policy` — and is always installed. [`set_hsts`] carries
-//! `Strict-Transport-Security` alone, since that one is conditional on the
-//! deployment being HTTPS.
-//!
-//! Both share the same two rules:
-//!
-//! - **No skip list, and there must not be one.** These are declarations about
-//!   the *host*, not about any one response, so they go on every response —
-//!   `/static`, `/health`, favicons and the image proxy included. `nosniff` on a
-//!   proxied image is exactly where it earns its keep.
-//! - **Applied outermost** in [`crate::create_router`], because `forward_auth`
-//!   and the CSRF guards return a response without calling `next` on several
-//!   paths; nested any further in, these would miss those responses.
-//!
-//! A header a response already carries — most likely from a reverse proxy — is
-//! left alone rather than overwritten.
+//! - **No skip list, and there must not be one.** These describe the host, so
+//!   every response gets them — `/static`, `/health` and the image proxy included.
+//! - **Applied outermost** in [`crate::create_router`], because `forward_auth` and
+//!   the CSRF guards return early without calling `next`.
+//! - A header already present (e.g. from a reverse proxy) is left alone.
 //!
 //! ## The Content-Security-Policy
 //!
-//! `script-src 'self'` with no `'unsafe-inline'` is the point of the whole
-//! policy, and it is only enforceable because no template ships an inline
-//! `<script>` or an `on*=` handler any more: those became modules under
-//! `static/js/` and `data-` attributes driven by delegated listeners.
-//! Reintroducing either would not fail a build — it would silently stop working
-//! in the browser.
+//! `script-src 'self'` and `style-src 'self'` forbid inline `<script>`, `on*=`
+//! handlers and `style` attributes in any markup, including HTML assigned to
+//! `innerHTML`; violations fail silently in the browser, not the build.
+//! Writing `element.style` from script is fine (CSP polices markup, not CSSOM).
+//! `img-src 'self' data:` assumes `RDRS_PUBLIC_BASE_URL` is the browser-facing
+//! origin. `frame-ancestors 'none'` plus `X-Frame-Options: DENY` covers pre-CSP3
+//! browsers.
 //!
-//! `style-src 'self'` is equally strict, so **no markup anywhere may carry a
-//! `style` attribute** — not templates, and not HTML that JavaScript assigns to
-//! `innerHTML`, which the parser checks the same way. Static declarations became
-//! classes, `style="display:none"` became the `hidden` attribute, and the
-//! per-datum bar geometry on /statistics became a `pct-N` class. Writing to
-//! `element.style` *from script* is untouched, since CSP polices markup rather
-//! than the CSSOM.
+//! ## Deliberately absent
 //!
-//! `_icon_sprite.html` is the one place that needs collapsing without CSS — a
-//! bare `<svg>` renders at 300x150 — and uses SVG presentation attributes, which
-//! are not `style` attributes.
-//!
-//! `img-src 'self' data:` covers the three real sources: same-origin feed icons,
-//! remote article images rewritten to the same-origin proxy, and the `data:` SVG
-//! chevron `app.css` uses. It assumes `RDRS_PUBLIC_BASE_URL` names the origin the
-//! browser actually uses, already a hard requirement for the cookie's `Secure`
-//! flag and for HSTS.
-//!
-//! `frame-ancestors 'none'` and `X-Frame-Options: DENY` are the modern and
-//! legacy halves of the clickjacking defence; both are sent because the older
-//! header is the only one pre-CSP3 browsers honour.
-//!
-//! ## What is deliberately absent
-//!
-//! **`Cross-Origin-Resource-Policy`.** `same-origin` would break third-party
-//! Google Reader clients: the item feed hands out absolute proxy URLs, and a
-//! native client rendering that HTML in a webview fetches them as cross-origin
-//! no-cors requests. Article images would silently vanish.
-//!
-//! **`publickey-credentials-get` / `-create` in `Permissions-Policy`.** The
-//! header only overrides the features it names, and both default to `self`, so
-//! naming them to deny would break passkey sign-in and enrolment.
+//! - `Cross-Origin-Resource-Policy`: `same-origin` would break proxied images in
+//!   third-party Google Reader clients' webviews.
+//! - `publickey-credentials-*` in `Permissions-Policy`: naming them would drop
+//!   their `self` default and break passkeys.
 
 use std::sync::LazyLock;
 
@@ -70,7 +33,6 @@ use axum::{
     response::Response,
 };
 
-/// See the module docs for why each directive reads the way it does.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      script-src 'self'; \
      style-src 'self'; \
@@ -82,8 +44,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      form-action 'self'; \
      frame-ancestors 'none'";
 
-/// Every feature the app has no use for, denied outright. Passkey features are
-/// omitted on purpose so they keep their `self` default — see the module docs.
+/// Unused features, denied. Passkey features omitted on purpose (module docs).
 const PERMISSIONS_POLICY: &str = "accelerometer=(), \
      autoplay=(), \
      camera=(), \
@@ -98,16 +59,11 @@ const PERMISSIONS_POLICY: &str = "accelerometer=(), \
      usb=(), \
      xr-spatial-tracking=()";
 
-/// `strict-origin-when-cross-origin` rather than `no-referrer`: the entry-action
-/// redirect recovers which list the reader came from out of the same-origin
-/// `Referer`, and `no-referrer` would send every action back to the default
-/// list. Cross-origin navigations still leak only the bare origin, and external
-/// article links avoid it entirely via `rel="noreferrer"`.
+/// Not `no-referrer`: entry-action redirects recover the originating list from
+/// the same-origin `Referer`.
 const REFERRER_POLICY: &str = "strict-origin-when-cross-origin";
 
-/// Built once. `HeaderName::from_static` is not a `const fn`, and the two
-/// headers with no `http` constant would otherwise be re-parsed on every
-/// response.
+/// Built once so non-`http`-constant header names aren't re-parsed per response.
 static STATIC_HEADERS: LazyLock<[(HeaderName, HeaderValue); 6]> = LazyLock::new(|| {
     [
         (
@@ -134,16 +90,13 @@ static STATIC_HEADERS: LazyLock<[(HeaderName, HeaderValue); 6]> = LazyLock::new(
     ]
 });
 
-/// Add the fixed security headers to every response, leaving any the response
-/// already carries untouched.
+/// Add the fixed security headers, keeping any already present.
 pub async fn set_security_headers(req: Request, next: Next) -> Response {
     let response = next.run(req).await;
     apply_static(response)
 }
 
-/// The header mutation for [`set_security_headers`], factored out of the async
-/// body so it can be unit tested against a hand-built [`Response`] instead of a
-/// real [`Next`].
+/// Header mutation for [`set_security_headers`], split out for unit tests.
 fn apply_static(mut response: Response) -> Response {
     let headers = response.headers_mut();
     for (name, value) in STATIC_HEADERS.iter() {
@@ -152,15 +105,8 @@ fn apply_static(mut response: Response) -> Response {
     response
 }
 
-/// Per-layer state for [`set_hsts`]: just the precomputed header value. A
-/// dedicated state type keeps this middleware self-contained, rather than giving
-/// every other consumer of [`crate::AppState`] a field it never reads.
-///
-/// **Whether the layer exists at all is decided once**, in
-/// [`crate::create_router`], from [`crate::Config::hsts_header_value`]: a
-/// plain-HTTP deployment adds no layer and pays nothing per request. When it
-/// does exist the value is a [`HeaderValue`] built at router-construction time
-/// and cloned per response, so the allocation never runs on the hot path.
+/// Precomputed HSTS value for [`set_hsts`]. The layer is only added (in
+/// [`crate::create_router`]) when [`crate::Config::hsts_header_value`] is set.
 #[derive(Clone)]
 pub struct HstsState(HeaderValue);
 
@@ -170,8 +116,7 @@ impl HstsState {
     }
 }
 
-/// Add `Strict-Transport-Security: <value>` to every response, unless one is
-/// already present.
+/// Add `Strict-Transport-Security` unless already present.
 pub async fn set_hsts(
     State(HstsState(value)): State<HstsState>,
     req: Request,
@@ -181,10 +126,7 @@ pub async fn set_hsts(
     apply(&value, response)
 }
 
-/// The actual header mutation, factored out of the async middleware body so
-/// it can be unit tested directly against a hand-built [`Response`] instead
-/// of a real [`Next`]. `HeaderMap::entry` is what gives us "do not overwrite"
-/// for free: `or_insert` only runs when the header is absent.
+/// Header mutation for [`set_hsts`], split out for unit tests.
 fn apply(value: &HeaderValue, mut response: Response) -> Response {
     response
         .headers_mut()
@@ -222,8 +164,7 @@ mod tests {
 
     #[test]
     fn does_not_overwrite_an_existing_header() {
-        // A TLS-terminating reverse proxy may already have added its own
-        // declaration; ours must not clobber it.
+        // A TLS-terminating proxy's own header must win.
         let response = Response::builder()
             .status(StatusCode::OK)
             .header(header::STRICT_TRANSPORT_SECURITY, "max-age=1")
@@ -270,9 +211,7 @@ mod tests {
         );
     }
 
-    /// The whole point of the policy: an injected `<script>` must have no way
-    /// to run. A stray `'unsafe-inline'` in `script-src` would silently undo
-    /// the template refactor that made the strict directive possible.
+    /// An injected `<script>` must have no way to run.
     #[test]
     fn script_src_is_strict() {
         assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self';"));
@@ -280,22 +219,17 @@ mod tests {
             !CONTENT_SECURITY_POLICY.contains("script-src 'self' 'unsafe-inline'"),
             "script-src must not allow inline scripts"
         );
-        // `'unsafe-eval'` has no legitimate use here either.
         assert!(!CONTENT_SECURITY_POLICY.contains("unsafe-eval"));
     }
 
-    /// Passkey sign-in and enrolment rely on these two features keeping their
-    /// `self` default, which only holds while the header stays silent on them.
+    /// Passkeys need these features to keep their `self` default.
     #[test]
     fn permissions_policy_leaves_webauthn_alone() {
         assert!(!PERMISSIONS_POLICY.contains("publickey-credentials"));
     }
 
-    /// Collect every inline `on*="…"` handler attribute in a template.
-    ///
-    /// Matches generically rather than against a fixed list of event names, so an
-    /// `onpointerdown` nobody thought of is caught too. A prose word merely
-    /// starting with "on" is excluded by requiring an `=` right after.
+    /// Every inline `on*=` handler attribute in a template (any event name;
+    /// requiring `=` excludes prose words starting with "on").
     fn inline_handler_attributes(html: &str) -> Vec<String> {
         let mut found = Vec::new();
         for (i, _) in html.match_indices("on") {
@@ -318,10 +252,8 @@ mod tests {
         found
     }
 
-    /// True for a `<script …>` open tag that carries executable inline code —
-    /// i.e. neither an external `src` nor a non-executing data block such as
-    /// `type="application/json"` (which CSP's `script-src` does not police,
-    /// since the browser never runs it).
+    /// True for a `<script>` tag with executable inline code (no `src`, not a
+    /// JSON data block).
     fn is_inline_script_tag(tag: &str) -> bool {
         !tag.contains("src=") && !tag.contains("application/json")
     }
@@ -347,15 +279,9 @@ mod tests {
         files
     }
 
-    /// `script-src 'self'` and `style-src 'self'` are only a real defence while
-    /// the markup holds up its end: an inline `<script>`, an `on*=` or a `style=`
-    /// attribute is not a build error, it just silently stops working. This walks
-    /// every template and every file that builds markup for `innerHTML`, so the
-    /// policy and the markup cannot drift.
-    ///
-    /// Markup a script assigns to `innerHTML` is parsed and policed the same way,
-    /// including inside a shadow root. Writing to `element.style` is a CSSOM
-    /// operation and stays allowed, which is why this looks for `style="`.
+    /// Keeps templates and JS-built markup in line with the strict CSP, whose
+    /// violations fail silently. `element.style` (CSSOM) stays allowed, hence
+    /// matching `style="`.
     #[test]
     fn no_markup_ships_inline_script_handler_or_style() {
         let templates = source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"), &["html"]);
@@ -381,8 +307,7 @@ mod tests {
                 path.display()
             );
 
-            // The remaining two only apply to markup, and every .js file here is
-            // an ES module served with `src`, not an inline block.
+            // The rest only applies to markup; .js files are external modules.
             if path.extension().and_then(|e| e.to_str()) != Some("html") {
                 continue;
             }
@@ -413,8 +338,7 @@ mod tests {
 
     #[test]
     fn does_not_overwrite_existing_static_headers() {
-        // A reverse proxy that already set its own policy wins, exactly as
-        // with HSTS above.
+        // A reverse proxy's own policy wins.
         let response = Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_SECURITY_POLICY, "default-src 'none'")
@@ -430,7 +354,7 @@ mod tests {
                 .unwrap(),
             "default-src 'none'"
         );
-        // The ones the proxy did *not* set are still added.
+        // Headers the proxy didn't set are still added.
         assert_eq!(
             response
                 .headers()

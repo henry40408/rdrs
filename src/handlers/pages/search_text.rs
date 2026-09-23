@@ -3,11 +3,8 @@
 
 use crate::utils::text::strip_to_plain_text;
 
-/// Build a query-aware snippet: returns a `max_chars`-wide window centered on
-/// the first case-insensitive match of any of `terms` in the plain-text content,
-/// with `…` prefix/suffix where the window doesn't reach the original boundaries.
-/// Falls back to the leading `max_chars` characters if no term matches
-/// (or if `terms` is empty).
+/// A `max_chars` window centered on the first case-insensitive match of any
+/// term, `…`-elided; the leading window if nothing matches.
 pub fn build_snippet(html: Option<&str>, terms: &[&str], max_chars: usize) -> String {
     let raw = match html {
         Some(s) if !s.is_empty() => s,
@@ -19,7 +16,6 @@ pub fn build_snippet(html: Option<&str>, terms: &[&str], max_chars: usize) -> St
         return plain;
     }
 
-    // Try to center on the earliest match of any term (ASCII-case-insensitive).
     let plain_lower = plain.to_ascii_lowercase();
     let first_match = terms
         .iter()
@@ -28,7 +24,6 @@ pub fn build_snippet(html: Option<&str>, terms: &[&str], max_chars: usize) -> St
         .filter_map(|t| plain_lower.find(&t.to_ascii_lowercase()))
         .min();
     if let Some(byte_pos) = first_match {
-        // Convert byte position → char index.
         let match_char_idx = plain[..byte_pos].chars().count();
         let context_before = max_chars / 3;
         let start_char = match_char_idx.saturating_sub(context_before);
@@ -46,23 +41,17 @@ pub fn build_snippet(html: Option<&str>, terms: &[&str], max_chars: usize) -> St
         return format!("{}{}{}", prefix, window.trim(), suffix);
     }
 
-    // Fallback: leading window.
     let truncated: String = plain.chars().take(max_chars).collect();
     format!("{}…", truncated.trim_end())
 }
 
-/// Wrap case-insensitive (ASCII-only — matches the `SQLite` LIKE COLLATE NOCASE
-/// behavior of the search query) matches of any of `terms` in `<mark>` tags.
-/// Returns HTML with the non-match parts and the matched text both escaped, plus
-/// the `<mark>...</mark>` wrappers around hits. Overlapping matches from
-/// different terms are merged into a single wrapper. Use with `|safe` in
-/// templates.
+/// Escape `text` and wrap ASCII-case-insensitive matches (like `SQLite` LIKE) in
+/// `<mark>`, merging overlaps. Output is safe for `|safe`.
 pub fn highlight_html(text: &str, terms: &[&str]) -> String {
     // `to_ascii_lowercase` preserves byte length, so offsets into `t_lower`
     // index `text` identically.
     let t_lower = text.to_ascii_lowercase();
 
-    // Collect every match range (byte offsets) across all non-empty terms.
     let mut ranges: Vec<(usize, usize)> = Vec::new();
     for term in terms {
         let needle = term.to_ascii_lowercase();
@@ -81,8 +70,7 @@ pub fn highlight_html(text: &str, terms: &[&str]) -> String {
         return html_escape_minimal(text);
     }
 
-    // Sort by start and merge overlapping/adjacent ranges so nested or crossing
-    // matches (e.g. "learn" inside "learning") produce one contiguous wrapper.
+    // Merge overlapping/adjacent ranges into one wrapper.
     ranges.sort_unstable();
     let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
     for (s, e) in ranges {

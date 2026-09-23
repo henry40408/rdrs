@@ -71,10 +71,8 @@ pub async fn exists(db: &Db, entity_type: &str, entity_id: i64) -> AppResult<boo
     Ok(count > 0)
 }
 
-/// Return the subset of `entity_ids` that have an image of `entity_type`, as a
-/// set, in a single query. Replaces per-entity `exists` calls in list views
-/// (e.g. the Feeds page / `GReader` subscription list) that would otherwise issue
-/// one query per row. Empty input is a no-op returning an empty set.
+/// The subset of `entity_ids` with an image of `entity_type`, in one query
+/// (avoids per-row `exists` calls in list views).
 pub async fn existing_ids(
     db: &Db,
     entity_type: &str,
@@ -84,9 +82,8 @@ pub async fn existing_ids(
         return Ok(std::collections::HashSet::new());
     }
 
-    // A dynamic `IN (...)` placeholder list can't be a `&'static str` literal
-    // (the dispatch macros require one), so fetch the entity_ids that have an
-    // image of this type and intersect with the requested set in Rust.
+    // The dispatch macros need a static SQL literal, so no dynamic `IN (...)`:
+    // fetch all ids of this type and intersect in Rust.
     let rows: Vec<(i64,)> = query_all!(
         db,
         (i64,),
@@ -109,8 +106,7 @@ pub async fn needs_refresh(
     entity_id: i64,
     max_age_days: i64,
 ) -> AppResult<bool> {
-    // Freshness cutoff computed in Rust instead of SQL interval arithmetic:
-    // an image is fresh iff `fetched_at > now - max_age_days`.
+    // Cutoff computed in Rust to avoid dialect-specific interval arithmetic.
     let cutoff = Utc::now() - chrono::Duration::days(max_age_days);
     let count: i64 = query_scalar!(
         db,
@@ -123,7 +119,6 @@ pub async fn needs_refresh(
     )
     .map_err(AppError::Database)?;
 
-    // No fresh row → needs refresh.
     Ok(count == 0)
 }
 
@@ -213,7 +208,6 @@ mod tests {
     async fn test_existing_ids() {
         let db = setup_db().await;
 
-        // Empty input is a no-op.
         assert!(
             existing_ids(&db, ENTITY_FEED, &[])
                 .await
@@ -260,10 +254,8 @@ mod tests {
     async fn test_needs_refresh() {
         let db = setup_db().await;
 
-        // No image exists - needs refresh
         assert!(needs_refresh(&db, ENTITY_FEED, 1, 7).await.unwrap());
 
-        // Insert fresh image - doesn't need refresh
         upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
             .await
             .unwrap();

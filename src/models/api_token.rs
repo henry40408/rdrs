@@ -1,9 +1,5 @@
-//! `GReader` `ClientLogin` credentials, deliberately independent of `session`.
-//!
-//! A token minted here is its own row: its own expiry, its own revocation, and
-//! nothing that touches it ever slides a browser session's expiry or shows up
-//! in the "Active Sessions" list. See `handlers::greader::auth` for how it is
-//! issued and validated.
+//! `GReader` `ClientLogin` credentials, deliberately independent of `session`
+//! (own expiry and revocation). Issued in `handlers::greader::auth`.
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -12,28 +8,15 @@ use crate::error::{AppError, AppResult};
 use crate::models::session;
 use crate::{db_execute, query_all, query_one, query_opt};
 
-/// `GReader` clients cannot re-authenticate interactively — the user has to go
-/// back into the app and retype a password — so this credential uses a longer
-/// sliding idle TTL and, deliberately, **no absolute cap**: a client that keeps
-/// syncing stays valid, an idle one dies on its own. That is a conscious
-/// divergence from the web session's 7-day slide plus 90-day hard cap.
+/// Sliding idle TTL with deliberately **no absolute cap** (unlike web sessions):
+/// `GReader` clients can't re-authenticate interactively.
 pub const API_TOKEN_IDLE_DAYS: i64 = 90;
 
-/// Token prefix, so a leaked string is recognisable in logs and secret scanners
-/// and can never be confused with a session token.
+/// Token prefix, recognisable to secret scanners and distinct from session tokens.
 pub const API_TOKEN_PREFIX: &str = "rdrs_gr_";
 
-/// Most tokens one account may hold at once.
-///
-/// `ClientLogin` mints a fresh row on every successful call, and the limiter
-/// refunds its reservation on success (so legitimate repeat logins are not
-/// punished) — which together mean *successful* `ClientLogin` is effectively
-/// unthrottled. Without a cap, a client that re-authenticates every sync cycle
-/// instead of caching its `Auth=` token grows this table without bound, each
-/// row surviving up to [`API_TOKEN_IDLE_DAYS`], and takes the unpaginated list
-/// on `/user-settings` with it. Twenty is far more than the handful of devices
-/// a real user syncs from, so the cap is invisible in normal use and only
-/// bites the runaway case.
+/// Most tokens one account may hold. Successful `ClientLogin` is effectively
+/// unthrottled and mints a row each call, so this bounds a client that never caches `Auth=`.
 pub const MAX_TOKENS_PER_USER: i64 = 20;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -55,9 +38,7 @@ impl ApiToken {
         Utc::now() > self.expires_at
     }
 
-    /// New `expires_at` when less than half of `API_TOKEN_IDLE_DAYS` remains.
-    /// Shaped like `session::Session::compute_refreshed_expiry` but with no
-    /// absolute-cap branch — see the module doc for why.
+    /// New `expires_at` when less than half of `API_TOKEN_IDLE_DAYS` remains (no absolute cap).
     pub fn compute_refreshed_expiry(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let ttl = Duration::days(API_TOKEN_IDLE_DAYS);
         if self.expires_at - now >= ttl / 2 {
@@ -67,10 +48,8 @@ impl ApiToken {
     }
 }
 
-/// `API_TOKEN_PREFIX` + `session::generate_token()`. The prefix characters are
-/// all within the `A-Za-z0-9-_` alphabet, so the token still never contains
-/// `/` — which `greader::auth::post_token_parts` relies on for its MAC input to
-/// be unambiguous (see the comment at src/handlers/greader/auth.rs:157-159).
+/// `API_TOKEN_PREFIX` + `session::generate_token()`. Must never contain `/`:
+/// `greader::auth::post_token_parts` relies on that for an unambiguous MAC input.
 pub fn generate_token() -> String {
     format!("{API_TOKEN_PREFIX}{}", session::generate_token())
 }
@@ -104,22 +83,14 @@ pub async fn create_api_token(
     )
     .map_err(AppError::Database)?;
 
-    // Enforced here rather than by the caller so the invariant cannot be
-    // forgotten at a future call site, and *after* the insert so the row just
-    // minted is always among the survivors — it is the one the caller is
-    // about to hand out.
+    // After the insert, so the token just minted always survives.
     prune_user_tokens(db, user_id).await?;
 
     Ok(created)
 }
 
 /// Delete everything past [`MAX_TOKENS_PER_USER`] for `user_id`, oldest first.
-///
-/// Ordered the same way [`list_user_tokens`] presents them, with `id` breaking
-/// ties: two `ClientLogin` calls landing in the same clock tick would
-/// otherwise have no deterministic order, and on `SQLite` (second-resolution
-/// `created_at` text) that is not a rare edge — it is what a client
-/// re-authenticating in a loop actually produces.
+/// `id` breaks ties, since `SQLite`'s `created_at` has second resolution.
 async fn prune_user_tokens(db: &Db, user_id: i64) -> AppResult<()> {
     db_execute!(
         db,
@@ -146,10 +117,8 @@ pub async fn find_by_token(db: &Db, token: &str) -> AppResult<Option<ApiToken>> 
     .map_err(AppError::Database)
 }
 
-/// Writes `last_seen_at` at most once a minute (mirroring
-/// `session::touch_last_seen`) and slides `expires_at` when due. Best-effort
-/// from the caller's point of view: failure here must not block the request
-/// the token is authenticating.
+/// Write `last_seen_at` at most once a minute and slide `expires_at` when due.
+/// Best-effort: failure must not block the request.
 pub async fn touch_and_refresh(db: &Db, t: &ApiToken) -> AppResult<Option<DateTime<Utc>>> {
     let now = Utc::now();
     if now - t.last_seen_at >= Duration::minutes(1) {
@@ -199,18 +168,13 @@ pub async fn delete_token(db: &Db, id: i64, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-/// Delete every token belonging to `user_id`. Returns how many were revoked, so
-/// "Revoke all" can tell the user how many clients it just disconnected instead
-/// of claiming success over an empty list.
+/// Delete every token belonging to `user_id`, returning how many were revoked.
 pub async fn delete_user_tokens(db: &Db, user_id: i64) -> AppResult<u64> {
     db_execute!(db, "DELETE FROM api_token WHERE user_id = $1", user_id).map_err(AppError::Database)
 }
 
-/// Delete every expired token row. Called periodically by the cleanup worker
-/// (`services::summary_cleanup`), the backstop for the lazy delete in
-/// `handlers/greader/auth.rs`'s `validate_api_token`. The bound `now` (rather
-/// than SQL `datetime('now')`) keeps this a plain `db_execute!` call that
-/// behaves identically on both dialects without needing the `pg_rewrite` shim.
+/// Delete expired tokens; periodic backstop for the lazy delete in
+/// `validate_api_token`. Binds `now` to stay dialect-neutral.
 pub async fn delete_expired(db: &Db) -> AppResult<u64> {
     let now = Utc::now();
     db_execute!(db, "DELETE FROM api_token WHERE expires_at <= $1", now).map_err(AppError::Database)
@@ -346,9 +310,7 @@ mod tests {
 
     #[test]
     fn compute_refreshed_expiry_has_no_absolute_cap() {
-        // A token created well over the idle window ago — far past what would
-        // be a session's absolute cap — is still extended, because api_token
-        // deliberately has no absolute-cap branch.
+        // Still extended far past a session's cap: no absolute cap here.
         let created = Utc::now() - Duration::days(400);
         let expires = Utc::now() + Duration::hours(1);
         let now = Utc::now();
@@ -384,17 +346,14 @@ mod tests {
             "the table must be capped, not grow with every ClientLogin"
         );
 
-        // The token just minted is the one the caller is about to use, so it
-        // must never be the one evicted.
+        // The token just minted must never be evicted.
         let newest = minted.last().unwrap();
         assert!(
             find_by_token(&db, &newest.token).await.unwrap().is_some(),
             "the newest token must survive its own pruning pass"
         );
 
-        // Eviction takes the oldest. These rows are all created within the
-        // same second on SQLite, so this also exercises the `id DESC`
-        // tiebreaker — without it the survivors would be arbitrary.
+        // Same-second rows on SQLite: exercises the `id DESC` tiebreaker.
         for old in minted.iter().take(usize::try_from(overshoot).unwrap()) {
             assert!(
                 find_by_token(&db, &old.token).await.unwrap().is_none(),
@@ -405,8 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pruning_never_touches_another_user() {
-        // The prune is a bulk DELETE driven by a subquery; getting its
-        // `user_id` scoping wrong would silently revoke a bystander's tokens.
+        // Prune must be `user_id`-scoped.
         let db = setup_db().await;
         let victim = seed_user(&db, "victim", Role::User).await;
         let noisy = seed_user(&db, "noisy", Role::User).await;

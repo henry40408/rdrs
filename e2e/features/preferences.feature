@@ -25,8 +25,7 @@ Feature: Preferences
     When I change my password to "heron-lantern-53-drift"
     Then I can sign in with "heron-lantern-53-drift"
 
-  # The number used to decide nothing: every list paginated by a hardcoded 50
-  # and this field was read only to fill itself in.
+  # Lists used to paginate by a hardcoded 50, ignoring this setting.
   Scenario: Entries per page decides how long a list is
     Given I have a feed "Paging Feed" with 12 test entries in category "Paging Category"
     And I am on the user settings page

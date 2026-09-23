@@ -1,15 +1,7 @@
-//! Background backfill of `entry.content_text` for rows predating migration
-//! v10. The v10 schema step only adds the (nullable) column so startup is not
-//! blocked; this worker fills the plain-text search column for legacy rows
-//! asynchronously, at Background DB priority, so interactive requests preempt
-//! it between batches. It is a one-shot: it drains and exits. Safe to spawn on
-//! every boot — idempotent via the `content_text IS NULL` predicate, so a
-//! fully-backfilled table costs a single COUNT. Interrupting it (SIGINT) leaves
-//! the remaining rows for the next start.
-//!
-//! During the drain window, body search over not-yet-filled rows is degraded
-//! (title still matches; `content_text` matching becomes available as rows are
-//! filled). This is an accepted trade-off for a non-blocking startup.
+//! One-shot background backfill of `entry.content_text` for rows predating
+//! migration v10, so startup is not blocked. Idempotent via
+//! `content_text IS NULL`; interrupted runs resume next boot. Until drained,
+//! body search misses unfilled rows (accepted trade-off).
 
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -22,14 +14,12 @@ use crate::{db_execute_tx, query_all_tx, query_scalar};
 /// Rows backfilled per transaction.
 const BATCH_SIZE: usize = 500;
 
-/// Backfill `content_text` for up to `batch_size` legacy entries whose
-/// `content_text` is still NULL (rows predating migration v10). Rows with NULL
-/// `content` are left NULL — there is nothing to search. Runs in one
-/// transaction. Returns the number of rows updated; a value < `batch_size`
-/// means the table is drained.
+/// Backfill up to `batch_size` NULL-`content_text` rows in one transaction
+/// (NULL `content` stays NULL). Returns rows updated; `< batch_size` means
+/// drained.
 pub async fn backfill_content_text_batch(db: &Db, batch_size: usize) -> AppResult<usize> {
-    // strip_to_search_text joins across tags so terms split by inline markup
-    // stay matchable; mirrors the per-entry stripping done on upsert.
+    // Joins across tags so terms split by inline markup stay matchable, as on
+    // upsert.
     let mut tx = db.begin().await?;
     let batch: Vec<(i64, String)> = query_all_tx!(
         &mut tx,
@@ -56,13 +46,9 @@ pub async fn backfill_content_text_batch(db: &Db, batch_size: usize) -> AppResul
     Ok(batch.len())
 }
 
-/// Spawn the one-shot `content_text` backfill worker (see module docs). Drains
-/// legacy NULL-`content_text` rows at Background priority so interactive writes
-/// preempt between batches, logging progress, then exits. Cancellation stops it
-/// mid-drain; remaining rows resume on the next start.
+/// Spawn the one-shot backfill worker (see module docs).
 pub fn start_content_text_backfill(db: Db, cancel_token: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
         let total: i64 = match query_scalar!(
             &db,
@@ -128,8 +114,7 @@ mod tests {
     use crate::db_execute;
     use std::time::Duration;
 
-    /// Fresh in-memory `Db` with a single feed under user 1 / category 1, ready
-    /// for raw `entry` inserts that simulate legacy (NULL `content_text`) rows.
+    /// In-memory `Db` with one feed, for raw legacy-row inserts.
     async fn setup_db() -> Db {
         let db = Db::connect_in_memory().await.unwrap();
         for stmt in [
@@ -221,9 +206,8 @@ mod tests {
         let db = setup_db().await;
         insert_legacy(&db, 1, Some("<b>hello</b>")).await;
 
-        // Pre-cancelled token: the worker takes its initial COUNT (total > 0),
-        // then the first loop iteration sees cancellation and returns before
-        // any batch runs. The legacy row stays NULL and resumes on next boot.
+        // Pre-cancelled: the worker counts, then returns before any batch; the row
+        // stays NULL.
         let token = CancellationToken::new();
         token.cancel();
         let handle = start_content_text_backfill(db.clone(), token);

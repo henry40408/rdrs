@@ -1,16 +1,5 @@
-//! The step definitions, mostly one module per `steps/*.steps.js` the
-//! JavaScript suite had.
-//!
-//! The exception is `entries.steps.js`, which at 1,000 lines covered the entry
-//! list, the reading pane, the sidebar, the keyboard shortcuts and the
-//! in-place-swap assertions in one file. Those are five modules here
-//! ([`entries`], [`reading_pane`], [`sidebar`], [`keyboard`], [`morph`]),
-//! because the file's size came from mixing them rather than from any one of
-//! them being large.
-//!
-//! Cucumber collects `#[given]` / `#[when]` / `#[then]` attributes at link
-//! time, so a module only has to be reachable from the crate root to
-//! contribute its steps; nothing here is called directly.
+//! Step definitions, one module per area. Cucumber collects the step
+//! attributes at link time, so a module only needs to be reachable.
 
 pub mod admin;
 pub mod auth;

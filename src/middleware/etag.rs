@@ -1,9 +1,5 @@
-//! Tower middleware that attaches a weak `ETag` to 2xx text/html
-//! responses and converts to 304 when the client's If-None-Match
-//! matches.
-//!
-//! Wired innermost so the body it hashes is the uncompressed one;
-//! `CompressionLayer` runs after this on the response path.
+//! Weak `ETag` for 2xx text/html responses, with 304 on `If-None-Match`.
+//! Wired inside `CompressionLayer` so it hashes the uncompressed body.
 
 use std::fmt::Write as _;
 use std::pin::Pin;
@@ -15,10 +11,7 @@ use axum::response::Response;
 use sha2::{Digest, Sha256};
 use tower::{Layer, Service};
 
-/// Maximum body size (bytes) the middleware will buffer to compute
-/// an `ETag`. Bodies larger than this pass through untouched.
-/// 4 MiB covers any reasonable SSR HTML page; anything larger is
-/// almost certainly a streamed asset and shouldn't be buffered.
+/// Max body size (bytes) buffered to compute an `ETag`.
 const MAX_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Default)]
@@ -75,10 +68,8 @@ where
 
             let (mut parts, body) = response.into_parts();
             let Ok(bytes) = to_bytes(body, MAX_BUFFER_BYTES).await else {
-                // Body too large or stream error — return a fresh
-                // empty 200 with a hint header. Production handlers
-                // should not exceed MAX_BUFFER_BYTES for HTML; if
-                // they do we want a loud signal in tests.
+                // Too large or stream error: empty 200 with a hint header, a loud
+                // signal since HTML should never exceed MAX_BUFFER_BYTES.
                 let response = Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(Body::empty())
@@ -130,11 +121,9 @@ fn compute_weak_etag(body: &[u8]) -> String {
 }
 
 fn etag_matches(client: &str, server: &str) -> bool {
-    // Accept exact match. Per RFC 7232, If-None-Match comparison is
-    // weak (W/-prefix is ignored), so we strip W/ from both sides.
+    // RFC 7232 weak comparison: ignore `W/` on both sides.
     let normalize =
         |s: &str| -> String { s.trim().strip_prefix("W/").unwrap_or(s.trim()).to_string() };
-    // Client may send a comma-separated list; check each.
     client
         .split(',')
         .any(|entry| normalize(entry) == normalize(server))

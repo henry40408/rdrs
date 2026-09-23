@@ -8,7 +8,6 @@
 //!   atom := "(" or ")" | field ":" value | text
 //! ```
 //!
-//! Pure string → AST; no DB access. Dates are validated here via `chrono`.
 //! `NOT` / `AND` / `OR` are case-insensitive keywords (quote to search them
 //! literally). A `token:` is a filter only when `token` is a known field name.
 
@@ -58,8 +57,7 @@ pub struct ParseError {
     pub message: String,
 }
 
-/// Collect free-text and `title:` values for result highlighting. Negated
-/// subtrees are skipped (we do not highlight terms the user excluded).
+/// Collect free-text and `title:` values for highlighting, skipping negated subtrees.
 pub fn free_text_terms(node: &QueryNode) -> Vec<String> {
     let mut out = Vec::new();
     collect_terms(node, &mut out);
@@ -77,7 +75,6 @@ fn collect_terms(node: &QueryNode, out: &mut Vec<String>) {
             field: TextField::Title,
             value,
         } => out.push(value.clone()),
-        // `Not(_)` (negated subtrees) and all other node kinds contribute no terms.
         _ => {}
     }
 }
@@ -198,8 +195,7 @@ fn lex(input: &str) -> Result<Vec<Spanned>, ParseError> {
                 k = nk;
             }
             '-' => {
-                // Tight negation only when the next char exists and is neither
-                // whitespace nor ')'. Otherwise a literal "-" text token.
+                // Tight negation only before a non-space, non-')' char; else literal "-".
                 let neg = k + 1 < n && {
                     let d = chars[k + 1].1;
                     !d.is_whitespace() && d != ')'
@@ -271,8 +267,7 @@ fn lex(input: &str) -> Result<Vec<Spanned>, ParseError> {
     Ok(out)
 }
 
-/// Read a `"..."` phrase; `chars[k]` must be the opening quote. Returns the
-/// inner content and the char index just past the closing quote.
+/// Read a `"..."` phrase starting at `chars[k]`; returns content and the index past the close quote.
 fn read_quoted(
     chars: &[(usize, char)],
     input: &str,

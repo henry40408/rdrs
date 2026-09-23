@@ -4,8 +4,6 @@ use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
 
-// --- Stream ID ---
-
 /// Represents a Google Reader stream identifier.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamId {
@@ -76,8 +74,6 @@ impl fmt::Display for StreamId {
     }
 }
 
-// --- Item ID ---
-
 const ITEM_ID_PREFIX: &str = "tag:google.com,2005:reader/item/";
 
 /// Convert an internal entry ID (i64) to a Google Reader item ID string.
@@ -88,7 +84,6 @@ pub fn entry_id_to_item_id(id: i64) -> String {
 /// Parse a Google Reader item ID string back to an internal entry ID (i64).
 /// Accepts both long format (`tag:google.com,2005:reader/item/<hex>`) and short format (plain number).
 pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
-    // Long format
     if let Some(hex) = s.strip_prefix(ITEM_ID_PREFIX) {
         let hex = hex.trim_start_matches('0');
         if hex.is_empty() {
@@ -110,11 +105,8 @@ pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
     i64::from_str_radix(hex, 16).map_err(|_e| AppError::Validation(format!("Invalid item ID: {s}")))
 }
 
-// --- Shared response types ---
-
 /// Standard Google Reader item entry in stream/contents response.
-/// Includes RDRS extension fields (prefixed with `_`) for Web UI use.
-/// Third-party `GReader` clients safely ignore unknown fields.
+/// `_`-prefixed fields are RDRS extensions that `GReader` clients ignore.
 #[derive(Debug, Serialize)]
 pub struct GReaderItem {
     pub id: String,

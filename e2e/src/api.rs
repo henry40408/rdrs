@@ -1,14 +1,6 @@
-//! Account creation over HTTP, the way an operator would do it.
-//!
-//! rdrs has no public sign-up: `/api/setup` creates the very first account and
-//! then closes for good, and every later account is created by an admin who
-//! hands out a one-time link. Scenarios still want a throwaway user each, so
-//! the first call claims the setup endpoint and everything after it goes
-//! through the real admin + invite flow.
-//!
-//! A port of `support/api.js`, including its map of bootstrap admins keyed by
-//! base URL: the suite runs a pool of servers, each with its own database, so
-//! each needs its own first account.
+//! Account creation over HTTP. rdrs has no public sign-up, so the first call
+//! claims the one-time `/api/setup` and later accounts go through the real
+//! admin + invite flow.
 
 use std::collections::HashMap;
 
@@ -19,14 +11,11 @@ use reqwest::header::{HeaderValue, SET_COOKIE};
 use reqwest::{Client, StatusCode, redirect};
 use tokio::sync::Mutex;
 
-/// The password every account this suite creates is given.
+/// The password of every account this suite creates.
 pub const PASSWORD: &str = "vulture-mango-77-quilt";
 
-/// The account that claimed `/api/setup` on each server, created on first use.
-///
-/// `/api/setup` closes for good once claimed, so this must be remembered per
-/// server rather than per scenario — every later account on that server is
-/// created by its admin.
+/// The admin that claimed `/api/setup`, keyed by server: setup closes for good
+/// once claimed, so this is per server, not per scenario.
 static BOOTSTRAP_ADMINS: Mutex<Option<HashMap<String, Credentials>>> = Mutex::const_new(None);
 
 /// A username and password pair.
@@ -36,8 +25,7 @@ pub struct Credentials {
     pub password: String,
 }
 
-/// An authenticated session: the cookie jar as a header value, and the CSRF
-/// token to echo back on state-changing requests.
+/// A `Cookie` header value plus the CSRF token to echo on mutations.
 #[derive(Debug, Clone)]
 pub struct Session {
     pub cookie: String,
@@ -52,13 +40,8 @@ pub struct Api {
 }
 
 impl Api {
-    /// Builds a client that reports redirects instead of following them — the
-    /// invite link only exists in the flash cookie on a 303 that a following
-    /// client would consume.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the HTTP client cannot be built.
+    /// Does not follow redirects: the invite link lives only in the flash
+    /// cookie of a 303 a following client would consume.
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
         let client = Client::builder()
             .redirect(redirect::Policy::none())
@@ -71,11 +54,6 @@ impl Api {
     }
 
     /// Creates an account with a password, whatever it takes.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the admin cannot be created, the invite cannot be issued, or
-    /// the invite cannot be redeemed.
     pub async fn register(&self, username: &str, password: &str) -> Result<()> {
         let admin = self.ensure_admin().await?;
         if admin.username == username {
@@ -85,28 +63,13 @@ impl Api {
         self.redeem_invite(&invite, password).await
     }
 
-    /// Claims the one-time setup endpoint for `username`.
-    ///
-    /// The account it creates is the instance's administrator, which is what
-    /// the README screenshots depict — a single-user install, sidebar and all.
-    /// Going through [`Api::register`] instead would create an ordinary member
-    /// account and quietly drop the admin entries from every captured sidebar.
-    ///
-    /// # Errors
-    ///
-    /// Fails when setup has already been claimed, or is refused.
+    /// Claims the one-time setup endpoint, making `username` the admin — what
+    /// the README screenshots need; [`Api::register`] would create a member.
     pub async fn setup_first_account(&self, username: &str, password: &str) -> Result<()> {
         self.claim_setup(username, password).await
     }
 
-    /// Creates an account and hands back its one-time link, unredeemed.
-    ///
-    /// The half of [`Api::register`] that stops before choosing a password, for
-    /// scenarios that drive the invite page in the browser.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the admin cannot sign in, or the account cannot be created.
+    /// Creates an account and returns its unredeemed one-time invite link.
     pub async fn invite_account(&self, username: &str) -> Result<String> {
         let admin = self.ensure_admin().await?;
         let session = self.login(&admin.username, &admin.password).await?;
@@ -114,10 +77,6 @@ impl Api {
     }
 
     /// Signs in and returns the session cookie and CSRF token.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the credentials are refused.
     pub async fn login(&self, username: &str, password: &str) -> Result<Session> {
         let response = self
             .client
@@ -133,9 +92,7 @@ impl Api {
         }
 
         let cookies = set_cookies(&response);
-        // The synchronizer-token guard wants this echoed back as a header on
-        // every state-changing request, which is what csrf.js does in the
-        // browser.
+        // Echoed as a header on mutations, as csrf.js does in the browser.
         let csrf = cookie_value(&cookies, "csrf_token").unwrap_or_default();
         Ok(Session {
             cookie: cookie_header(&cookies),
@@ -144,10 +101,7 @@ impl Api {
     }
 
     /// This server's bootstrap admin, claiming `/api/setup` the first time.
-    ///
-    /// The lock is held across the claim so two scenarios starting at once on
-    /// the same server cannot both try it — the second would be refused, since
-    /// setup closes for good.
+    /// The lock spans the claim so two concurrent scenarios cannot both try.
     async fn ensure_admin(&self) -> Result<Credentials> {
         let mut admins = BOOTSTRAP_ADMINS.lock().await;
         let admins = admins.get_or_insert_with(HashMap::new);
@@ -195,15 +149,12 @@ impl Api {
             bail!("creating the account failed ({status}): {body}");
         }
 
-        // The link is shown once, in the flash cookie, and stored only as an
-        // HMAC — reading it here is exactly what an admin does on the page.
+        // The link is shown once, in the flash cookie; the DB holds only an HMAC.
         let flash = set_cookies(&response)
             .into_iter()
             .find(|cookie| cookie.starts_with("flash="))
             .context("no flash cookie on the create-account response")?;
-        // The cookie value is base64(percent-encoded JSON) followed by the
-        // signature the flash middleware appends; undo both before looking for
-        // the link.
+        // Value is base64(percent-encoded JSON) + `.signature`; undo both.
         let payload = flash
             .strip_prefix("flash=")
             .and_then(|rest| rest.split(';').next())
@@ -225,10 +176,7 @@ impl Api {
     }
 
     async fn redeem_invite(&self, invite_path: &str, password: &str) -> Result<()> {
-        // Load the page first: the anonymous-session middleware mints the
-        // session and readable CSRF cookie on that GET, and the
-        // synchronizer-token guard wants the token echoed back on the POST. In
-        // a browser csrf.js does this; here it is done by hand.
+        // GET first: it mints the session and CSRF cookie the POST must echo.
         let url = format!("{}{invite_path}", self.base_url);
         let page = self
             .client

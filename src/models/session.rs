@@ -9,27 +9,16 @@ pub const SESSION_EXPIRY_DAYS: i64 = 7;
 pub const SESSION_ABSOLUTE_MAX_DAYS: i64 = 90;
 const TOKEN_LENGTH: usize = 32;
 
-/// How long the token a rotation replaced keeps authenticating.
-///
-/// OWASP's "Renewal Timeout" calls for exactly this safety interval: requests
-/// already in flight when a rotation lands still carry the old cookie, and
-/// rejecting them would sign an active browser out at random. Sixty seconds
-/// covers a slow page load plus its subresources while staying far below the
-/// rotation interval, so a session never has more than one live predecessor.
+/// How long a rotated-out token keeps authenticating, so in-flight requests
+/// aren't signed out; far below the rotation interval, so at most one predecessor is live.
 pub const ROTATION_GRACE_SECONDS: i64 = 60;
 
 /// How long after proving its credentials a session may perform a sensitive
-/// operation without proving them again.
-///
-/// Five minutes is long enough that the common path — log in, go to settings,
-/// add a passkey — is never interrupted, and short enough that a session picked
-/// up later cannot quietly mint a new credential.
+/// operation without re-authenticating.
 pub const REAUTH_WINDOW_MINUTES: i64 = 5;
 
-/// The full column list of `session`, expanded at compile time into each
-/// statement that needs it (via `concat!`) so the four of them cannot drift
-/// apart from the struct below — the failure mode a plain `const` could not
-/// prevent, since the query macros splice literals.
+/// `session` column list, a macro so `concat!` can splice it into the query
+/// literals and keep them in sync with [`Session`].
 macro_rules! session_columns {
     () => {
         "id, user_id, session_token, original_user_id, created_at, expires_at, \
@@ -49,14 +38,10 @@ pub struct Session {
     pub user_agent: String,
     pub ip_address: String,
     pub last_seen_at: DateTime<Utc>,
-    /// The token this session answered to before its most recent rotation, or
-    /// `None` for a session that has never rotated. Still accepted by
-    /// [`find_by_token`] until `previous_token_expires_at`.
+    /// Pre-rotation token, accepted by [`find_by_token`] until `previous_token_expires_at`.
     pub previous_token: Option<String>,
     pub previous_token_expires_at: Option<DateTime<Utc>>,
-    /// When this session last *proved* its credentials rather than merely
-    /// presenting a cookie: set at login, refreshed by a re-authentication.
-    /// `None` only for a row predating the column's backfill.
+    /// When credentials were last proved (login or re-auth); `None` only for pre-backfill rows.
     pub last_authenticated_at: Option<DateTime<Utc>>,
 }
 
@@ -69,12 +54,8 @@ impl Session {
         Utc::now() > self.expires_at
     }
 
-    /// Whether the session proved its credentials recently enough for a
-    /// sensitive operation — OWASP's reauthentication-for-risk-events rule.
-    ///
-    /// A missing `last_authenticated_at` counts as stale rather than fresh: the
-    /// only rows without one predate the column, and asking such a session to
-    /// re-authenticate is the failure direction that cannot do harm.
+    /// Whether credentials were proved within [`REAUTH_WINDOW_MINUTES`]. A
+    /// missing timestamp counts as stale (the safe direction).
     pub fn authenticated_recently(&self, now: DateTime<Utc>) -> bool {
         self.last_authenticated_at
             .is_some_and(|at| now - at < Duration::minutes(REAUTH_WINDOW_MINUTES))
@@ -99,9 +80,7 @@ impl Session {
 }
 
 /// A fresh random session token. Public so the anonymous-session middleware can
-/// mint a signed cookie for a logged-out visitor without opening a database row
-/// — the token only needs to be unguessable and to carry a valid signature; the
-/// CSRF token derives from it whether or not a `session` row ever exists.
+/// mint a cookie (and derive a CSRF token) without a database row.
 pub fn generate_token() -> String {
     let mut rng = rand::rng();
     let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.random()).collect();
@@ -158,15 +137,13 @@ pub async fn create_session(
         user_agent,
         ip_address,
         now,
-        // A session exists because a login just succeeded, so it starts inside
-        // the re-authentication window.
+        // A login just succeeded, so start inside the re-auth window.
         now
     )
     .map_err(AppError::Database)
 }
 
-/// Record that this session has just re-proved its credentials, restarting the
-/// window [`Session::authenticated_recently`] measures.
+/// Restart the [`Session::authenticated_recently`] window.
 pub async fn mark_authenticated(db: &Db, session_id: i64) -> AppResult<DateTime<Utc>> {
     let now = Utc::now();
     db_execute!(
@@ -179,13 +156,8 @@ pub async fn mark_authenticated(db: &Db, session_id: i64) -> AppResult<DateTime<
     Ok(now)
 }
 
-/// Look up a session by the token a client presented.
-///
-/// Matches the current `session_token` first and, failing that, a
-/// `previous_token` whose grace interval has not lapsed. Both arms are indexed.
-/// The grace arm keeps a rotation from signing out requests already in flight,
-/// and it is deliberately part of the *lookup* rather than something each caller
-/// has to remember, so every authenticated path inherits it.
+/// Look up a session by `session_token`, or by a `previous_token` still in its
+/// grace interval (both indexed). The grace arm lives here so every caller gets it.
 pub async fn find_by_token(db: &Db, token: &str) -> AppResult<Option<Session>> {
     query_opt!(
         db,
@@ -203,8 +175,7 @@ pub async fn find_by_token(db: &Db, token: &str) -> AppResult<Option<Session>> {
     .map_err(AppError::Database)
 }
 
-/// Bump `last_seen_at` to now, but at most once per minute per session, so an
-/// active user's every request doesn't cause a write. Best-effort.
+/// Bump `last_seen_at`, at most once per minute per session. Best-effort.
 pub async fn touch_last_seen(db: &Db, session: &Session) -> AppResult<()> {
     let now = Utc::now();
     if now - session.last_seen_at < Duration::minutes(1) {
@@ -220,14 +191,8 @@ pub async fn touch_last_seen(db: &Db, session: &Session) -> AppResult<()> {
     Ok(())
 }
 
-/// Slide the session's `expires_at` forward if it is within the refresh window.
-///
-/// `None` when no update was necessary — plenty of TTL left, or the absolute cap
-/// of `created_at + SESSION_ABSOLUTE_MAX_DAYS` reached.
-///
-/// A `Some` is also the cue to rotate the session token; see [`rotate_token`],
-/// which the cookie-writing layer calls once it knows the response can carry the
-/// new one.
+/// Slide `expires_at` forward if within the refresh window; `None` if no update
+/// was needed. A `Some` is also the cue to call [`rotate_token`].
 pub async fn refresh_if_needed(db: &Db, session: &Session) -> AppResult<Option<DateTime<Utc>>> {
     let Some(new_expires_at) = session.compute_refreshed_expiry(Utc::now()) else {
         return Ok(None);
@@ -242,19 +207,11 @@ pub async fn refresh_if_needed(db: &Db, session: &Session) -> AppResult<Option<D
     Ok(Some(new_expires_at))
 }
 
-/// Rename the session currently answering to `token`, returning its new token —
-/// or `None` when no session matched, meaning another request rotated it first.
+/// Rotate the token of the session answering to `token` (OWASP renewal
+/// timeout); `None` if another request rotated it first.
 ///
-/// This is OWASP's "Renewal Timeout": a token that would otherwise live for the
-/// full 90-day absolute cap is replaced periodically, so a captured value stops
-/// working long before the session ends. It is driven off the sliding-refresh
-/// trigger, which already fires at most once per half-TTL, so a token lives
-/// around 3.5 days with no extra column or timer to pace it.
-///
-/// The predicate matches `session_token` exactly, never the grace token, so
-/// concurrent requests cannot chain rotations: the first renames the row and
-/// every other gets `None` and keeps the token it has, which the grace interval
-/// keeps valid.
+/// Matches `session_token` only, never the grace token, so concurrent requests
+/// cannot chain rotations.
 pub async fn rotate_token(db: &Db, token: &str) -> AppResult<Option<String>> {
     let new_token = generate_token();
     let grace_until = Utc::now() + Duration::seconds(ROTATION_GRACE_SECONDS);
@@ -273,12 +230,8 @@ pub async fn rotate_token(db: &Db, token: &str) -> AppResult<Option<String>> {
     Ok((affected > 0).then_some(new_token))
 }
 
-/// Delete the session a client presented `token` for.
-///
-/// Matches `previous_token` as well, because a logout can arrive on the grace
-/// token: the browser holds the pre-rotation cookie for up to
-/// [`ROTATION_GRACE_SECONDS`], and a `session_token`-only predicate would delete
-/// nothing and leave the user apparently signed in.
+/// Delete the session for `token`. Also matches `previous_token`, since a
+/// logout can arrive on the grace token.
 pub async fn delete_session(db: &Db, token: &str) -> AppResult<()> {
     db_execute!(
         db,
@@ -295,8 +248,7 @@ pub async fn delete_user_sessions(db: &Db, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-/// All sessions belonging to `user_id`, newest first. Includes expired rows;
-/// the caller filters for display if needed.
+/// All sessions of `user_id`, newest first, including expired rows.
 pub async fn list_user_sessions(db: &Db, user_id: i64) -> AppResult<Vec<Session>> {
     query_all!(
         db,
@@ -311,13 +263,8 @@ pub async fn list_user_sessions(db: &Db, user_id: i64) -> AppResult<Vec<Session>
     .map_err(AppError::Database)
 }
 
-/// Delete every session of `user_id` except the one whose token is `keep_token`,
-/// for "sign out other sessions".
-///
-/// `keep_token` may be a grace token, so the exemption checks `previous_token`
-/// too — otherwise the one session the caller meant to keep is the one this
-/// deletes. Returns the number deleted, so the caller can report how many
-/// devices it signed out and audit the revocation with its true size.
+/// Delete every session of `user_id` except `keep_token`'s, returning the count.
+/// `keep_token` may be a grace token, so `previous_token` is exempted too.
 pub async fn delete_user_sessions_except(
     db: &Db,
     user_id: i64,
@@ -335,13 +282,8 @@ pub async fn delete_user_sessions_except(
     .map_err(AppError::Database)
 }
 
-/// Delete one session by row id, scoped to `user_id` so a guessed id can never
-/// revoke another user's session — the same guarantee as `api_token::delete_token`.
-///
-/// Returns the number of rows deleted so the caller can tell "revoked" from
-/// "there was nothing to revoke". Unlike [`delete_session`] this deliberately
-/// does **not** match `previous_token`: the id identifies the row directly, so
-/// there is no grace-token ambiguity.
+/// Delete one session by id, scoped to `user_id` so a guessed id can't revoke
+/// another user's session. Returns rows deleted.
 pub async fn delete_user_session_by_id(db: &Db, id: i64, user_id: i64) -> AppResult<u64> {
     db_execute!(
         db,
@@ -352,14 +294,9 @@ pub async fn delete_user_session_by_id(db: &Db, id: i64, user_id: i64) -> AppRes
     .map_err(AppError::Database)
 }
 
-/// Delete every expired session row.
-///
-/// Called periodically by the cleanup worker. This is the backstop for the lazy
-/// deletes in the extractors, which only fire when a row is touched — a session
-/// abandoned on a device the user never returns to would otherwise live forever.
-/// Covered by `idx_session_expires_at`. The bound `now`, rather than SQL
-/// `datetime('now')`, keeps this a plain `db_execute!` that behaves identically
-/// on both dialects without the `pg_rewrite` shim.
+/// Delete expired sessions; the cleanup worker's backstop for abandoned rows the
+/// lazy deletes never touch. Uses `idx_session_expires_at`; bound `now` keeps it
+/// dialect-neutral.
 pub async fn delete_expired(db: &Db) -> AppResult<u64> {
     let now = Utc::now();
     db_execute!(db, "DELETE FROM session WHERE expires_at <= $1", now).map_err(AppError::Database)
@@ -367,15 +304,8 @@ pub async fn delete_expired(db: &Db) -> AppResult<u64> {
 
 /// Start masquerading as `target_user_id`, returning the session's **new** token.
 ///
-/// The token is rotated in the same `UPDATE` that changes `user_id`, because
-/// entering a masquerade is a privilege-level change and OWASP requires the
-/// session ID to be renewed across one. A single statement keeps the identity
-/// and credential swaps atomic: there is no window in which the session already
-/// acts as the target while still answering to the old token.
-///
-/// Callers must reissue the session cookie — and the CSRF cookie derived from it
-/// — from the returned token, or the client is left holding credentials for a
-/// row that no longer exists.
+/// The token rotates in the same `UPDATE` as `user_id` (privilege change, done
+/// atomically). Callers must reissue the session and CSRF cookies from it.
 pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppResult<String> {
     let session = find_by_token(db, token)
         .await?
@@ -402,13 +332,8 @@ pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppR
     Ok(new_token)
 }
 
-/// Stop masquerading, restoring the original user, and return the session's
-/// **new** token.
-///
-/// Rotated for the same reason as [`start_masquerade`], and this is the
-/// direction that matters: the token in use while acting as someone else —
-/// potentially observed on the impersonated user's screen, in a support
-/// recording, or in a debug log — must not survive as the restored admin's.
+/// Stop masquerading and return the session's **new** token; the token used
+/// while impersonating must not survive as the admin's.
 pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<String> {
     let session = find_by_token(db, token)
         .await?
@@ -453,8 +378,7 @@ mod tests {
         assert!(!session.is_expired());
         assert_eq!(session.user_agent, "test-agent");
         assert_eq!(session.ip_address, "127.0.0.1");
-        // last_seen_at and expires_at are derived from the same `now` in
-        // create_session, so they should be exactly `SESSION_EXPIRY_DAYS` apart.
+        // Both derive from the same `now`.
         assert_eq!(
             session.last_seen_at,
             session.expires_at - Duration::days(SESSION_EXPIRY_DAYS)
@@ -557,9 +481,7 @@ mod tests {
             .await
             .unwrap();
 
-        // User B aims at user A's session id — must delete nothing. Getting the
-        // scoping wrong here hands anyone who can guess an id the ability to
-        // sign another user out.
+        // User B aims at user A's session id — must delete nothing.
         let deleted = delete_user_session_by_id(&db, a_session.id, user_b.id)
             .await
             .unwrap();
@@ -590,8 +512,7 @@ mod tests {
             "revoking one session must leave the user's other sessions alone"
         );
 
-        // Revoking the same id twice reports zero rows — the handler turns this
-        // into "already gone" rather than a success message for a no-op.
+        // A second revoke reports zero rows.
         let deleted = delete_user_session_by_id(&db, a_session.id, user_a.id)
             .await
             .unwrap();
@@ -613,10 +534,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The privilege change rotates the token. The old one stays usable for
-        // the grace interval — an in-flight request must not be signed out —
-        // but it now resolves to the *same* row, already carrying the new
-        // identity, so it grants nothing the new token would not.
+        // The token rotates; the old one stays valid for the grace interval but
+        // resolves to the same row with the new identity.
         assert_ne!(masq_token, session.session_token);
         let via_grace = find_by_token(&db, &session.session_token)
             .await
@@ -638,9 +557,7 @@ mod tests {
         let restored_token = stop_masquerade(&db, &masq_token).await.unwrap();
         assert_ne!(restored_token, masq_token);
         assert_ne!(restored_token, session.session_token);
-        // The second rotation replaces the grace token, so the token from
-        // *before* the masquerade stops working now — only one predecessor is
-        // ever live at a time.
+        // The second rotation evicts the pre-masquerade grace token.
         assert!(
             find_by_token(&db, &session.session_token)
                 .await
@@ -656,9 +573,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_masquerade_rotation_preserves_session_lifetime() {
-        // Rotation replaces the credential, not the session: `created_at` and
-        // `expires_at` must survive it, or entering a masquerade would silently
-        // reset the absolute cap that `compute_refreshed_expiry` enforces.
+        // Rotation must preserve `created_at`/`expires_at`, or the absolute cap resets.
         let db = setup_db().await;
         let admin = seed_user(&db, "admin", Role::Admin).await;
         let target = seed_user(&db, "target", Role::User).await;
@@ -688,8 +603,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Retried against the rotated token, so the rejection is the
-        // already-masquerading guard and not a stale-token lookup miss.
+        // Use the rotated token so the guard, not a lookup miss, rejects it.
         let result = start_masquerade(&db, &masq_token, target.id).await;
         assert!(matches!(result, Err(AppError::AlreadyMasquerading)));
     }
@@ -751,8 +665,6 @@ mod tests {
 
     #[test]
     fn authenticated_recently_treats_a_missing_timestamp_as_stale() {
-        // Rows predating the column's backfill must be asked to
-        // re-authenticate, never waved through.
         let now = Utc::now();
         let mut session = make_session(now, now + Duration::days(SESSION_EXPIRY_DAYS));
         session.last_authenticated_at = None;
@@ -922,8 +834,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Push the grace deadline into the past rather than sleeping through
-        // ROTATION_GRACE_SECONDS.
+        // Expire the grace window instead of sleeping.
         db_execute!(
             &db,
             "UPDATE session SET previous_token_expires_at = $1 WHERE id = $2",
@@ -943,9 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn rotate_token_is_none_when_another_request_already_rotated() {
-        // The concurrency case: two requests in flight, both told to rotate.
-        // The second must find nothing to do rather than chaining a second
-        // rotation and evicting the first one's grace token.
+        // Two concurrent rotations: the second must not chain and evict the grace token.
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
@@ -959,8 +868,7 @@ mod tests {
         let second = rotate_token(&db, &session.session_token).await.unwrap();
         assert!(second.is_none());
 
-        // The loser keeps using the token it arrived with, which the winner
-        // left behind as the grace token.
+        // The loser's token survives as the grace token.
         assert!(
             find_by_token(&db, &session.session_token)
                 .await
@@ -972,8 +880,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_session_accepts_the_grace_token() {
-        // A logout can arrive on the pre-rotation cookie; it must still end the
-        // session rather than silently deleting nothing.
+        // A logout on the pre-rotation cookie must still end the session.
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
         let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
@@ -1010,8 +917,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // The caller still holds the pre-rotation token, so that is what names
-        // the session to spare.
+        // The caller still holds the pre-rotation token.
         delete_user_sessions_except(&db, user.id, &keep.session_token)
             .await
             .unwrap();
@@ -1152,8 +1058,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The predicate is `<=`, so a row whose `expires_at` is exactly `now`
-        // must be deleted, not just rows strictly in the past.
+        // The predicate is `<=`, so `expires_at == now` is deleted.
         let now = Utc::now();
         db_execute!(
             &db,

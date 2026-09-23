@@ -1,4 +1,4 @@
-//! The admin and statistics pages — a port of `admin.steps.js`.
+//! The admin and statistics pages.
 
 use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
@@ -6,8 +6,7 @@ use rdrs_e2e::api::PASSWORD;
 use rdrs_e2e::dom::{Dom, Within, submit_element};
 use rdrs_e2e::world::RdrsWorld;
 
-/// Promotes this scenario's account to admin through the seed helper, then
-/// signs in.
+/// Promotes this scenario's account to admin, then signs in.
 #[given("I am signed in as an admin")]
 async fn signed_in_as_admin(world: &mut RdrsWorld) -> Result<()> {
     let (username, password) = world.credentials();
@@ -23,12 +22,8 @@ async fn signed_in_as_admin(world: &mut RdrsWorld) -> Result<()> {
     world.expect_path("/").await
 }
 
-/// Creates a second account so there is a non-self row in the admin table.
-///
-/// The name is remembered because the disable step has to act on *this* row:
-/// the table also lists the bootstrap admin (the account that claimed
-/// `/api/setup`, which every later account is created by), and disabling that
-/// would break every scenario that runs after this one.
+/// Creates a second account and remembers its name: disabling the bootstrap
+/// admin instead would break every later scenario.
 #[given("there is another registered user")]
 async fn another_registered_user(world: &mut RdrsWorld) -> Result<()> {
     let other = format!("other-{}", world.user.username);
@@ -56,9 +51,7 @@ async fn disable_other_user(world: &mut RdrsWorld) -> Result<()> {
         .await?
         .test_id("admin-disable-btn")
         .await?;
-    // The form POST redirects back to /admin, so the wait is for the document
-    // to be replaced — what the old `waitForURL(/\/admin/)` stood in for, and
-    // which watching the URL cannot detect when it redirects to the same page.
+    // Redirects to the same page, so wait for document replacement, not the URL.
     submit_element(driver, &button).await
 }
 

@@ -1,26 +1,14 @@
-//! Walks the whole app with scripting genuinely off, and fails the run on
-//! anything a scriptless reader cannot do.
+//! Walks the whole app with scripting off and every `.js` request aborted,
+//! failing on anything a scriptless reader cannot do (it found #489: sign-out
+//! existed only as a `fetch` DELETE).
 //!
-//! The BDD suite asserts the paths we thought of. This drives a real browser
-//! with script execution disabled *and* every `.js` request aborted, which is
-//! what found that sign-out did not exist without JavaScript (#489) —
-//! reachable only as a `fetch` DELETE, which no form can send.
-//!
-//! A gate rather than a report, matching how `csp-audit` is wired and
-//! `touch-audit` is not: a job nobody has to read is a job nobody reads. Every
-//! check below is a deliberate guarantee from the no-JS series (#480–#491), so
-//! a failure here means one of them regressed, not that the page moved. The
-//! findings are printed before the exit code is decided, so the log says which.
+//! A gate, like `csp-audit`: each check is a guarantee from the no-JS series
+//! (#480–#491). Findings print before the exit code is decided.
 //!
 //!   cd e2e && cargo run --bin nojs
 //!
-//! Two mechanisms replace Playwright's `javaScriptEnabled: false` plus
-//! `context.route("**/*.js", abort)`:
-//!
-//! * `Emulation.setScriptExecutionDisabled` — what Playwright used underneath.
-//! * The CDP `Fetch` domain, via [`Network`], for the aborts. Belt and braces:
-//!   the walkthrough proves the pages work when the scripts are never
-//!   *delivered*, which is stricter than merely not running them.
+//! Uses `Emulation.setScriptExecutionDisabled` plus [`Network`] aborts, so the
+//! pages must work with scripts never *delivered*, not merely not run.
 
 use std::collections::BTreeSet;
 
@@ -39,8 +27,7 @@ const PASS: &str = "vulture-mango-77-quilt";
 /// Aborts anything whose URL ends in `.js`, with or without a query string.
 const SCRIPT_URLS: &str = r"\.js($|\?)";
 
-/// Collected in order and printed as a block at the end, so one run says
-/// everything that is wrong rather than stopping at the first thing.
+/// Printed together at the end, so one run reports everything.
 #[derive(Default)]
 struct Findings(Vec<String>);
 
@@ -61,8 +48,7 @@ async fn main() -> Result<()> {
     let mut findings = Findings::default();
     let result = walk(&browser, &network, &endpoints, &mut findings).await;
     browser.quit().await?;
-    // A crash mid-walk is itself a finding, and the ones gathered before it
-    // are still worth printing.
+    // A crash is itself a finding; print what came before it.
     if let Err(error) = result {
         findings.note("walkthrough", format!("aborted: {error:#}"));
     }
@@ -219,9 +205,7 @@ async fn walk(
         }
     }
 
-    // ── 7. Read an entry, star it, mark it unread ─────────────────────────
-    // The mock feed carries no items, so seed real ones the way the BDD suite
-    // does — otherwise the most important flow in a reader goes unwalked.
+    // The mock feed has no items, so seed some to walk the reading flow.
     {
         let seed = Seed::open(&endpoints.db_path).await?;
         let user_id = seed.user_id(USER).await?;
@@ -282,11 +266,8 @@ async fn walk(
 
     // ── 8. Search ─────────────────────────────────────────────────────────
     goto("/search").await?;
-    // Scoped through `:has()` for the same reason the old spec used
-    // `locator("form").filter({ has: input[name=q] })`: the signed-in shell
-    // also renders the sign-out form, and a bare `form button[type=submit]`
-    // picks *that* up — which signs the walkthrough out three steps early and
-    // reports the rest of the app as missing.
+    // Scoped by `:has()`: a bare `form button[type=submit]` hits the sign-out
+    // form and ends the walk early.
     const SEARCH_FORM: &str = r#"form:has(input[name="q"])"#;
     const SEARCH_FIELD: &str = r#"form input[name="q"]"#;
     const SEARCH_SUBMIT: &str = r#"form:has(input[name="q"]) button[type="submit"]"#;

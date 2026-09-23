@@ -1,22 +1,8 @@
-//! Request interception — Playwright's `page.route`, on the CDP `Fetch` domain.
+//! Request interception over the CDP `Fetch` domain, which `WebDriver` lacks.
+//! Needs thirtyfour's `cdp-events` feature: receiving `Fetch.requestPaused`
+//! requires the WebSocket transport.
 //!
-//! Two things need to change what the network does rather than merely observe it:
-//!
-//! * The **no-JS walkthrough** aborts every `*.js` request on top of switching
-//!   scripting off. Disabling scripting alone leaves the requests in flight, and
-//!   the walkthrough exists to prove the pages work when the scripts are never
-//!   *delivered* — a stricter thing, and a CI gate since #490.
-//! * The **stale-response scenarios** hold one fragment response back for 600 ms
-//!   so a second click can overtake it, asserting that the slow, stale response
-//!   never overwrites the entry the reader picked afterwards.
-//!
-//! `WebDriver` has no equivalent, so this drives CDP directly. It needs
-//! thirtyfour's `cdp-events` feature: commands go out over the ordinary
-//! connection, but `Fetch.requestPaused` has to be *received*, which only the
-//! WebSocket transport can do.
-//!
-//! Every paused request must be answered — continued, failed or fulfilled — or
-//! the page hangs waiting on it. The dispatcher answers each exactly once, and
+//! Every paused request must be answered exactly once or the page hangs;
 //! requests matching no rule are continued unmodified.
 
 use std::sync::Arc;
@@ -41,23 +27,14 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Clone)]
 pub enum Action {
     /// Let it through untouched, and only count it.
-    ///
-    /// The shape of Playwright's `page.on("request", …)`: the scenario wants to
-    /// know whether a request fired at all, not to change it.
     Watch,
     /// Refuse it, as an ad blocker or an offline network would.
     Abort,
     /// Hold it for a while, then let it through.
-    ///
-    /// The delay is served without blocking other requests: the dispatcher
-    /// hands each paused request to its own task.
     Delay(Duration),
-    /// Hold it until the scenario says otherwise, then let it through. The
-    /// open-ended form of [`Action::Delay`], for races whose second half is
-    /// triggered by something other than the clock.
+    /// Hold it until released: [`Action::Delay`] without the clock.
     Hold(watch::Receiver<bool>),
-    /// Answer it here, without going to the network at all — Playwright's
-    /// `route.fulfill`.
+    /// Answer it here, without going to the network.
     Fulfill { content_type: String, body: String },
 }
 
@@ -68,18 +45,16 @@ struct Rule {
     /// Only match this HTTP method, when set.
     method: Option<String>,
     action: Action,
-    /// How many matching requests have been intercepted, counted the moment
-    /// they are paused — before any hold.
+    /// Matching requests intercepted, counted before any hold.
     arrived: Arc<AtomicUsize>,
-    /// How many have been answered.
+    /// Matching requests answered.
     hits: Arc<AtomicUsize>,
     /// Notified when a request is paused, and again once it is answered.
     signal: Arc<Notify>,
 }
 
-/// A live CDP attachment to one browser: request rules, plus a log of the status
-/// code every top-level document answered with. Dropping it stops both
-/// listeners, and the browser is closed at the end of the scenario anyway.
+/// A CDP attachment: request rules plus a log of top-level document statuses.
+/// Dropping it stops both listeners.
 #[derive(Debug)]
 pub struct Network {
     rules: Arc<Mutex<Vec<Rule>>>,
@@ -88,7 +63,7 @@ pub struct Network {
     responses: JoinHandle<()>,
 }
 
-/// One navigation's outcome — what Playwright's `page.goto()` returned.
+/// One navigation's URL and status code.
 #[derive(Debug, Clone)]
 pub struct Document {
     pub url: String,
@@ -106,24 +81,20 @@ impl Network {
                 .context("opening a CDP WebSocket for request interception")?,
         );
 
-        // Subscribed *before* enabling, so nothing paused between the two is
-        // left unanswered — a request paused with no listener stalls the page
-        // until it times out.
+        // Subscribe before enabling: a request paused with no listener stalls
+        // the page.
         let mut paused = session
             .subscribe::<RequestPaused>()
             .await
             .context("subscribing to Fetch.requestPaused")?;
-        // `WebDriver` cannot report a navigation's status code at all, so the
-        // walkthrough's "did this link answer 200?" check reads it from here.
+        // `WebDriver` cannot report a navigation's status code.
         let mut received = session
             .subscribe::<ResponseReceived>()
             .await
             .context("subscribing to Network.responseReceived")?;
         session
             .send(Enable {
-                // Every request, at the request stage: the rules decide what is
-                // interesting, and a narrower pattern would have to be widened
-                // every time a new rule is added.
+                // Every request; the rules decide what is interesting.
                 patterns: Some(vec![RequestPattern::default()]),
                 handle_auth_requests: None,
             })
@@ -163,8 +134,7 @@ impl Network {
                 while let Some(event) = paused.next().await {
                     let Some(url) = event.request.get("url").and_then(serde_json::Value::as_str)
                     else {
-                        // No URL to match on; let it through rather than
-                        // leaving the page waiting.
+                        // No URL to match on; let it through.
                         let _ = session.send(continue_request(&event)).await;
                         continue;
                     };
@@ -192,16 +162,14 @@ impl Network {
                     };
 
                     let session = Arc::clone(&session);
-                    // Each request is answered on its own task, so a held one
-                    // does not stall the rest of the page.
+                    // Own task per request, so a held one does not stall others.
                     tokio::spawn(async move {
                         let Some((action, arrived, hits, signal)) = matched else {
                             let _ = session.send(continue_request(&event)).await;
                             return;
                         };
-                        // Counted and announced before any hold, so a step can
-                        // wait for "the request has been made" separately from
-                        // "the response has landed".
+                        // Announced before any hold, so "request made" and
+                        // "response landed" can be awaited separately.
                         arrived.fetch_add(1, Ordering::SeqCst);
                         signal.notify_waiters();
 
@@ -216,16 +184,13 @@ impl Network {
                             }
                             Action::Delay(delay) => {
                                 tokio::time::sleep(delay).await;
-                                // The send can fail: while the request was
-                                // held, the page's own stale-response guard may
-                                // have aborted it — the post-fix behaviour the
-                                // scenario asserts, not an error.
+                                // May fail if the page's stale-response guard
+                                // aborted it meanwhile; that is expected.
                                 let _ = session.send(continue_request(&event)).await;
                             }
                             Action::Hold(mut release) => {
-                                // `changed()` returns immediately when the
-                                // sender already flipped it, so a release that
-                                // beats the request here is not lost.
+                                // A release that beats the request is not
+                                // lost: `changed()` returns immediately.
                                 while !*release.borrow_and_update() {
                                     if release.changed().await.is_err() {
                                         break;
@@ -254,9 +219,7 @@ impl Network {
         })
     }
 
-    /// The status code the most recent navigation to a URL containing `needle`
-    /// answered with — the `Response` object `page.goto()` returns. Reads the
-    /// *last* match, because a link followed twice logs twice.
+    /// Status of the most recent navigation to a URL containing `needle`.
     pub async fn document_status(&self, needle: &str) -> Option<u32> {
         self.documents
             .lock()
@@ -267,9 +230,7 @@ impl Network {
             .map(|document| document.status)
     }
 
-    /// Adds a rule for every method, returning a handle for waiting on and
-    /// counting its requests. Rules are tried in the order added, first match
-    /// wins.
+    /// Adds a rule for every method. Rules are tried in order; first match wins.
     pub async fn route(&self, pattern: &str, action: Action) -> Result<RouteHandle> {
         self.route_method(pattern, None, action).await
     }
@@ -318,8 +279,7 @@ impl Drop for Network {
     }
 }
 
-/// A rule's counters, its progress signal, and — for a held route — the switch
-/// that lets the request go.
+/// A rule's counters and progress signal, plus the release switch for a hold.
 #[derive(Debug, Clone)]
 pub struct RouteHandle {
     arrived: Arc<AtomicUsize>,
@@ -359,15 +319,13 @@ impl RouteHandle {
             .release
             .as_ref()
             .context("this route was not created with `hold`")?;
-        // Ignores a closed channel: the dispatcher having gone away means the
-        // browser is closing, not that the release failed.
+        // A closed channel just means the browser is closing.
         let _ = release.send(true);
         Ok(())
     }
 
-    /// Polls `done` between notifications. The check comes first each time round,
-    /// because `Notify` drops a notification sent before anyone was waiting — the
-    /// common case when the request settles faster than the next step.
+    /// Polls `done` between notifications, checking first: `Notify` drops
+    /// notifications sent before anyone waits.
     async fn wait_until(&self, timeout: Duration, done: impl Fn() -> bool) -> Result<()> {
         tokio::time::timeout(timeout, async {
             loop {
@@ -407,8 +365,7 @@ fn fulfill_request(event: &RequestPaused, content_type: &str, body: &str) -> Ful
             name: "Content-Type".to_owned(),
             value: content_type.to_owned(),
         }]),
-        // CDP takes the body base64-encoded, which is also how it carries
-        // binary responses.
+        // CDP takes the body base64-encoded.
         body: Some(BASE64.encode(body)),
         response_phrase: None,
     }

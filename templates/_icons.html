@@ -1,6 +1,4 @@
-{# Icon call sites. Each renders a <use> reference into the sprite emitted once
-   per document by _icon_sprite.html; see that file for why no presentation
-   attributes appear here. Keep the ids in sync with the sprite's <symbol>s. #}
+{# Icon call sites into _icon_sprite.html; keep ids in sync with its <symbol>s. #}
 {% macro check() %}<svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>{% endmacro %}
 {% macro unread() %}<svg class="ico is-filled" aria-hidden="true"><use href="#i-unread"/></svg>{% endmacro %}
 {% macro star(filled) %}<svg class="ico{% if filled %} is-filled{% endif %}" aria-hidden="true"><use href="#i-star"/></svg>{% endmacro %}

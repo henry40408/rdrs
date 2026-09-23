@@ -1,16 +1,12 @@
-{# Append-style Load More response. The `<template data-swap-target="#load-more">`
-   block carries the new rows + a fresh load-more form (or nothing, when
-   `next_cursor` is `None`). The swap helper inserts every child of the
-   template before the old `#load-more`, then removes it — so prior rows
-   stay put and the .list-pane keeps its scroll position naturally. #}
+{# Load More response: the template's children are inserted before the old
+   `#load-more`, which is then removed, so earlier rows and scroll stay put. #}
 <template data-swap-target="#load-more">
 {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
 {% if let Some(after) = next_cursor %}
 <form id="load-more" method="get" action="{{ path }}" data-swap="#load-more" class="load-more-form">
     <input type="hidden" name="after" value="{{ after }}">
     <input type="hidden" name="fragment" value="1">
-    {# Echoed, never re-stamped: every page of one reading session has to
-       paginate against the same boundary. #}
+    {# Echoed, never re-stamped: every page of one session paginates against the same boundary. #}
     {% if let Some(sn) = snapshot.as_ref() %}<input type="hidden" name="snapshot" value="{{ sn }}">{% endif %}
     {% if let Some(s) = status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
     {% if let Some(qq) = q.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}

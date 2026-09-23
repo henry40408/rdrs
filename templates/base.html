@@ -4,54 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}RDRS{% endblock %}</title>
-    {# Stamped like every other build asset: the icons are `include_bytes!`d into
-       the binary, so they change with the build and a bare URL would let a
-       cached copy outlive the upgrade that replaced it. #}
+    {# Version-stamped so a cached icon cannot outlive an upgrade. #}
     <link rel="icon" href="/favicon.ico?v={{ git_version }}" sizes="32x32">
     <link rel="icon" href="/favicon.svg?v={{ git_version }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v={{ git_version }}">
-    {# Installability. Stamped like the icons — the manifest is embedded in the
-       binary too, and its own icon URLs are rewritten with this same version at
-       serve time. The service worker that goes with it is registered from
-       app_layout.html, not here: see static/js/pwa.js for why the sign-in page
-       is left out.
-
-       `crossorigin` is what makes the request carry cookies: a manifest is
-       otherwise fetched with credentials omitted, which a cookie-authenticating
-       reverse proxy reads as signed out and answers with a redirect to its own
-       login origin — surfacing only as `TypeError: NetworkError` with the app
-       no longer installable. Free same-origin, where no CORS headers apply. #}
+    {# Service worker is registered from app_layout.html, not here.
+       `crossorigin` makes the manifest request carry cookies; without it a
+       cookie-authenticating reverse proxy redirects it and installability breaks. #}
     <link rel="manifest" href="/static/manifest.webmanifest?v={{ git_version }}" crossorigin="use-credentials">
-    {# Colours the browser and OS chrome around the app. Two entries rather than
-       the manifest's single `theme_color`, because that one value cannot follow
-       the reader's colour scheme and a light bar above the dark theme is worse
-       than either. Values are `--color-paper`, the colour `body` actually
-       paints, so the chrome continues the page instead of framing it.
-
-       Follows the *system* scheme, not the `data-theme` override: a media query
-       is all a `<meta>` can express. A reader who has forced the non-system
-       theme in preferences gets chrome matching the other one — visible only in
-       standalone mode, and the alternative is no theming at all. #}
+    {# Two entries so browser chrome follows the system colour scheme (a `<meta>`
+       cannot follow the `data-theme` override). Values are `--color-paper`. #}
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F1ED">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131416">
-    {# "Wire Room" type system, self-hosted (see @font-face in app.css and the
-       vendored woff2 under static/fonts/). Newsreader = variable optical-size
-       serif (display + reading); Archivo = UI sans; IBM Plex Mono = data / mono
-       (times, labels, kbd hints). #}
+    {# Self-hosted fonts; see @font-face in app.css. #}
     <link rel="stylesheet" href="/static/css/app.css?v={{ git_version }}">
-    {# Loaded first, before any feature module, so its fetch patch is in place
-       before anything issues a state-changing request. Attaches the CSRF token
-       (from the readable `csrf_token` cookie) to same-origin fetches and native
-       POST forms. #}
+    {# Loaded first so its fetch patch attaches the CSRF token before any
+       state-changing request. #}
     <script type="module" src="/static/js/csrf.js?v={{ git_version }}"></script>
     <link rel="modulepreload" href="/static/js/components/rdrs-flash.js?v={{ git_version }}">
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
-    {# Outside `block body` on purpose: app_layout.html overrides that block, and
-       the sprite has to reach every page. Swap fragments reference these symbols
-       by id, so it must exist in the live document, not in the fragment. #}
+    {# Outside `block body` so every page gets it; swap fragments reference its ids. #}
     {% include "_icon_sprite.html" %}
     {% block body %}
     {% block flash %}{% endblock %}

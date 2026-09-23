@@ -1,12 +1,9 @@
-//! Regenerates the four screenshots `README.md` embeds.
+//! Regenerates the four screenshots `README.md` embeds, into `../screenshots/`.
 //!
 //!   cd e2e && cargo run --bin screenshots
 //!
-//! The images are written to `../screenshots/`. Note that a locally generated
-//! set will differ from CI's in font rendering and Chromium version, so
-//! regenerate them on the machine whose output is being committed — an
-//! unrelated image moving in the diff is the tell that the browser changed,
-//! not the UI.
+//! Font rendering and Chromium version differ by machine; an unrelated image
+//! changing in the diff means the browser changed, not the UI.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -20,19 +17,17 @@ use rdrs_e2e::server::{Endpoints, Harness};
 use rdrs_e2e::wait::{eventually, eventually_eq};
 use thirtyfour::prelude::*;
 
-/// The account the screenshots depict — the instance's administrator, which is
-/// what `/api/setup` creates. Going through the invite flow instead would make
-/// an ordinary member and quietly drop the admin entries from every captured
-/// sidebar.
+/// Created via `/api/setup` so it is admin; an invited member would lack the
+/// admin sidebar entries.
 const DEMO_USER: &str = "demouser";
 
-/// Wide enough for the three-pane desktop layout the README shows.
+/// Wide enough for the three-pane layout.
 const VIEWPORT: Viewport = Viewport::new(1920, 1080);
 
-/// How long a favicon fetch may take before the feed goes without one.
+/// Favicon fetch timeout; past it the feed goes without.
 const FAVICON_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Anything larger is not a favicon, and not worth embedding in the fixture.
+/// Anything larger is not a favicon.
 const FAVICON_MAX_BYTES: usize = 256 * 1024;
 
 /// A feed to seed, its real favicon, and the entries it shows.
@@ -175,8 +170,7 @@ async fn seed_demo_content(endpoints: &Endpoints) -> Result<()> {
     let seed = Seed::open(&endpoints.db_path).await?;
     let user_id = seed.user_id(DEMO_USER).await?;
 
-    // Fetched in parallel; a feed whose icon cannot be had falls back to the
-    // initial chip, which is a legitimate rendering rather than a broken one.
+    // A missing icon falls back to the initial chip, which is fine.
     let icons = fetch_favicons().await;
 
     let mut hour = 1;
@@ -264,8 +258,7 @@ async fn fetch_favicons() -> Vec<(&'static str, Vec<u8>, String)> {
 async fn capture(endpoints: &Endpoints, theme: &str, output: &Path) -> Result<()> {
     let mut browser = Browser::open(Scripting::Enabled).await?;
     browser.set_viewport(VIEWPORT).await?;
-    // Emulated rather than stored as a preference: this is the app's
-    // system-follow path, which is what the screenshots are meant to show.
+    // Emulated, to show the system-follow theme path.
     browser.emulate_color_scheme(theme).await?;
     let driver = browser.driver();
     let base = &endpoints.base_url;
@@ -277,8 +270,7 @@ async fn capture(endpoints: &Endpoints, theme: &str, output: &Path) -> Result<()
     driver.submit("login-submit").await?;
     driver.expect_visible("entry-item").await?;
 
-    // Every feed icon must have finished loading — or failed — before a
-    // capture, or the image catches a half-drawn sidebar.
+    // Wait for icons to load or fail, or the sidebar is half-drawn.
     eventually("the feed icons to settle", || async {
         let done = driver
             .eval(
@@ -290,8 +282,7 @@ async fn capture(endpoints: &Endpoints, theme: &str, output: &Path) -> Result<()
     })
     .await?;
 
-    // `j` moves the list cursor to the first row; `o` opens it in the reading
-    // pane (j/k navigate the pane only once it is open).
+    // `j` selects the first row; `o` opens it.
     let before: i64 = driver
         .css("#unread-count")
         .await?
@@ -303,11 +294,8 @@ async fn capture(endpoints: &Endpoints, theme: &str, output: &Path) -> Result<()
     driver.press("j").await?;
     driver.press_focused("o").await?;
     driver.css(".reading-pane-title").await?;
-    // The pane swap and the sidebar count are two independent round trips:
-    // opening marks the entry read, and the new count arrives over SSE and then
-    // through `<rdrs-sidebar>`'s coalescing debounce. Waiting only on the pane
-    // captures the row already showing its read dot while the badge still shows
-    // the pre-read total — an internally inconsistent screenshot.
+    // Opening marks read, and the badge updates later via SSE and a debounce; wait
+    // for it so the screenshot is consistent.
     eventually_eq("the unread badge", (before - 1).to_string(), || async {
         Ok(driver
             .css("#unread-count")

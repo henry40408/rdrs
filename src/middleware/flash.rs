@@ -69,8 +69,7 @@ impl FlashMessage {
         }
     }
 
-    /// ARIA role for live-region announcement.
-    /// `status` (polite) for non-blocking info; `alert` (assertive) for problems.
+    /// ARIA live-region role: `status` (polite) or `alert` (assertive).
     pub fn aria_role(&self) -> &'static str {
         match self.level {
             FlashLevel::Success | FlashLevel::Info => "status",
@@ -88,37 +87,22 @@ impl FlashMessage {
         }
     }
 
-    /// UTC HH:MM:SS — the no-JS fallback only. The server cannot know the
-    /// viewer's timezone, so `rdrs-flash.js` rewrites this text from
-    /// `timestamp_iso()` into local time on load, matching the banners it
-    /// builds itself. Do not add a timezone-dependent format here.
+    /// UTC HH:MM:SS, the no-JS fallback; `rdrs-flash.js` localizes it from
+    /// `timestamp_iso()`. Do not add a timezone-dependent format here.
     pub fn formatted_time(&self) -> String {
         self.timestamp.format("%H:%M:%S").to_string()
     }
 
-    /// ISO-8601 form used for the `<time datetime="…">` attribute so
-    /// assistive tech, `Date.parse()` consumers and the client-side
-    /// localization above get an unambiguous instant.
+    /// ISO-8601 instant for `<time datetime="…">`.
     pub fn timestamp_iso(&self) -> String {
         self.timestamp.to_rfc3339()
     }
 }
 
-/// Sign the flash cookie on the way out and verify it on the way in.
-///
-/// The cookie carries JSON the server wrote, and the templates escape it, so a
-/// forged one cannot inject markup — but it can put arbitrary text in a banner
-/// that looks like the server speaking ("Your account has been suspended,
-/// contact …"). Anything that can write a cookie for this host can do that: a
-/// sibling app on another port, a subdomain, an XSS elsewhere on the
-/// registrable domain. The signature makes the banner say only what this server
-/// said.
-///
-/// It lives in a middleware rather than in [`SetFlash`] because the flash is
-/// constructed in ~100 handlers, none of which hold the secret; threading it
-/// through every `FlashRedirect::error(…)` call site would be a far larger
-/// change than the guarantee is worth. Here the values are rewritten in one
-/// place, and the extractor keeps seeing the plain JSON it always did.
+/// Sign the flash cookie on the way out and verify it on the way in, so that
+/// anything else able to set a cookie for this host (sibling port, subdomain)
+/// cannot put spoofed text in a server banner. A middleware because the ~100
+/// handlers building flashes don't hold the secret.
 pub async fn sign_flash_cookies(
     State(state): State<crate::AppState>,
     mut req: axum::extract::Request,
@@ -133,12 +117,9 @@ pub async fn sign_flash_cookies(
     resp
 }
 
-/// Rewrite every `Cookie` header in place, so the flash cookie carries only its
-/// payload and an unsigned one is gone before any extractor sees it.
-///
-/// A client may split its cookies across several `Cookie` headers, so this
-/// rebuilds all of them: reading only the first and replacing the lot would
-/// silently drop the session cookie riding in the second.
+/// Rewrite every `Cookie` header in place: strip the signature from a valid
+/// flash cookie and drop an invalid one. All headers are rebuilt, since cookies
+/// may be split across several.
 fn verify_cookie_headers(headers: &mut axum::http::HeaderMap, secret: &[u8]) {
     let existing: Vec<axum::http::HeaderValue> = headers
         .get_all(axum::http::header::COOKIE)
@@ -160,8 +141,7 @@ fn verify_cookie_headers(headers: &mut axum::http::HeaderMap, secret: &[u8]) {
             .and_then(|cookies| verify_cookie_header(cookies, secret))
             .and_then(|s| axum::http::HeaderValue::from_str(&s).ok());
         match rewritten {
-            // Every cookie in this header was a rejected flash: drop the header
-            // rather than sending an empty one.
+            // Only a rejected flash was here: drop the header, not send it empty.
             Some(v) if v.is_empty() => {}
             Some(v) => {
                 headers.append(axum::http::header::COOKIE, v);
@@ -173,8 +153,7 @@ fn verify_cookie_headers(headers: &mut axum::http::HeaderMap, secret: &[u8]) {
     }
 }
 
-/// Rewrite one `Cookie` header's worth of pairs. `None` when it carries no
-/// flash cookie, so an untouched header keeps its original value.
+/// Rewrite one `Cookie` header; `None` when it carries no flash cookie.
 fn verify_cookie_header(cookies: &str, secret: &[u8]) -> Option<String> {
     let prefix = format!("{FLASH_COOKIE_NAME}=");
     if !cookies.contains(&prefix) {
@@ -197,21 +176,13 @@ fn verify_cookie_header(cookies: &str, secret: &[u8]) -> Option<String> {
     Some(out.join("; "))
 }
 
-/// Split `payload~signature`, check the tag, and decode the payload back to the
-/// JSON the extractor expects.
-///
-/// The payload travels base64url-encoded rather than as raw JSON. A signature
-/// only means anything if the bytes signed are the bytes checked, and raw JSON
-/// in a cookie is not safe from that: quotes, braces and commas are outside the
-/// cookie-value grammar, so a client is free to percent-encode them on the way
-/// back and the value would no longer match what was signed. base64url has no
-/// such characters.
+/// Verify `payload.signature` and decode the payload back to JSON. The payload
+/// is base64url because clients may percent-encode raw JSON's quotes and commas,
+/// breaking the signature.
 fn verify_flash_value(value: &str, secret: &[u8]) -> Option<String> {
     let (encoded, signature) = value.rsplit_once(SIGNATURE_SEPARATOR)?;
     let expected = crate::secret::tag(secret, crate::secret::DOMAIN_FLASH, &[encoded.as_bytes()]);
-    // The signature covers the exact bytes the client sent back, so a
-    // constant-time comparison is not load-bearing here; equality on the
-    // base64 form is enough to reject a forgery.
+    // Constant-time comparison isn't load-bearing here; equality rejects forgeries.
     if signature != URL_SAFE_NO_PAD.encode(expected) {
         return None;
     }
@@ -244,9 +215,8 @@ fn sign_set_cookie_headers(headers: &mut axum::http::HeaderMap, secret: &[u8]) {
     }
 }
 
-/// `None` when the cookie is not a flash cookie, or is the empty removal
-/// cookie — signing that one would change the value the browser matches on and
-/// leave the flash undeletable.
+/// `None` for non-flash cookies and the empty removal cookie (signing it would
+/// leave the flash undeletable).
 fn sign_set_cookie(cookie: &str, prefix: &str, secret: &[u8]) -> Option<String> {
     let rest = cookie.strip_prefix(prefix)?;
     let (payload, attributes) = match rest.split_once(';') {
@@ -257,8 +227,7 @@ fn sign_set_cookie(cookie: &str, prefix: &str, secret: &[u8]) -> Option<String> 
         return None;
     }
 
-    // Encoded, not raw: see `verify_flash_value` for why the signed bytes have
-    // to be ones a client will hand back unchanged.
+    // Encoded, not raw: see `verify_flash_value`.
     let encoded = URL_SAFE_NO_PAD.encode(payload);
     let tag = crate::secret::tag(secret, crate::secret::DOMAIN_FLASH, &[encoded.as_bytes()]);
     let signed = format!(
@@ -271,11 +240,8 @@ fn sign_set_cookie(cookie: &str, prefix: &str, secret: &[u8]) -> Option<String> 
     })
 }
 
-/// Separates the flash payload from its signature. Both sides are base64url,
-/// whose alphabet does not include this character — and unlike `~`, a `.` is
-/// inside the cookie-value set every client sends back verbatim rather than
-/// percent-encoding. The session cookie uses the same separator for the same
-/// reason.
+/// Payload/signature separator: outside base64url, and (unlike `~`) never
+/// percent-encoded by clients.
 const SIGNATURE_SEPARATOR: char = '.';
 
 const MAX_FLASH_MESSAGES: usize = 3;
@@ -309,7 +275,6 @@ where
             .and_then(|cookie| serde_json::from_str::<Vec<FlashMessage>>(cookie.value()).ok())
             .unwrap_or_default();
 
-        // Keep only the latest MAX_FLASH_MESSAGES
         if messages.len() > MAX_FLASH_MESSAGES {
             messages = messages.split_off(messages.len() - MAX_FLASH_MESSAGES);
         }
@@ -326,10 +291,7 @@ impl IntoResponseParts for Flash {
 
     fn into_response_parts(self, res: ResponseParts) -> Result<ResponseParts, Self::Error> {
         if let Some(jar) = self.jar {
-            // Clear the flash cookie after reading. The removal cookie must carry
-            // the same `Path=/` the cookie was stored with, otherwise (per RFC 6265)
-            // the browser computes a default-path from the request URI and the
-            // deletion fails to match on multi-segment routes (see #247).
+            // Removal must carry `Path=/` or it fails on multi-segment routes (#247).
             let removal = Cookie::build((FLASH_COOKIE_NAME, "")).path("/").build();
             let jar = jar.remove(removal);
             jar.into_response_parts(res)
@@ -464,9 +426,7 @@ mod tests {
         assert_eq!(rewritten, format!("flash={payload}"));
     }
 
-    /// The point of signing: anything that can write a cookie for this host —
-    /// a sibling app on another port, a subdomain — must not be able to put
-    /// words in the server's mouth.
+    /// Other cookie writers for this host must not forge server banners.
     #[test]
     fn an_unsigned_or_forged_cookie_is_dropped() {
         let forged = r#"[{"level":"error","message":"Your account is suspended."}]"#;
@@ -517,9 +477,7 @@ mod tests {
         assert_eq!(verify_cookie_header("__Host-session=abc.def", SECRET), None);
     }
 
-    /// The removal cookie is matched by name *and value*; signing an empty
-    /// value would change what the browser compares and leave the flash
-    /// undeletable, so it is left alone.
+    /// Signing the empty removal cookie would leave the flash undeletable.
     #[test]
     fn the_removal_cookie_is_not_signed() {
         assert_eq!(sign_set_cookie("flash=; Path=/", "flash=", SECRET), None);
@@ -595,7 +553,6 @@ mod tests {
     fn test_flash_message_formatted_time() {
         let msg = FlashMessage::success("Test");
         let time = msg.formatted_time();
-        // Format should be HH:MM:SS
         assert_eq!(time.len(), 8);
         assert!(time.contains(':'));
     }
@@ -604,8 +561,7 @@ mod tests {
     fn test_flash_message_timestamp_iso() {
         let msg = FlashMessage::success("Test");
         let iso = msg.timestamp_iso();
-        // RFC 3339 form: "YYYY-MM-DDTHH:MM:SS(.fff)+ZZ:ZZ" — at minimum
-        // contains a date marker and a timezone offset.
+        // RFC 3339: needs a date marker and a timezone offset.
         assert!(iso.starts_with(&msg.timestamp.format("%Y-%m-%d").to_string()));
         assert!(iso.contains('T'));
         assert!(iso.contains('+') || iso.contains('Z') || iso.contains('-'));
@@ -795,11 +751,8 @@ mod tests {
         assert_eq!(redirect.location, "/dynamic/path");
     }
 
-    /// Regression for #247: the flash-cookie removal must carry `Path=/` so it
-    /// matches the stored cookie (always written with `Path=/`). Without it the
-    /// browser derives a default-path from the request URI, and on multi-segment
-    /// routes (e.g. `/feeds/{id}/entries`) the deletion never matches — leaving
-    /// the flash to re-render on every subsequent page load.
+    /// Regression for #247: the removal cookie needs `Path=/`, or on
+    /// multi-segment routes it never matches and the flash keeps re-rendering.
     #[tokio::test]
     async fn test_flash_removal_cookie_has_root_path() {
         use axum::http::Request;

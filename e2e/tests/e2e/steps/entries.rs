@@ -1,9 +1,4 @@
 //! Seeding entries, navigating the lists, and asserting on the rows.
-//!
-//! One of four modules covering `entries.steps.js`, which mixed the entry list,
-//! the reading pane, the sidebar and the keyboard shortcuts in one 1,000-line
-//! file. See also [`super::reading_pane`], [`super::sidebar`] and
-//! [`super::keyboard`].
 
 use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
@@ -11,8 +6,7 @@ use rdrs_e2e::dom::{Dom, TextContent, Within};
 use rdrs_e2e::wait::{eventually, eventually_eq, eventually_some};
 use rdrs_e2e::world::RdrsWorld;
 
-/// A 1×1 transparent PNG — enough for `feed_has_icon` to render an `<img>`
-/// favicon rather than the initial chip.
+/// 1×1 transparent PNG, so the favicon renders as `<img>`.
 const TRANSPARENT_PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xb5, 0x1c, 0x0c,
@@ -59,13 +53,8 @@ async fn feed_has_favicon(world: &mut RdrsWorld, feed_title: String) -> Result<(
     .await
 }
 
-/// Points an entry at a link the readability fetcher rejects outright. The SSRF
-/// guard in `utils/url_validation.rs` blocks loopback before any network I/O,
-/// so Fetch Full Content answers immediately with its error flash instead of
-/// waiting on DNS — which is what a scenario about the *round trip* needs, and
-/// what the seeded `https://example.com` links cannot give: they resolve (or
-/// hang) depending on whether the machine has internet, and the fetch fails
-/// either way once the extractor sees a 404.
+/// Uses a loopback link the SSRF guard rejects before any I/O, so the error
+/// flash is immediate rather than depending on internet access.
 #[given(expr = "the entry titled {string} cannot have its full content fetched")]
 async fn entry_cannot_fetch_full_content(world: &mut RdrsWorld, title: String) -> Result<()> {
     let entry_id = entry_id(world, &title).await?;
@@ -81,9 +70,8 @@ async fn entry_marked_read(world: &mut RdrsWorld, title: String) -> Result<()> {
     world.seed().mark_read(entry_id, "0 seconds").await
 }
 
-/// Backdated so the read lands strictly *before* the page's render-time
-/// snapshot — a `datetime('now')` read in the same second as the render would
-/// fall inside the `>=` snapshot boundary and make skip-assertions flaky.
+/// Backdated so the read precedes the render snapshot; a same-second read
+/// falls inside its `>=` boundary and flakes.
 #[given(expr = "the entry titled {string} was marked read an hour ago")]
 async fn entry_read_an_hour_ago(world: &mut RdrsWorld, title: String) -> Result<()> {
     let entry_id = entry_id(world, &title).await?;
@@ -135,9 +123,7 @@ async fn entry_has_broken_image(world: &mut RdrsWorld, title: String) -> Result<
         .await
 }
 
-/// Mirrors Rouge's line-numbered output: an outer `<pre>` wrapping a `<code>`
-/// plus a `<table>` whose cells each hold their own nested `<pre>` (gutter and
-/// code).
+/// Mirrors Rouge's line-numbered output: nested `<pre>`s in a `<table>`.
 #[given(expr = "the entry titled {string} contains a line-numbered code block")]
 async fn entry_has_code_block(world: &mut RdrsWorld, title: String) -> Result<()> {
     let entry_id = entry_id(world, &title).await?;
@@ -177,9 +163,7 @@ async fn more_categories(world: &mut RdrsWorld, count: u32) -> Result<()> {
     Ok(())
 }
 
-/// The same filler, but with something unread in each one, for the scenarios
-/// that also turn on the hide-fully-read setting: it drops every empty
-/// category, and a sidebar short enough to fit has no scroll offset to lose.
+/// With unread entries, so hide-fully-read keeps them and the sidebar scrolls.
 #[given(expr = "I have {int} more categories with unread entries")]
 async fn more_categories_with_unread(world: &mut RdrsWorld, count: u32) -> Result<()> {
     let username = world.user.username.clone();
@@ -237,9 +221,7 @@ async fn open_category_entries(world: &mut RdrsWorld, category: String) -> Resul
         .await
 }
 
-/// `?status=all` keeps read entries listed, which is what the morph scenarios
-/// need: on the unread view a row that is marked read simply leaves, and a row
-/// that is gone proves nothing about whether the ones that stayed were rebuilt.
+/// `?status=all` keeps read rows, so the morph scenarios can check them.
 #[when(expr = "I open the entries page for category {string} showing all statuses")]
 async fn open_category_all_statuses(world: &mut RdrsWorld, category: String) -> Result<()> {
     let category_id = category_id(world, &category).await?;
@@ -312,8 +294,7 @@ async fn on_feed_read_filter(world: &mut RdrsWorld, feed_title: String) -> Resul
         .await
 }
 
-// Also reachable as an `And` following a `When`, which cucumber resolves to
-// `when` — the scenario uses it as a barrier before the next interaction.
+// Also used as an `And` barrier after a `When`.
 #[then(expr = "I am on the entries page for category {string}")]
 #[when(expr = "I am on the entries page for category {string}")]
 async fn on_category_entries(world: &mut RdrsWorld, category: String) -> Result<()> {
@@ -355,8 +336,7 @@ async fn see_n_entries(world: &mut RdrsWorld, count: usize) -> Result<()> {
     .await
 }
 
-/// Polls, so an async swap (a Load More fetch) has a chance to land — a plain
-/// count snapshots the DOM at one instant.
+/// Polls, so an async Load More can land.
 #[then(expr = "I see more than {int} entries in the entry list")]
 async fn see_more_than(world: &mut RdrsWorld, count: usize) -> Result<()> {
     let driver = world.driver()?;
@@ -388,8 +368,7 @@ async fn row_shows_unread(world: &mut RdrsWorld, title: String) -> Result<()> {
     expect_row_class(world, &title, "entry-read", false).await
 }
 
-/// The starred state lives on the star-action toggle — when starred it shows ★
-/// and flips to `aria-label="Unstar"` plus a POST to `/unstar`.
+/// Starred rows show ★ with `aria-label="Unstar"`.
 #[then(expr = "the entry row for {string} shows as starred")]
 async fn row_shows_starred(world: &mut RdrsWorld, title: String) -> Result<()> {
     eventually(&format!("`{title}` is starred"), || async {
@@ -446,21 +425,15 @@ async fn no_flash(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_absent("flash-message").await
 }
 
-/// A barrier for form-action swaps whose only visible signal is a toast (Save,
-/// Fetch Full Content). The flash is shown right after the reading-pane swap
-/// lands and the neighbour re-resolve fires, so waiting on it sequences any
-/// follow-up navigation after the pane has fully settled — which is why the
-/// scenarios reach it as a `When` as often as a `Then`.
+/// Barrier for swaps whose only signal is a toast; the flash follows the pane
+/// swap, so later navigation waits for it.
 #[then("I see a flash message")]
 #[when("I see a flash message")]
 async fn see_flash(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_visible("flash-message").await
 }
 
-/// The feed-title `<a>` must shrink-wrap its text. A full-width block link
-/// makes clicks on the blank space after a short feed name navigate to the feed
-/// (`installRowClickToOpen` defers to any anchor under the pointer) instead of
-/// falling through to the row's open-entry handler.
+/// A full-width feed link would steal clicks from the row's open handler.
 #[then("the feed link does not span the full meta row")]
 async fn feed_link_shrink_wraps(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -479,7 +452,7 @@ async fn feed_link_shrink_wraps(world: &mut RdrsWorld) -> Result<()> {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// The entry row whose text contains `title`, if the list has one.
+/// The row containing `title`, if any.
 pub async fn entry_row_opt(
     world: &RdrsWorld,
     title: &str,
@@ -492,7 +465,7 @@ pub async fn entry_row_opt(
     Ok(None)
 }
 
-/// The entry row whose text contains `title`, waiting for it to arrive.
+/// The row containing `title`, waiting for it.
 pub async fn entry_row(world: &RdrsWorld, title: &str) -> Result<thirtyfour::WebElement> {
     eventually_some(&format!("an entry row containing {title:?}"), || {
         entry_row_opt(world, title)
@@ -537,7 +510,7 @@ pub async fn category_id(world: &mut RdrsWorld, category: &str) -> Result<i64> {
     world.seed().category_id(user_id, category).await
 }
 
-/// Percent-encodes a query value, `encodeURIComponent`'s job.
+/// Percent-encodes like `encodeURIComponent`.
 fn url_encode(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
 }

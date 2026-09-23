@@ -2,13 +2,11 @@
 
 use axum::http::HeaderMap;
 
-/// Maximum length (in characters) of a captured `User-Agent`, to bound
-/// storage — clients can send arbitrarily long values.
+/// Max captured `User-Agent` length (chars), to bound storage.
 const USER_AGENT_MAX_CHARS: usize = 512;
 
-/// The request's `User-Agent` header, truncated to
-/// [`USER_AGENT_MAX_CHARS`] characters. Empty string if absent or not valid
-/// UTF-8.
+/// The `User-Agent` header, truncated to `USER_AGENT_MAX_CHARS`; empty if
+/// absent or not UTF-8.
 pub fn request_user_agent(headers: &HeaderMap) -> String {
     headers
         .get(axum::http::header::USER_AGENT)

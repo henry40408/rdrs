@@ -1,10 +1,8 @@
 @parallel
 Feature: Open tracking
 
-  # Ordering is load-bearing throughout: the opt-in timestamp is the baseline
-  # the open rate is measured from, so entries seeded before it carry no pixel
-  # and are outside the denominator. Every scenario that expects a rate turns
-  # tracking on *first*.
+  # The opt-in timestamp is the open-rate baseline; entries seeded before it
+  # carry no pixel, so scenarios turn tracking on *first*.
 
   Background:
     Given I am signed in
@@ -32,11 +30,8 @@ Feature: Open tracking
     And I click the entry titled "Test Entry 1"
     Then the reading pane carries no tracking pixel
 
-  # The sibling of "Saving the queue does not mark the queue read" in
-  # offline_reading.feature: mirroring the queue fetches the images an entry
-  # references so the article is readable without a connection, and the pixel is
-  # an image. Fetching it would report an open for every entry the reader has
-  # merely queued.
+  # Mirroring for offline fetches an entry's images, pixel included; that must
+  # not count as an open.
   Scenario: Mirroring entries for offline reading is not an open
     Given I have open tracking turned on
     And I have a feed "Mirrored Feed" with 5 test entries in category "Tracking"

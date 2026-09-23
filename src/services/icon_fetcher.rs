@@ -60,11 +60,8 @@ async fn fetch_image(
     user_agent: &str,
     fetcher: &Fetcher,
 ) -> AppResult<Option<FetchedImage>> {
-    // Every icon URL here is attacker-controlled in the ordinary case: `<icon>`,
-    // `<logo>` and the favicon `<link>` all come out of a document the feed
-    // publisher wrote. A rejected URL is not an error the user needs to see —
-    // a missing icon is cosmetic — so it logs and yields `None` like every
-    // other rejection in this function.
+    // Icon URLs come from the feed publisher, so validate them; a rejection is
+    // cosmetic, so log and return `None`.
     let Ok(parsed) = Url::parse(url) else {
         debug!(
             event = "icon.rejected",
@@ -223,13 +220,10 @@ fn extract_favicon_from_html(html: &str, base_url: &Url) -> Option<String> {
         "rel='shortcut icon'",
     ] {
         if let Some(link_pos) = html_lower.find(pattern) {
-            // Find the start of this <link> tag
             let tag_start = html_lower[..link_pos].rfind("<link")?;
-            // Find the end of this tag
             let tag_end = html_lower[tag_start..].find('>')? + tag_start;
             let tag = &html[tag_start..=tag_end];
 
-            // Extract href
             if let Some(href) = extract_href(tag) {
                 return resolve_url(&href, base_url);
             }
@@ -273,9 +267,8 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// Every suite here drives a `wiremock` server, which binds loopback — what
-    /// the guard exists to refuse. Allowing that one address is the same opt-in
-    /// a deployment uses for a LAN feed, not a bypass of its own.
+    /// wiremock binds loopback, so allow it the same way a deployment opts in a
+    /// LAN feed.
     fn loopback_fetcher() -> Fetcher {
         Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
             .expect("the guarded client must build")
@@ -493,9 +486,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// `<icon>`, `<logo>` and the favicon `<link>` are all written by whoever
-    /// publishes the feed, so an icon URL is a way to make the server fetch an
-    /// address of the publisher's choosing every icon-refresh cycle.
+    /// Icon URLs are publisher-controlled, so they must not steer server fetches.
     #[tokio::test]
     async fn fetch_feed_icon_refuses_urls_the_policy_does_not_allow() {
         let server = MockServer::start().await;

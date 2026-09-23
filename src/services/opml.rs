@@ -29,7 +29,6 @@ pub struct OpmlOutline {
 pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    // XML declaration
     writer
         .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
         .unwrap();
@@ -37,7 +36,6 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
         .write_event(Event::Text(BytesText::new("\n")))
         .unwrap();
 
-    // OPML root element
     let mut opml = BytesStart::new("opml");
     opml.push_attribute(("version", "2.0"));
     writer.write_event(Event::Start(opml)).unwrap();
@@ -45,7 +43,6 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
         .write_event(Event::Text(BytesText::new("\n")))
         .unwrap();
 
-    // Head section
     writer
         .write_event(Event::Start(BytesStart::new("head")))
         .unwrap();
@@ -71,7 +68,6 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
         .write_event(Event::Text(BytesText::new("\n")))
         .unwrap();
 
-    // Body section
     writer
         .write_event(Event::Start(BytesStart::new("body")))
         .unwrap();
@@ -83,12 +79,10 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
     for cat in categories {
         let cat_feeds: Vec<&Feed> = feeds.iter().filter(|f| f.category_id == cat.id).collect();
 
-        // Skip empty categories
         if cat_feeds.is_empty() {
             continue;
         }
 
-        // Category outline
         let mut cat_outline = BytesStart::new("outline");
         let decoded_cat_name = decode_html_entities(&cat.name);
         cat_outline.push_attribute(("text", decoded_cat_name.as_str()));
@@ -98,7 +92,6 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
             .write_event(Event::Text(BytesText::new("\n")))
             .unwrap();
 
-        // Feed outlines
         for feed in cat_feeds {
             let mut feed_outline = BytesStart::new("outline");
             feed_outline.push_attribute(("type", "rss"));
@@ -188,9 +181,8 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     }
                 }
 
-                // Determine if this is a feed or category
                 if let Some(url) = xml_url {
-                    // This is a feed (Start element with xmlUrl - unusual but handle it)
+                    // Start element with xmlUrl: unusual, but a feed.
                     let feed = OpmlFeed {
                         title: title.or(text),
                         xml_url: url,
@@ -206,8 +198,7 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                         });
                     }
                 } else {
-                    // This is a category (Start outline without xmlUrl)
-                    // Save previous category if exists
+                    // Category: save the previous one, if any.
                     if let Some(cat_name) = current_category.take()
                         && !current_feeds.is_empty()
                     {
@@ -228,7 +219,6 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     continue;
                 }
 
-                // Parse attributes
                 let mut text: Option<String> = None;
                 let mut title: Option<String> = None;
                 let mut xml_url: Option<String> = None;
@@ -249,7 +239,7 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     }
                 }
 
-                // Empty outline - must be a feed (self-closing tag)
+                // Self-closing outline: a feed.
                 if let Some(url) = xml_url {
                     let feed = OpmlFeed {
                         title: title.or(text),
@@ -273,16 +263,14 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     in_body = false;
                 } else if e.name().as_ref() == "outline" && depth > 0 {
                     depth -= 1;
-                    if depth == 0 {
-                        // End of category
-                        if let Some(cat_name) = current_category.take()
-                            && !current_feeds.is_empty()
-                        {
-                            outlines.push(OpmlOutline {
-                                category_name: cat_name,
-                                feeds: std::mem::take(&mut current_feeds),
-                            });
-                        }
+                    if depth == 0
+                        && let Some(cat_name) = current_category.take()
+                        && !current_feeds.is_empty()
+                    {
+                        outlines.push(OpmlOutline {
+                            category_name: cat_name,
+                            feeds: std::mem::take(&mut current_feeds),
+                        });
                     }
                 }
             }
@@ -317,9 +305,8 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
     Ok(outlines)
 }
 
-/// What an OPML import actually did. Callers report these numbers back to the
-/// user — "OPML imported." alone cannot distinguish 300 new subscriptions from
-/// a file whose every feed was already subscribed.
+/// What an OPML import did, reported back so "imported" distinguishes 300 new
+/// feeds from all-duplicates.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ImportSummary {
     pub categories_created: usize,
@@ -331,8 +318,7 @@ pub struct ImportSummary {
 }
 
 impl ImportSummary {
-    /// One-line summary for a flash message. Clauses that would read as noise
-    /// (`0 already subscribed`) are omitted rather than always printed.
+    /// One-line summary for a flash message; zero-count clauses are omitted.
     #[must_use]
     pub fn describe(&self) -> String {
         let mut out = format!(
@@ -351,14 +337,9 @@ impl ImportSummary {
     }
 }
 
-/// Subscribe `user_id` to every feed in `outlines`, creating any category that
-/// does not exist yet, and report how many rows were touched.
-///
-/// A feed already subscribed in the same category is skipped, and one the
-/// database rejects is counted rather than aborting the run: a single malformed
-/// entry in a 300-feed export must not cost the user the other 299. Only a
-/// category lookup/insert failure is fatal, since every following feed in that
-/// outline would have nowhere to go.
+/// Subscribe `user_id` to every feed in `outlines`, creating missing
+/// categories. Duplicates are skipped and DB rejections counted, so one bad
+/// entry cannot sink the run; only a category failure is fatal.
 pub async fn import_outlines(
     db: &Db,
     user_id: i64,
@@ -377,9 +358,7 @@ pub async fn import_outlines(
         };
 
         for opml_feed in outline.feeds {
-            // An OPML file is as attacker-influenced as a typed URL — it is
-            // often someone else's export — and nothing downstream would ask
-            // again until the sync worker tried to fetch it.
+            // OPML is attacker-influenced like a typed URL; validate before storing.
             let allowed =
                 Url::parse(&opml_feed.xml_url).is_ok_and(|url| fetcher.validate(&url).is_ok());
             if !allowed {
@@ -439,9 +418,7 @@ mod import_tests {
     use crate::models::user::{self, Role};
     use crate::services::fetch::Fetcher;
 
-    /// An OPML file is usually someone else's export, so its `xmlUrl` values are
-    /// no more trusted than a typed URL — and nothing downstream would question
-    /// them until the sync worker fetched them.
+    /// OPML `xmlUrl`s are no more trusted than a typed URL.
     #[tokio::test]
     async fn import_rejects_feeds_pointing_at_private_addresses() {
         let db = Db::connect_in_memory().await.unwrap();
@@ -576,10 +553,8 @@ mod tests {
         assert!(opml.contains("htmlUrl=\"https://blog.rust-lang.org\""));
     }
 
-    /// Attribute values arrive escaped, and a query string is where that shows
-    /// up in real subscription lists — `&` in a feed URL is `&amp;` on the wire.
-    /// The normalization that undoes it is one call, and porting to quick-xml
-    /// 0.42 rewrote that call, so this pins the result rather than the API.
+    /// `&amp;` in an attribute must be unescaped; pins the result across
+    /// quick-xml API changes.
     #[test]
     fn test_parse_opml_unescapes_attribute_entities() {
         let opml = r#"<?xml version="1.0" encoding="UTF-8"?>

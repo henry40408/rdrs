@@ -19,10 +19,8 @@ const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 /// Fallback caching directive used only when the origin image specifies none.
 const DEFAULT_CACHE_CONTROL: &str = "public, max-age=86400";
 
-/// Pick the `Cache-Control` to send for a proxied image: mirror the origin's
-/// directive when it sends a non-empty one (so an upstream `no-store`,
-/// `private`, or shorter `max-age` wins), otherwise fall back to a 1-day
-/// public TTL.
+/// Mirror the origin's non-empty `Cache-Control` (so `no-store` etc. win),
+/// else fall back to a 1-day public TTL.
 fn choose_cache_control(origin: Option<&str>) -> &str {
     origin
         .map(str::trim)
@@ -59,13 +57,9 @@ fn verify_proxy_signature(
     }
 }
 
-/// The 304 answer to a revalidation request, or `None` if the client did not
-/// send a matching validator.
+/// The 304 answer to a revalidation request, or `None` without a matching validator.
 ///
-/// `signature` reaches the response as an `ETag`, so it goes through
-/// `HeaderValue::from_str` rather than being formatted straight into the header
-/// list: a percent-decoded CR/LF in the query would otherwise fail deeper in the
-/// response path, where there is no longer a way to answer the request.
+/// `signature` goes through `HeaderValue::from_str` so a decoded CR/LF fails here, not deeper.
 fn not_modified(headers: &HeaderMap, signature: &str) -> Option<Response> {
     let etag = format!("\"{signature}\"");
 
@@ -99,16 +93,13 @@ pub async fn proxy_image(
     headers: HeaderMap,
     Query(query): Query<ProxyQuery>,
 ) -> AppResult<Response> {
-    // Decode the base64 URL
     let url_bytes = URL_SAFE_NO_PAD
         .decode(&query.url)
         .map_err(|_e| AppError::InvalidImageUrl)?;
     let url_str = String::from_utf8(url_bytes).map_err(|_e| AppError::InvalidImageUrl)?;
 
-    // Decode referrer if present
     let referrer = query.r.as_deref().map(decode_referrer).transpose()?;
 
-    // Verify signature (with or without referrer)
     if !verify_proxy_signature(
         &url_str,
         &query.s,
@@ -118,30 +109,20 @@ pub async fn proxy_image(
         return Err(AppError::InvalidSignature);
     }
 
-    // Parse and validate the URL. The fetcher re-checks every redirect hop and
-    // every resolved address as it goes; this refuses the obvious cases before
-    // a connection is opened at all.
+    // Early SSRF refusal; the fetcher re-checks every redirect hop and address.
     let url = Url::parse(&url_str).map_err(|_e| AppError::InvalidImageUrl)?;
     state
         .fetcher
         .validate(&url)
         .map_err(|_e| AppError::InvalidImageUrl)?;
 
-    // A proxied image is immutable for a given URL, and the request signature
-    // `s` is a stable per-URL token — so it doubles as the ETag. When the
-    // browser revalidates a cached image it sends `If-None-Match`; answer 304
-    // immediately and skip the origin round-trip entirely. This mirrors
-    // miniflux's media proxy and is what makes a refresh / post-TTL revisit
-    // cheap instead of re-downloading every image from origin.
-    //
-    // It runs *after* the signature check on purpose: ahead of it, anyone could
-    // send `If-None-Match: *` with an unsigned URL and get a cacheable 304 whose
-    // `ETag` echoed their own input back.
+    // The signature is a stable per-URL token, so it doubles as the ETag.
+    // Must run after the signature check, or an unsigned URL could get a 304
+    // echoing attacker input.
     if let Some(response) = not_modified(&headers, &query.s) {
         return Ok(response);
     }
 
-    // Fetch the image through the shared, connection-pooled client.
     let url_str = url.to_string();
     let user_agent = state.config.user_agent.clone();
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
@@ -165,7 +146,6 @@ pub async fn proxy_image(
         )));
     }
 
-    // Validate Content-Type
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
@@ -177,8 +157,6 @@ pub async fn proxy_image(
         return Err(AppError::UnsupportedImageType);
     }
 
-    // Mirror the origin's caching directive when it sends one (see
-    // `choose_cache_control`), else apply our default TTL.
     let cache_control = choose_cache_control(
         response
             .headers()
@@ -202,17 +180,11 @@ pub async fn proxy_image(
         return Err(AppError::ImageTooLarge);
     }
 
-    // The bytes decide, not the label. Accommodating an origin that mislabels
-    // an image is worth doing; relaying something that is not an image at all
-    // under this server's name is not. Serving the sniffed type also stops a
-    // wrong label from travelling any further.
+    // Serve the sniffed type: the bytes decide, not the origin's label.
     let content_type = sniff_image_type(&bytes)
         .ok_or(AppError::UnsupportedImageType)?
         .to_string();
 
-    // Return the image with appropriate headers. The ETag lets the browser
-    // revalidate cheaply on its next visit (see the `If-None-Match` 304
-    // short-circuit above).
     Ok((
         StatusCode::OK,
         [
@@ -227,11 +199,8 @@ pub async fn proxy_image(
 
 /// Whether the origin's `Content-Type` is one this proxy will consider.
 ///
-/// `application/octet-stream` used to be accepted outright, for the servers
-/// that never set a real type. That made the proxy a relay for arbitrary bytes,
-/// passed through under the origin's own label. It is still accepted, but only
-/// as "unlabelled": [`sniff_image_type`] then has to recognise the actual bytes
-/// before anything is served.
+/// `application/octet-stream` is accepted only as unlabelled; [`sniff_image_type`]
+/// must then recognise the bytes.
 fn is_valid_image_type(content_type: &str) -> bool {
     let ct = content_type.to_lowercase();
     ct.starts_with("image/") || ct == "application/octet-stream"
@@ -240,16 +209,8 @@ fn is_valid_image_type(content_type: &str) -> bool {
 /// The image type the first bytes of `body` actually are, or `None` for
 /// anything not recognised as an image.
 ///
-/// Signatures rather than a crate: the list is short, it does not change, and
-/// this is a security check — a dependency here would be one more thing to
-/// trust for very little.
-///
-/// SVG is deliberately included. It is scriptable, unlike every other entry
-/// here, but feeds embed SVG constantly (every shields.io badge in a release
-/// feed), and the two things that would make a proxied SVG dangerous are
-/// already shut: `X-Content-Type-Options: nosniff` and a CSP with no
-/// `unsafe-inline` apply to this response like any other, so script inside one
-/// does not run even when the URL is opened directly.
+/// SVG is allowed: feeds embed it constantly, and `nosniff` plus the CSP stop
+/// its scripts from running.
 fn sniff_image_type(body: &[u8]) -> Option<&'static str> {
     const SIGNATURES: &[(&[u8], &str)] = &[
         (b"\x89PNG\r\n\x1a\n", "image/png"),
@@ -285,17 +246,12 @@ fn sniff_image_type(body: &[u8]) -> Option<&'static str> {
     is_svg(body).then_some("image/svg+xml")
 }
 
-/// SVG has no magic number — it is XML — so this looks for the root element
-/// within the leading bytes, allowing for an XML declaration, a doctype or a
-/// comment ahead of it.
+/// SVG has no magic number, so look for the root element in the leading bytes.
 fn is_svg(body: &[u8]) -> bool {
     const SNIFF_LIMIT: usize = 1024;
 
     let head = &body[..body.len().min(SNIFF_LIMIT)];
-    // Not UTF-8 within the window: whatever it is, it is not an SVG document
-    // this server should re-serve. `from_utf8` on a truncated multi-byte
-    // character would also fail, which is fine — an SVG root element is ASCII
-    // and lands well inside the window.
+    // Non-UTF-8 in the window is not an SVG worth serving.
     let Ok(text) = std::str::from_utf8(head) else {
         return false;
     };
@@ -329,7 +285,6 @@ mod tests {
 
     #[test]
     fn test_decode_referrer_invalid_utf8() {
-        // Encode invalid UTF-8 bytes
         let encoded = URL_SAFE_NO_PAD.encode([0xff, 0xfe]);
         let result = decode_referrer(&encoded);
         assert!(result.is_err());
@@ -427,8 +382,7 @@ mod tests {
         }
     }
 
-    /// Kept on purpose: a release feed is full of shields.io badges, and the
-    /// scriptable part of SVG is already shut off by `nosniff` and the CSP.
+    /// Release feeds are full of SVG badges; `nosniff` and the CSP neuter scripts.
     #[test]
     fn svg_is_still_proxied() {
         assert_eq!(
@@ -445,9 +399,7 @@ mod tests {
         );
     }
 
-    /// The hole this closes: `application/octet-stream` used to be waved
-    /// through, so whatever the origin sent was relayed under this server's
-    /// name.
+    /// `application/octet-stream` must not relay arbitrary bytes.
     #[test]
     fn refuses_bytes_that_are_not_an_image() {
         for bytes in [

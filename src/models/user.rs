@@ -35,10 +35,8 @@ impl FromStr for Role {
     }
 }
 
-// `role` is stored as a TEXT column on both backends. We keep the public struct
-// field as `Role` (so callers are unaffected) by teaching sqlx to treat it as a
-// string: `Type`/`Decode` delegate to `String`, mapping the stored text back to
-// the enum. Binds always pass `role.as_str()`, so no `Encode` impl is needed.
+// `role` is TEXT on both backends: decode via `String`; binds pass `role.as_str()`,
+// so no `Encode` impl is needed.
 impl sqlx::Type<sqlx::Sqlite> for Role {
     fn type_info() -> <sqlx::Sqlite as sqlx::Database>::TypeInfo {
         <String as sqlx::Type<sqlx::Sqlite>>::type_info()

@@ -30,9 +30,7 @@ pub async fn stop_masquerade(
     }
 
     let session_token = admin.session.session_token.clone();
-    // While masquerading, `admin.user` is the impersonated target and
-    // `original_user_id` is the real admin — the one both acting here and
-    // being restored to the session.
+    // While masquerading, `original_user_id` is the real admin.
     let admin_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let new_token = session::stop_masquerade(&state.db, &session_token).await?;
     audit::masquerade_stopped(
@@ -46,16 +44,8 @@ pub async fn stop_masquerade(
     Ok((rotated_cookies(&state, &new_token), StatusCode::OK))
 }
 
-/// The pair of cookies a session-token rotation has to reissue, as a jar the
-/// handler can return alongside its own response.
-///
-/// Both are rebuilt from `new_token`: the session cookie carries the token
-/// itself, and the CSRF cookie a value *derived* from it, so reissuing only the
-/// first would leave the client holding a CSRF token that no longer matches and
-/// every state-changing request would fail `csrf_guard`.
-///
-/// `slide_session_cookie` leaves a response alone once it carries a `Set-Cookie`
-/// for these purposes under either name, so these reach the browser unmodified.
+/// Session and CSRF cookies reissued after a token rotation. Both must be
+/// rebuilt: the CSRF token derives from the session token.
 fn rotated_cookies(state: &AppState, new_token: &str) -> CookieJar {
     let secret = &state.config.secret;
     let secure = state.config.cookie_secure;
@@ -64,30 +54,12 @@ fn rotated_cookies(state: &AppState, new_token: &str) -> CookieJar {
         .add(build_csrf_cookie(new_token, secret, secure))
 }
 
-// ============================================================================
-// Form-action POST endpoints for the SSR /admin page. Each accepts a urlencoded
-// body and returns a FlashRedirect (303 + flash cookie + Location).
-// ============================================================================
+// Form-action POST endpoints for the SSR /admin page; each returns a FlashRedirect.
 
-/// Refuse an account-changing action unless the session proved its password
-/// recently, returning the redirect to answer with when it did not.
-///
-/// OWASP asks for current credentials before sensitive account changes,
-/// precisely so a stolen session or a CSRF that slips a guard cannot quietly
-/// hand out admin, disable an account, or delete one. The mechanism already
-/// existed — `middleware::auth::RecentlyAuthenticated` — but only passkey
-/// enrolment used it; the admin panel, which is strictly more powerful, did not.
-///
-/// A plain function rather than an extractor because the SSR admin page has no
-/// JavaScript to catch a 403 and re-prompt: the answer has to be a redirect the
-/// browser can follow, and `/admin` renders its own confirmation form.
-///
-/// Two deliberate exemptions:
-/// - **Forward-auth sessions**, whose password is not rdrs's to check.
-/// - **`stop_masquerade`**, which never calls this: the password that would be
-///   asked for belongs to the *impersonated* user, so the check could not be
-///   satisfied and the admin would be stranded. Ending one is also a
-///   de-escalation.
+/// Redirect unless the session re-authenticated recently (OWASP: re-verify
+/// before sensitive account changes). A redirect, not an extractor, so it works
+/// without JS. Exempt: forward-auth sessions, and `stop_masquerade` (it would
+/// ask for the impersonated user's password).
 fn require_recent_authentication(admin: &AdminUser) -> Option<FlashRedirect> {
     if admin.via_forward_auth || admin.session.authenticated_recently(chrono::Utc::now()) {
         return None;
@@ -104,12 +76,8 @@ pub struct AdminReauthForm {
     pub password: String,
 }
 
-/// `POST /admin/reauth` — re-open the confirmation window from the admin page.
-///
-/// The form-encoded twin of `POST /api/session/reauth`, so the admin panel keeps
-/// working with JavaScript switched off. Like that endpoint it creates nothing
-/// and rotates nothing, and it draws on the same `PasswordChange` budget, so it
-/// cannot be used to brute-force a password the change form throttles.
+/// `POST /admin/reauth` — no-JS twin of `POST /api/session/reauth`; shares the
+/// `PasswordChange` rate-limit budget so it cannot be used to brute-force.
 pub async fn reauth_form(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -118,9 +86,7 @@ pub async fn reauth_form(
     Form(req): Form<AdminReauthForm>,
 ) -> impl IntoResponse {
     if admin.via_forward_auth {
-        // Nothing to re-check; the proxy re-asserts this identity on every
-        // request. Answering "confirmed" keeps a stray submission coherent
-        // rather than demanding a password the account may not have.
+        // The proxy re-asserts identity on every request; nothing to check.
         return FlashRedirect::success("/admin", "Confirmed.");
     }
 
@@ -143,9 +109,7 @@ pub async fn reauth_form(
         );
     }
 
-    // While masquerading, `admin.user` is the impersonated account — the wrong
-    // password to ask for. The real admin is `original_user_id`, and their
-    // hash is what has to verify.
+    // Verify the real admin's password, not the impersonated user's.
     let actor_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let Ok(Some(actor)) = user::find_by_id(&state.db, actor_id).await else {
         return FlashRedirect::error("/admin", "Password confirmation failed.");
@@ -154,8 +118,7 @@ pub async fn reauth_form(
     if !crate::auth::verify_password(&req.password, &actor.password_hash) {
         return FlashRedirect::error("/admin", "Incorrect password.");
     }
-    // Correct password: hand the reservation back, matching every other
-    // credential path — confirming legitimately must not eat into the budget.
+    // Success must not consume the rate-limit budget.
     state.login_rate_limiter.release(Bucket::PasswordChange, ip);
 
     if session::mark_authenticated(&state.db, admin.session.id)
@@ -174,12 +137,8 @@ pub async fn reauth_form(
     FlashRedirect::success("/admin", "Confirmed. You can now change accounts.")
 }
 
-/// Mint a link for `user_id` and return the path the recipient should open.
-///
-/// The raw token exists only in this function's return value and in whatever the
-/// admin does with it next — the table keeps an HMAC, so nothing can reproduce it
-/// afterwards. A link recoverable from the database would be a standing
-/// credential for every account with an outstanding invite.
+/// Mint an invite link for `user_id`. Only an HMAC is stored, so the raw token
+/// is unrecoverable after this returns.
 async fn issue_invite(
     state: &AppState,
     user_id: i64,
@@ -201,9 +160,7 @@ async fn issue_invite(
     Ok(format!("/invite/{token}"))
 }
 
-/// Absolute URL for a link when `RDRS_PUBLIC_BASE_URL` is configured, so the
-/// admin can copy something sendable rather than a bare path. Falls back to
-/// the path, which is still correct — just not pasteable into a chat window.
+/// Absolute URL when `RDRS_PUBLIC_BASE_URL` is set, else the bare path.
 fn invite_url(state: &AppState, path: &str) -> String {
     match &state.config.public_base_url {
         Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
@@ -217,12 +174,8 @@ pub struct CreateUserForm {
     pub role: Role,
 }
 
-/// `POST /admin/users` — create an account and issue its first invite.
-///
-/// The account exists immediately but holds an unusable password hash (`"!"`, the
-/// convention forward-auth uses too), so it cannot be signed into by any path
-/// until someone redeems the link. That is what makes creating an account safe to
-/// do ahead of the person actually arriving.
+/// `POST /admin/users` — create an account and issue its first invite. The
+/// account is unusable until the invite is redeemed.
 pub async fn create_user_form(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -244,9 +197,7 @@ pub async fn create_user_form(
             return Err(AppError::RegistrationNotAllowed);
         }
 
-        // `"!"` never parses as a PHC string, so `verify_password` returns
-        // false for every input — the account is unreachable until the invite
-        // is redeemed and a real hash replaces it.
+        // `"!"` never parses as a PHC string, so no password verifies.
         let created = user::create_user(&state.db, &username, "!", req.role).await?;
         audit::account_created(
             created.id,
@@ -255,8 +206,6 @@ pub async fn create_user_form(
             req.role.as_str(),
         );
 
-        // Same seeding as the setup path, so a new account can add its first
-        // feed without creating a category first.
         category::create_category(&state.db, created.id, "Uncategorized").await?;
 
         issue_invite(&state, created.id, actor_id, "account_created").await
@@ -264,10 +213,7 @@ pub async fn create_user_form(
     .await;
 
     match result {
-        // The message is the bare URL and nothing else: `/admin` recognises it
-        // by shape and renders it in its own block (see
-        // `pages::extract_invite_link`), which beats trying to pick a link back
-        // out of a sentence.
+        // Bare URL only: `/admin` detects it via `pages::extract_invite_link`.
         Ok(path) => FlashRedirect::success("/admin", invite_url(&state, &path)),
         Err(AppError::UsernameExists) => {
             FlashRedirect::error("/admin", "That username is already taken.")
@@ -281,13 +227,7 @@ pub async fn create_user_form(
 }
 
 /// `POST /admin/users/{id}/invite` — issue a fresh link, revoking any current
-/// one.
-///
-/// Two jobs, one mechanism: handing a pending account a replacement when the
-/// first link expired, and resetting the password of an account that already has
-/// one. rdrs has no self-service recovery — with no email there is nowhere to
-/// send it — so this is the recovery path, and it deliberately leaves the
-/// existing password working until the link is redeemed.
+/// one. Also the password-reset path; the old password works until redeemed.
 pub async fn reissue_invite_form(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -405,9 +345,7 @@ pub async fn update_status_form(
             user::disable_user(&state.db, user_id).await?;
             session::delete_user_sessions(&state.db, user_id).await?;
             audit::sessions_destroyed_bulk(user_id, "admin_disable", None);
-            // Disabling an account must also cut off any GReader client still
-            // holding an API token — otherwise a disabled user's RSS app keeps
-            // syncing indefinitely, since its token never touches `session`.
+            // API tokens bypass `session`, so revoke them too.
             api_token::delete_user_tokens(&state.db, user_id).await?;
         } else if !disabled && target.is_disabled() {
             user::enable_user(&state.db, user_id).await?;
@@ -436,9 +374,6 @@ pub async fn start_masquerade_form(
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(target_user_id): Path<i64>,
 ) -> Response {
-    // Taking over another account is the most powerful thing on this page, so
-    // it is guarded like the rest. Note the asymmetry with `stop_masquerade`,
-    // which is deliberately not guarded — see `require_recent_authentication`.
     if let Some(redirect) = require_recent_authentication(&admin) {
         return redirect.into_response();
     }
@@ -449,9 +384,6 @@ pub async fn start_masquerade_form(
     }
 
     let session_token = admin.session.session_token.clone();
-    // Not masquerading yet (checked above), so `original_user_id` is `None`
-    // and this is just the current admin — the actor about to start acting as
-    // `target_user_id`.
     let actor_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let result: AppResult<String> = async {
         let target = user::find_by_id(&state.db, target_user_id)

@@ -118,10 +118,8 @@ mod tests {
             EventBus::new(8),
         );
 
-        // Cancel immediately
         cancel_token.cancel();
 
-        // Worker should stop
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(
             result.is_ok(),
@@ -143,21 +141,18 @@ mod tests {
             EventBus::new(8),
         );
 
-        // Give worker time to run one tick (interval starts immediately with first tick)
+        // Let the first (immediate) tick run.
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Cancel worker
         cancel_token.cancel();
 
-        // Worker should stop
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(result.is_ok(), "Background sync should stop gracefully");
     }
 
     #[test]
     fn test_bucket_calculation() {
-        // Verify bucket calculation logic: (timestamp / 60 % 60)
-        // Bucket should be 0-59 based on current minute
+        // Bucket is (timestamp / 60 % 60), i.e. 0-59.
         let now = Utc::now();
         #[allow(
             clippy::cast_sign_loss,

@@ -12,8 +12,7 @@ use filters::{
     Bind, Dialect, apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
     published_sort_entry_hint,
 };
-// Only the unit tests exercise this predicate directly; production code reaches
-// it through `published_sort_entry_hint`.
+// Tests only; production reaches it via `published_sort_entry_hint`.
 #[cfg(test)]
 use filters::is_no_entry_side_predicate;
 
@@ -35,10 +34,8 @@ pub struct Entry {
     pub title: Option<String>,
     pub link: Option<String>,
     pub content: Option<String>,
-    /// The article fetched by "Fetch Full Content", as raw HTML — `None` until
-    /// someone asks for it. Sanitised per render like [`Self::content`], never
-    /// at write time: `sanitize_html` signs image-proxy URLs with the app
-    /// secret, and a stored signature would outlive its key.
+    /// Raw HTML from "Fetch Full Content". Sanitised per render, never at write
+    /// time: sanitising signs image-proxy URLs, and a stored signature would outlive its key.
     pub full_content: Option<String>,
     pub summary: Option<String>,
     pub author: Option<String>,
@@ -63,18 +60,9 @@ pub struct EntryWithFeed {
 }
 
 impl EntryWithFeed {
-    /// Base URL for resolving relative URLs inside this entry's content.
-    ///
-    /// `entry.link` first: it names the document the markup was authored
-    /// against. It is optional — an RSS `<item>` is valid with only a `<guid>` —
-    /// so it falls back to the feed's declared site, then to the feed URL.
-    ///
-    /// Never returns `None`, and that is the point: it lets
-    /// [`crate::services::sanitize_html`] treat an unresolvable image URL as
-    /// markup to drop rather than pass through. A feed omitting `<link>` used to
-    /// leave `<img src="//evil.tld/x.gif">` unproxied, which in a client without
-    /// our CSP fetches straight from the attacker — the reader's IP and a read
-    /// receipt with it.
+    /// Base URL for resolving relative URLs: `entry.link`, then the feed site,
+    /// then the feed URL. Never `None`, so [`crate::services::sanitize_html`]
+    /// can drop unresolvable image URLs instead of passing them through unproxied.
     pub fn content_base_url(&self) -> &str {
         [self.entry.link.as_deref(), self.site_url.as_deref()]
             .into_iter()
@@ -93,31 +81,22 @@ pub struct EntryFilter {
     pub read_only: bool,
     pub search: Option<String>,
     pub has_summary: Option<bool>,
-    /// Snapshot boundary for the unread filter — a UTC `YYYY-MM-DD HH:MM:SS`
-    /// string, the format `datetime('now')` writes into `entry.read_at`. With
-    /// `unread_only`, entries read at-or-after this instant still count as
-    /// unread, so reading-pane navigation can return to what the reader just
-    /// finished. Ignored when `unread_only` is false.
+    /// With `unread_only`, entries read at-or-after this UTC `YYYY-MM-DD HH:MM:SS`
+    /// instant still count as unread, so reading-pane navigation can return to them.
     pub read_after: Option<String>,
-    /// Parsed boolean query AST for the global `/search` page. Set by the
-    /// search handler from the `?q=` string; `None` on every other list path
-    /// (a no-op). Rendered to SQL by `filters::render_query`.
+    /// Boolean query AST for `/search`; `None` elsewhere. Rendered by `filters::render_query`.
     #[serde(skip)]
     pub query: Option<query::QueryNode>,
 }
 
-/// Pagination cursor. The wire format on the API is opaque to clients; we
-/// emit the new composite form `<iso_8601_ts>|<id>` and accept the legacy
-/// bare-`i64` form as a one-time grace path for in-flight cursors that may
-/// still live in browser URLs/JS state at deploy time.
+/// Pagination cursor: emits `<iso_8601_ts>|<id>`; also accepts a legacy bare
+/// `i64` for in-flight cursors from older clients.
 #[derive(Debug, Clone)]
 pub enum ContinuationCursor {
-    /// New `(sort_ts, id)` composite. `sort_ts` is the entry's sort-field
-    /// value as TEXT (the same byte-string `SQLite` stores), so the predicate
-    /// compares against an indexed column without conversion.
+    /// `(sort_ts, id)`; `sort_ts` is the sort column as stored TEXT, so the
+    /// predicate compares against the indexed column without conversion.
     Composite { sort_ts: String, id: i64 },
-    /// Legacy `e.id < ?` cursor — accepted on input only; emitted only by
-    /// pre-#164 clients.
+    /// Legacy `e.id < ?` cursor; input only.
     LegacyId(i64),
 }
 
@@ -150,18 +129,16 @@ pub struct ContinuationParams {
     pub oldest_first: bool,
     pub limit: i64,
     pub continuation: Option<ContinuationCursor>,
-    /// Oldest timestamp (seconds since epoch)
+    /// Oldest timestamp (epoch seconds)
     pub ot: Option<i64>,
-    /// Newest timestamp (seconds since epoch)
+    /// Newest timestamp (epoch seconds)
     pub nt: Option<i64>,
     /// Sort order (default: `PublishedAt`)
     pub sort_order: EntrySortOrder,
 }
 
-/// Flat row for the `EntryWithFeed` join. `sqlx::FromRow` matches by column
-/// NAME and the join has duplicate base names (`e.title`/`f.title`), so the
-/// `ENTRY_WITH_FEED_COLUMNS_*` lists alias every column to the fields below.
-/// `has_icon` is an integer that maps to the `bool` `feed_has_icon`.
+/// Flat row for the `EntryWithFeed` join. `FromRow` matches by column name and
+/// the join has duplicate names, so `ENTRY_WITH_FEED_COLUMNS_*` alias every column.
 #[derive(sqlx::FromRow)]
 struct EntryWithFeedRow {
     id: i64,
@@ -217,17 +194,14 @@ impl From<EntryWithFeedRow> for EntryWithFeed {
     }
 }
 
-/// SELECT column list for [`EntryWithFeedRow`], aliased to its field names.
-/// `has_icon` here uses a correlated COUNT subquery, for queries that do NOT
-/// `LEFT JOIN image`. Keep both variants and the row struct in sync.
+/// SELECT list for [`EntryWithFeedRow`]; `has_icon` via correlated COUNT, for
+/// queries without `LEFT JOIN image`. Keep both variants and the row struct in sync.
 const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.full_content AS full_content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) AS has_icon, f.custom_referrer AS custom_referrer";
 
-/// Same columns as [`ENTRY_WITH_FEED_COLUMNS_COUNT`] but computes `has_icon`
-/// from a `LEFT JOIN image i` already present in the query.
+/// As [`ENTRY_WITH_FEED_COLUMNS_COUNT`], but `has_icon` from an existing `LEFT JOIN image i`.
 const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.full_content AS full_content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CAST(CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS BIGINT) AS has_icon, f.custom_referrer AS custom_referrer";
 
-/// Apply a dynamic query's binds in order: the loop every runtime-built
-/// query below shares.
+/// Apply a dynamic query's binds in order.
 macro_rules! bind_all {
     ($q:expr, $binds:expr) => {{
         let mut q = $q;
@@ -243,11 +217,8 @@ macro_rules! bind_all {
 }
 
 // --- dynamic-query execution helpers ---------------------------------------
-//
-// Several list/count queries are built at runtime (filter conditions + cursor)
-// into a SQL `String` with `$N` placeholders and a parallel `Vec<Bind>`. These
-// dispatch on the backend and apply the binds in order. Runtime strings are
-// wrapped in `sqlx::AssertSqlSafe` — every fragment is built by this module.
+// Runtime-built SQL (`$N` placeholders + parallel `Vec<Bind>`), wrapped in
+// `sqlx::AssertSqlSafe` — every fragment is built by this module.
 
 async fn fetch_entries_with_feed(
     db: &Db,
@@ -322,8 +293,8 @@ async fn fetch_id_ts_rows(
     }
 }
 
-/// Execute a runtime-built statement, returning rows affected. A write path
-/// (mark-all-read), so it takes the write-priority admission for its duration.
+/// Execute a runtime-built write, returning rows affected. Takes write-priority
+/// admission for its duration.
 async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sqlx::Error> {
     let _guard = db.admit().await;
     match db.inner() {
@@ -394,9 +365,7 @@ pub async fn find_by_id_with_feed(db: &Db, id: i64) -> AppResult<Option<EntryWit
         .map_err(AppError::Database)
 }
 
-/// Fetch a single entry by id, scoped to a specific user via the feed→category
-/// ownership join. Returns `None` if the entry does not exist or belongs to a
-/// different user (callers should treat both as 404).
+/// Fetch an entry scoped to `user_id`; `None` if missing or not owned (both 404).
 pub async fn find_by_id_for_user(
     db: &Db,
     user_id: i64,
@@ -416,8 +385,7 @@ pub async fn find_by_id_for_user(
         .map_err(AppError::Database)
 }
 
-/// Fetch the sort-field value (as the exact TEXT string `SQLite` stores) for
-/// emitting a composite cursor. Returns `None` if the entry doesn't exist.
+/// Sort-field value as the exact cursor TEXT; `None` if the entry doesn't exist.
 pub async fn fetch_sort_ts(
     db: &Db,
     entry_id: i64,
@@ -428,10 +396,8 @@ pub async fn fetch_sort_ts(
         EntrySortOrder::StarredAt => "starred_at",
         EntrySortOrder::PublishedAt => "COALESCE(published_at, created_at)",
     };
-    // Emit the cursor string in the exact form the WHERE predicate compares
-    // against: the raw TEXT column on SQLite, `to_char(..., 'YYYY-MM-DD
-    // HH24:MI:SS')` on PG (columns are TIMESTAMPTZ there). See
-    // `Dialect::cursor_ts`.
+    // Must match the WHERE predicate's form: raw TEXT on SQLite, `to_char` on PG.
+    // See `Dialect::cursor_ts`.
     let ts_expr = Dialect::from_db(db).cursor_ts(column_expr);
     let sql = format!("SELECT {ts_expr} FROM entry WHERE id = $1");
     let r = match db.inner() {
@@ -487,11 +453,8 @@ pub async fn list_by_user(
         EntrySortOrder::StarredAt => "e.starred_at DESC",
     };
 
-    // Force the right entry index for the high-traffic list pages: the SQLite
-    // planner otherwise picks `category -> feed -> entry` and walks every row
-    // before sorting. The hint only applies to the published-order sort; the
-    // read_at / starred_at sorts have their own indexes, and
-    // `Dialect::index_hint` drops the SQLite-only `INDEXED BY` on PostgreSQL.
+    // Force the published-order index: SQLite otherwise walks
+    // `category -> feed -> entry` and sorts every row. `index_hint` is a no-op on PG.
     let entry_hint = if sort_order == EntrySortOrder::PublishedAt {
         dialect.index_hint(published_sort_entry_hint(filter))
     } else {
@@ -519,16 +482,9 @@ pub async fn list_by_user(
         .map_err(AppError::Database)
 }
 
-/// The entries a client mirrors for offline reading, newest first.
-///
-/// `keep` is the whole budget, not a per-category one: the reader asked for
-/// "N entries on my disk" and gets exactly N. Unread entries claim the slots
-/// first, since that is the queue someone takes onto a plane; starred entries
-/// fill whatever is left, which in practice means the read-and-starred ones —
-/// an unread starred entry is already in the first set.
-///
-/// `keep == 0` is offline reading switched off and returns nothing without
-/// touching the database.
+/// Entries a client mirrors for offline reading, newest first. `keep` is the
+/// total budget: unread first, then starred fill the rest. `keep == 0` returns
+/// nothing without touching the database.
 pub async fn list_offline_set(db: &Db, user_id: i64, keep: i64) -> AppResult<Vec<EntryWithFeed>> {
     if keep <= 0 {
         return Ok(Vec::new());
@@ -564,10 +520,8 @@ pub async fn list_offline_set(db: &Db, user_id: i64, keep: i64) -> AppResult<Vec
             0,
         )
         .await?;
-        // The two queries overlap (an unread entry can be starred), so the
-        // second one is filtered rather than trusted to fit `remaining`. That
-        // leaves the set short of the budget by the size of the overlap, which
-        // is the honest answer: a deduplicated union has no more members.
+        // An unread entry can also be starred, so dedupe; the set may fall short
+        // of the budget by the overlap.
         set.extend(starred.into_iter().filter(|e| seen.insert(e.entry.id)));
     }
 
@@ -636,12 +590,9 @@ pub async fn count_unread_by_feed(
     Ok(rows.into_iter().collect())
 }
 
-/// Returns a map of `feed_id` -> unread count for the feeds of one category.
-///
-/// Per category rather than reusing `count_unread_by_feed`, which aggregates
-/// every feed the account has: the point of loading feeds lazily is to keep a
-/// 1000-feed subscription off the hot path. `user_id` stays in the WHERE clause
-/// so a guessed `category_id` cannot read another account's counts.
+/// `feed_id` -> unread count for one category's feeds (keeps lazy loading off
+/// the all-feeds aggregate). `user_id` stays in the WHERE so a guessed
+/// `category_id` can't read another account's counts.
 pub async fn count_unread_by_feed_in_category(
     db: &Db,
     user_id: i64,
@@ -678,55 +629,33 @@ pub async fn count_unread_by_category(
     Ok(rows.into_iter().collect())
 }
 
-/// Result of an entry upsert. The insert path is guarded against tombstones,
-/// so a "skipped" state exists alongside insert/update, and an existing row
-/// whose mutable columns already match the incoming values yields `Unchanged`
-/// (no write is issued — see [`UPSERT_SELECT_SQL`]).
+/// Result of an entry upsert. `SkippedTombstoned` means the guid is tombstoned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpsertOutcome {
     Inserted(i64),
     Updated(i64),
-    /// The row exists and every mutable column already equals the incoming
-    /// value, so the UPDATE was skipped entirely.
+    /// Every mutable column already matched; no write issued.
     Unchanged(i64),
     SkippedTombstoned,
 }
 
-/// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
-///
-/// The lean variant used by the feed-sync hot loop, which only needs the outcome
-/// flag: it looks the existing row up by `id` alone and skips the full-row
-/// `find_by_id` re-read [`upsert_entry`] performs. Wrap a sync loop in a single
-/// transaction (see `feed_sync`) to collapse the per-entry commits.
-// Shared upsert statements. `datetime('now')` is kept rather than a bound
-// `Utc::now()` so `updated_at` matches the TEXT format of the column DEFAULTs —
-// the composite pagination cursor compares timestamps as strings, so every entry
-// timestamp must share one format. `pg_rewrite` turns it into `now()` on PG.
-// `published_at` is bound as a seconds-truncated `NaiveDateTime`, which sqlx
-// encodes as the same TEXT on SQLite and as a `timestamp` on PG.
-// Kept to `id` only: `UNIQUE(feed_id, guid)` makes this an index-only lookup that
-// never touches the row. Selecting the comparable columns would force a full row
-// read (a multi-KB `content` marshalled into a String) on every entry of every
-// poll — slower than the write it would save. The no-op check therefore lives in
-// the UPDATE's WHERE clause.
+// Upsert statements. `datetime('now')` (not a bound `Utc::now()`) keeps
+// `updated_at` in the column-DEFAULT TEXT format the string-compared cursor
+// needs; `pg_rewrite` maps it to `now()`.
+// SELECT only `id`: `UNIQUE(feed_id, guid)` makes it index-only; reading the
+// comparable columns costs more than the write it would save, so the no-op
+// check lives in the UPDATE's WHERE.
 const UPSERT_SELECT_SQL: &str = "SELECT id FROM entry WHERE guid = $1 AND feed_id = $2";
-// The UPDATE is guarded by a "something actually differs" predicate so a poll
-// that re-serves byte-identical articles writes nothing: feeds resend their whole
-// window every time, and without this every entry is rewritten (and WAL-logged)
-// on every sync. `rows_affected() == 0` then means "already current", which is
-// what distinguishes `Updated` from `Unchanged`.
-//
-// The predicate is the one genuine dialect fork here — SQLite spells NULL-safe
-// inequality `IS NOT`, PostgreSQL `IS DISTINCT FROM`. Two literals rather than a
-// `pg_rewrite` rule on purpose: that shim substitutes blindly, so an `IS NOT`
-// rule would also hit every `IS NOT NULL` in the codebase. `content_text` is
-// derived from `content`, so comparing `content` covers it.
+// The UPDATE only writes when a column differs, so re-served identical articles
+// cost no write; `rows_affected() == 0` means `Unchanged`. NULL-safe inequality
+// forks per dialect (`IS NOT` / `IS DISTINCT FROM`) as two literals on purpose:
+// a `pg_rewrite` rule would also corrupt every `IS NOT NULL`. `content_text`
+// derives from `content`, so it needn't be compared.
 const UPSERT_UPDATE_SQL_SQLITE: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = datetime('now') WHERE id = $7 AND (title IS NOT $1 OR link IS NOT $2 OR content IS NOT $3 OR summary IS NOT $4 OR author IS NOT $5)";
 const UPSERT_UPDATE_SQL_PG: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = now() WHERE id = $7 AND (title IS DISTINCT FROM $1 OR link IS DISTINCT FROM $2 OR content IS DISTINCT FROM $3 OR summary IS DISTINCT FROM $4 OR author IS DISTINCT FROM $5)";
 const UPSERT_INSERT_SQL: &str = "INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 WHERE NOT EXISTS (SELECT 1 FROM entry_tombstone WHERE feed_id = $1 AND guid = $2) RETURNING id";
 
-/// The mutable-column payload of an upsert, shared by the `&Db` and `&mut Tx`
-/// update helpers so the seven binds are sequenced in exactly one place.
+/// Mutable-column payload shared by the pooled and tx update helpers.
 struct UpsertUpdate<'a> {
     id: i64,
     title: Option<&'a str>,
@@ -737,9 +666,7 @@ struct UpsertUpdate<'a> {
     content_text: Option<&'a str>,
 }
 
-/// Run the guarded UPDATE against a transaction. Dispatched by hand rather than
-/// through `db_execute_tx!` because the predicate differs per dialect and the
-/// macros take a single `&'static str`.
+/// Guarded UPDATE on a transaction; hand-dispatched because the SQL differs per dialect.
 async fn upsert_update_tx(tx: &mut Tx<'_>, u: &UpsertUpdate<'_>) -> Result<u64, sqlx::Error> {
     match tx {
         Tx::Sqlite { tx: t, .. } => {
@@ -802,10 +729,8 @@ async fn upsert_update(db: &Db, u: &UpsertUpdate<'_>) -> Result<u64, sqlx::Error
     }
 }
 
-/// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
-/// The tombstone-guarded insert uses `RETURNING id`, so `Some` means an insert
-/// happened and `None` means the guid is tombstoned. A row that already matches
-/// yields [`UpsertOutcome::Unchanged`] without issuing a write.
+/// Upsert an entry without re-reading the row (feed-sync hot path). The insert
+/// is tombstone-guarded via `RETURNING id`: no row means tombstoned.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry_id(
     db: &Db,
@@ -818,10 +743,8 @@ pub async fn upsert_entry_id(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
-    // Bound as a seconds-truncated NaiveDateTime: sqlx encodes it as the
-    // `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against, and
-    // as a `timestamp` that assignment-casts into PG's `timestamptz`. A raw
-    // string bind is rejected by PG — text does not coerce into that column.
+    // Seconds-truncated NaiveDateTime: SQLite cursor TEXT, PG `timestamp`
+    // (a raw string bind is rejected by PG's `timestamptz`).
     let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
     let content_text = content.map(strip_to_search_text);
 
@@ -872,8 +795,7 @@ pub async fn upsert_entry_id(
     })
 }
 
-/// Transactional sibling of [`upsert_entry_id`] for the feed-sync unit of work,
-/// which upserts a whole feed's entries and records the fetch result atomically.
+/// Transactional [`upsert_entry_id`] for feed sync's atomic unit of work.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry_id_tx(
     tx: &mut Tx<'_>,
@@ -886,10 +808,8 @@ pub async fn upsert_entry_id_tx(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
-    // Bound as a seconds-truncated NaiveDateTime: sqlx encodes it as the
-    // `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against, and
-    // as a `timestamp` that assignment-casts into PG's `timestamptz`. A raw
-    // string bind is rejected by PG — text does not coerce into that column.
+    // Seconds-truncated NaiveDateTime: SQLite cursor TEXT, PG `timestamp`
+    // (a raw string bind is rejected by PG's `timestamptz`).
     let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
     let content_text = content.map(strip_to_search_text);
 
@@ -940,9 +860,7 @@ pub async fn upsert_entry_id_tx(
     })
 }
 
-/// Idempotent `(feed_id, guid)` tombstone insert. Shared by the single-shot
-/// [`insert_tombstone`] helper and the batched `prune_read_retention_batch`
-/// loop so the statement text lives in exactly one place.
+/// Idempotent `(feed_id, guid)` tombstone insert.
 const INSERT_TOMBSTONE_SQL: &str = "INSERT INTO entry_tombstone (feed_id, guid) VALUES ($1, $2) ON CONFLICT(feed_id, guid) DO NOTHING";
 
 /// Record a tombstone for `(feed_id, guid)`. Idempotent.
@@ -951,10 +869,8 @@ pub async fn insert_tombstone(db: &Db, feed_id: i64, guid: &str) -> AppResult<()
     Ok(())
 }
 
-/// Build the victim-selection query for retention pruning. The per-user age
-/// cutoff `read_at < now - retention_read_days` dialect-forks its interval
-/// expression (see [`Dialect::days_ago`]), so the SQL is assembled at call time
-/// rather than being a `const` literal.
+/// Victim-selection SQL for retention pruning; built at call time because the
+/// interval dialect-forks (see [`Dialect::days_ago`]).
 fn retention_victims_sql(dialect: Dialect) -> String {
     let cutoff = dialect.days_ago("us.retention_read_days");
     format!(
@@ -971,20 +887,14 @@ fn retention_victims_sql(dialect: Dialect) -> String {
     )
 }
 
-/// Delete up to `batch_size` read, aged, non-starred entries belonging to users
-/// who have opted into retention, recording a tombstone for each. Returns the
-/// number deleted.
-///
-/// One batch runs in a single transaction so the tombstone+delete pair is atomic
-/// against a concurrent feed refresh. Victims are gathered Rust-side so the
-/// delete targets exact ids rather than re-running a `LIMIT` without `ORDER BY`.
+/// Delete up to `batch_size` read, aged, unstarred entries of opted-in users,
+/// tombstoning each; returns the count. One transaction per batch keeps
+/// tombstone+delete atomic against a concurrent refresh.
 pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult<u64> {
     let sql = retention_victims_sql(Dialect::from_db(db));
     let mut tx = db.begin().await?;
 
-    // Dynamic SQL (dialect-forked interval) can't go through the static-SQL
-    // `query_all_tx!` macro, so dispatch the fetch on the transaction's backend
-    // directly.
+    // Dynamic SQL can't use `query_all_tx!`, so dispatch on the backend directly.
     let victims: Vec<(i64,)> = match &mut tx {
         Tx::Sqlite { tx: t, .. } => {
             sqlx::query_as::<sqlx::Sqlite, (i64,)>(sqlx::AssertSqlSafe(sql))
@@ -1006,12 +916,9 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
         return Ok(0);
     }
 
-    // Two set-based statements rather than a 2-per-victim loop: at BATCH_SIZE
-    // 500 that is 2 statements per batch instead of 1000, which shortens the
-    // window the batch holds SQLite's single write lock. The tombstone insert
-    // reads feed_id/guid back out of `entry`, so only the ids need binding and
-    // both statements target the identical set. (The `WHERE id IN (...)` also
-    // disambiguates SQLite's `INSERT ... SELECT ... ON CONFLICT` parse.)
+    // Two set-based statements per batch (not two per victim) to shorten the
+    // SQLite write-lock window. `WHERE id IN (...)` also disambiguates SQLite's
+    // `INSERT ... SELECT ... ON CONFLICT` parse.
     let in_clause = (0..victims.len())
         .map(|i| format!("${}", i + 1))
         .collect::<Vec<_>>()
@@ -1047,9 +954,7 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
     Ok(deleted)
 }
 
-/// Upsert an entry and return the resulting [`Entry`] plus whether it was new.
-/// A thin wrapper over [`upsert_entry_id`] for callers that need the full record;
-/// the feed-sync hot path calls that directly to skip the extra row read.
+/// Upsert and return the full [`Entry`] plus whether it was new.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry(
     db: &Db,
@@ -1137,10 +1042,8 @@ pub async fn unstar_entry(db: &Db, id: i64) -> AppResult<Entry> {
     find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
-/// Set the starred state for an entry, scoped to the owning user. Idempotent.
-/// Returns the resulting `EntryWithFeed` plus a `changed` bool (parallels
-/// `set_read_for_user`), or `None` when the entry does not exist or belongs to
-/// another user — callers treat both as 404.
+/// Set starred state scoped to the owner. Idempotent. Returns the entry plus
+/// `changed`, or `None` if missing or not owned (both 404).
 pub async fn set_starred_for_user(
     db: &Db,
     user_id: i64,
@@ -1166,20 +1069,15 @@ pub async fn set_starred_for_user(
         .map(|ewf| (ewf, changed)))
 }
 
-/// Store the article fetched by "Fetch Full Content", scoped to the owning user.
-/// Overwrites any previous fetch, so pressing the button again is a refresh.
-///
-/// `html` is the *raw* extracted markup: it is sanitised on the way out, never
-/// on the way in — see [`Entry::full_content`].
+/// Store the raw "Fetch Full Content" HTML, scoped to the owner; overwrites any
+/// previous fetch. Sanitised on read — see [`Entry::full_content`].
 pub async fn set_full_content_for_user(
     db: &Db,
     user_id: i64,
     entry_id: i64,
     html: &str,
 ) -> AppResult<()> {
-    // The user scope rides on the same feed → category join every other
-    // per-user write uses, so an entry belonging to someone else updates
-    // nothing rather than erroring.
+    // Non-owned entries update nothing rather than erroring.
     db_execute!(
         db,
         "UPDATE entry SET full_content = $1, updated_at = datetime('now') \
@@ -1195,10 +1093,8 @@ pub async fn set_full_content_for_user(
     Ok(())
 }
 
-/// Set the read state for an entry, scoped to the owning user. Idempotent.
-/// Returns the resulting `EntryWithFeed` (or `None` when the entry does not
-/// exist or belongs to another user) plus whether the call actually changed
-/// state, which handlers use to decide on a flash toast.
+/// Set read state scoped to the owner. Idempotent. Returns the entry (`None` if
+/// missing or not owned) plus whether state changed.
 pub async fn set_read_for_user(
     db: &Db,
     user_id: i64,
@@ -1259,8 +1155,7 @@ pub async fn find_by_ids_with_feed(
         .map_err(AppError::Database)
 }
 
-/// List entry IDs with timestamps for a user, using continuation-based pagination.
-/// Returns Vec<(`entry_id`, `timestamp_usec`)>.
+/// List `(entry_id, timestamp_usec)` for a user with continuation-based pagination.
 pub async fn list_ids_by_user(
     db: &Db,
     user_id: i64,
@@ -1299,8 +1194,7 @@ pub async fn list_ids_by_user(
     };
 
     let limit_idx = binds.len() + 1;
-    // Epoch-microseconds sentinel for the "no more pages" boundary; the epoch
-    // extraction dialect-forks (SQLite `strftime` vs PG `EXTRACT(EPOCH …)`).
+    // "No more pages" sentinel; epoch extraction dialect-forks.
     let epoch_us = dialect.epoch("COALESCE(e.published_at, e.created_at)");
     let sql = format!(
         "SELECT e.id, {epoch_us} * 1000000 \
@@ -1356,11 +1250,9 @@ pub async fn list_by_user_with_continuation(
         (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
     };
 
-    // Page-0 (cursorless) index hint. Without it the planner walks
-    // category->feed->entry and temp-B-tree-sorts the whole corpus before LIMIT.
-    // Mirrors `list_by_user`'s hint, but only without a continuation predicate —
-    // at depth the predicate already drives the sort index, so that proven-fast
-    // plan is left untouched. Only published-order sorts have dedicated indexes.
+    // Page-0 only: without the hint the planner walks category->feed->entry and
+    // sorts the whole corpus. With a continuation predicate the sort index is
+    // already used, so leave that plan alone.
     let entry_hint = if pagination.sort_order == EntrySortOrder::PublishedAt
         && pagination.continuation.is_none()
     {
@@ -1387,19 +1279,14 @@ pub async fn list_by_user_with_continuation(
         .map_err(AppError::Database)
 }
 
-/// Apply common filter conditions to query builder.
-/// True when no `EntryFilter` field would add a predicate against the `entry`
-/// table itself. Gates the `INDEXED BY idx_entry_sort_ts` hint: with no
-/// entry-side filter, scanning the sort index DESC with LIMIT is far cheaper
-/// than the planner's default `category -> feed -> entry` walk.
+/// Mark a feed's unread entries read, optionally only those older than
+/// `older_than_days`. Returns rows affected.
 pub async fn mark_all_read_by_feed(
     db: &Db,
     feed_id: i64,
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
-    // `days` is an `i64` interpolated into the SQL (not injectable). The age
-    // cutoff dialect-forks via `Dialect::days_ago` (SQLite `datetime('now', …)`
-    // vs PG `now() - make_interval(…)`).
+    // `days` is an `i64` (not injectable); the cutoff dialect-forks via `Dialect::days_ago`.
     let age_condition = older_than_days
         .map(|days| {
             let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
@@ -1446,9 +1333,8 @@ pub async fn mark_all_read_by_user(
     Ok(rows as i64)
 }
 
-/// Mark every entry matching `filter` (and owned by `user_id`, and currently
-/// unread) as read. Reuses the shared filter builder so scoped search + status
-/// combine exactly as they do in the list query. Returns rows affected.
+/// Mark every unread entry matching `filter` and owned by `user_id` as read,
+/// using the list query's filter builder. Returns rows affected.
 pub async fn mark_read_by_filter(db: &Db, user_id: i64, filter: &EntryFilter) -> AppResult<i64> {
     let dialect = Dialect::from_db(db);
     let mut conditions = vec!["c.user_id = $1".to_string()];
@@ -1480,10 +1366,8 @@ pub struct EntryNeighbors {
     pub next_id: Option<i64>,
 }
 
-/// Find neighboring entries (prev/next) for an entry within a user's entries,
-/// ordered by `COALESCE(published_at, created_at)` DESC: `prev_id` is newer
-/// (higher in the list), `next_id` older. Honours every `EntryFilter`
-/// condition.
+/// Prev (newer) / next (older) entry by `COALESCE(published_at, created_at)` DESC,
+/// honouring every `EntryFilter` condition.
 pub async fn find_neighbors(
     db: &Db,
     user_id: i64,
@@ -1492,9 +1376,7 @@ pub async fn find_neighbors(
 ) -> AppResult<EntryNeighbors> {
     let dialect = Dialect::from_db(db);
 
-    // Get the current entry's sort timestamp as the `%Y-%m-%d %H:%M:%S` cursor
-    // TEXT (to_char on PG — see `Dialect::cursor_ts`), so it compares against the
-    // neighbour predicates below in the same form on both backends.
+    // Sort timestamp as cursor TEXT (see `Dialect::cursor_ts`).
     let sort_ts_select = dialect.cursor_ts("COALESCE(e.published_at, e.created_at)");
     let sort_time_sql = format!(
         "SELECT {sort_ts_select} \
@@ -1530,10 +1412,8 @@ pub async fn find_neighbors(
         });
     };
 
-    // On PG, bind the cursor as a `timestamptz` and compare the raw column so
-    // the neighbour lookups hit the timestamp index as a range scan (see
-    // `filters::parse_cursor_ts`); fall back to the `to_char` string comparison
-    // if the stored value can't be parsed. SQLite compares raw TEXT.
+    // On PG bind a `timestamptz` so the lookup is an index range scan; fall back
+    // to the `to_char` string if unparseable. SQLite compares raw TEXT.
     let pg_ts = (dialect == Dialect::Postgres)
         .then(|| filters::parse_cursor_ts(&sort_time))
         .flatten();
@@ -1542,13 +1422,12 @@ pub async fn find_neighbors(
         None => Bind::Text(s.to_string()),
     };
 
-    // Build filter conditions using apply_filter_conditions.
-    // Prev query base binds: $1=user_id, $2=sort_time
+    // Prev binds: $1=user_id, $2=sort_time
     let mut prev_conditions = Vec::new();
     let mut prev_binds: Vec<Bind> = vec![Bind::Int(user_id), cursor_bind(pg_ts, &sort_time)];
     apply_filter_conditions(&mut prev_conditions, &mut prev_binds, filter, dialect);
 
-    // Next query base binds: $1=user_id, $2=sort_time, $3=entry_id
+    // Next binds: $1=user_id, $2=sort_time, $3=entry_id
     let mut next_conditions = Vec::new();
     let mut next_binds: Vec<Bind> = vec![
         Bind::Int(user_id),
@@ -1568,21 +1447,11 @@ pub async fn find_neighbors(
         format!(" AND {}", next_conditions.join(" AND "))
     };
 
-    // Pin the published-order index and force the entry table to drive the join,
-    // so the planner walks it in sort order and stops at LIMIT 1.
-    //
-    // The snapshot-widened unread predicate `(read_at IS NULL OR read_at >= ?)`
-    // needs this: `published_sort_entry_hint` returns no hint for unread, and the
-    // OR otherwise makes the planner pick a MULTI-INDEX OR that pulls the whole
-    // read-majority of the table into a temp B-tree to take one row — O(table),
-    // growing with inbox size (~2ms/call at 50k entries, ~8ms at 200k). Pinning
-    // `idx_entry_sort_ts` with a CROSS JOIN turns that into an indexed range scan
-    // that short-circuits at the first match (~21µs, flat), identical results.
-    //
-    // Gated on `read_after`: only the snapshot OR triggers the bad plan. The
-    // strict `read_at IS NULL` path can still use the partial
-    // `idx_entry_unread_feed`, so it must not be force-pinned to the sort index.
-    // `Dialect::index_hint` drops the SQLite-only `INDEXED BY` on PostgreSQL.
+    // Pin the sort index with entry driving the join so it stops at LIMIT 1.
+    // Only for the snapshot OR `(read_at IS NULL OR read_at >= ?)`, which
+    // otherwise gets a MULTI-INDEX OR plan that is O(table). The strict unread
+    // path must not be pinned: it uses the partial `idx_entry_unread_feed`.
+    // `index_hint` is a no-op on PG.
     let (raw_hint, join_kw) = if filter.unread_only && filter.read_after.is_some() {
         (" INDEXED BY idx_entry_sort_ts", "CROSS JOIN")
     } else {
@@ -1590,16 +1459,13 @@ pub async fn find_neighbors(
     };
     let entry_hint = dialect.index_hint(raw_hint);
 
-    // Compare against the sort expression in the form matching the `$2` bind:
-    // the raw column when the cursor was bound as a `timestamptz` (sargable on
-    // PG; also the SQLite raw-TEXT path), or `to_char(...)` on the PG string
-    // fallback. ORDER BY stays on the raw expression regardless.
+    // Compare in the same form as the `$2` bind (raw column, or `to_char` on the
+    // PG string fallback); ORDER BY always uses the raw expression.
     let cmp_ts = match pg_ts {
         Some(_) => "COALESCE(e.published_at, e.created_at)".to_string(),
         None => dialect.cursor_ts("COALESCE(e.published_at, e.created_at)"),
     };
 
-    // Find previous entry (newer, comes before in DESC order)
     let prev_sql = format!(
         "SELECT e.id \
          FROM entry e{entry_hint} \
@@ -1611,7 +1477,6 @@ pub async fn find_neighbors(
          LIMIT 1"
     );
 
-    // Find next entry (older, comes after in DESC order)
     let next_sql = format!(
         "SELECT e.id \
          FROM entry e{entry_hint} \
@@ -1681,10 +1546,8 @@ pub async fn mark_all_read_by_category(
     Ok(rows as i64)
 }
 
-/// Build the bulk-update SQL + binds for the by-ids operations. `set_clause` is
-/// the `SET ...` body; `extra_where` is an optional predicate (e.g.
-/// `" AND read_at IS NULL"`) appended after the `id IN (...)` clause. `$1` is
-/// the user id; the ids fill `$2, $3, ...`.
+/// Bulk-update SQL + binds for by-ids operations. `$1` is the user id; ids fill
+/// `$2..`; `extra_where` is appended after `id IN (...)`.
 fn build_update_by_ids(
     user_id: i64,
     entry_ids: &[i64],
@@ -1716,9 +1579,8 @@ fn build_update_by_ids(
     (sql, binds)
 }
 
-/// Apply a bulk `SET` to the given entry ids in a single statement, scoped to
-/// the feeds the user owns. Returns the number of rows updated. Empty
-/// `entry_ids` is a no-op returning 0.
+/// Apply `SET` to `entry_ids` owned by the user in one statement; returns rows
+/// updated (0 for empty input).
 async fn update_entries_by_ids(
     db: &Db,
     user_id: i64,
@@ -1736,8 +1598,7 @@ async fn update_entries_by_ids(
     Ok(rows as i64)
 }
 
-/// Transactional twin of [`update_entries_by_ids`], for the `GReader` `edit_tag`
-/// unit of work that batches several tag mutations atomically.
+/// Transactional [`update_entries_by_ids`] for `GReader` `edit_tag`.
 async fn update_entries_by_ids_tx(
     tx: &mut Tx<'_>,
     user_id: i64,
@@ -1755,8 +1616,7 @@ async fn update_entries_by_ids_tx(
     Ok(rows as i64)
 }
 
-/// Bulk mark the given entries as read (only those currently unread), scoped to
-/// the user's feeds. Returns the number of rows updated.
+/// Bulk mark currently-unread entries read, scoped to the user.
 pub async fn mark_read_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids(
         db,
@@ -1768,8 +1628,7 @@ pub async fn mark_read_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppRe
     .await
 }
 
-/// Bulk mark the given entries as unread, scoped to the user's feeds, inside
-/// `GReader` `edit_tag`'s transaction.
+/// Bulk mark unread, scoped to the user, in `edit_tag`'s transaction.
 pub async fn mark_unread_by_ids_tx(
     tx: &mut Tx<'_>,
     user_id: i64,
@@ -1785,8 +1644,7 @@ pub async fn mark_unread_by_ids_tx(
     .await
 }
 
-/// Bulk star the given entries (only those not already starred), scoped to
-/// the user's feeds, inside `GReader` `edit_tag`'s transaction.
+/// Bulk star not-yet-starred entries, scoped to the user, in `edit_tag`'s transaction.
 pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
@@ -1798,8 +1656,7 @@ pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) ->
     .await
 }
 
-/// Bulk unstar the given entries, scoped to the user's feeds, inside
-/// `GReader` `edit_tag`'s transaction.
+/// Bulk unstar, scoped to the user, in `edit_tag`'s transaction.
 pub async fn unstar_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
@@ -1859,8 +1716,6 @@ mod tests {
 
     #[test]
     fn content_base_url_falls_back_to_site_then_feed() {
-        // An RSS `<item>` carrying only a `<guid>` is valid, and used to leave
-        // the sanitizer with no base at all.
         let ewf = ewf_with_base_parts(None, Some("https://site.example/"));
         assert_eq!(ewf.content_base_url(), "https://site.example/");
 
@@ -1870,8 +1725,7 @@ mod tests {
 
     #[test]
     fn content_base_url_treats_empty_strings_as_absent() {
-        // The columns are nullable *and* can hold "", so emptiness has to be
-        // skipped as well as `None` — an empty base resolves nothing.
+        // Nullable columns can also hold "".
         let ewf = ewf_with_base_parts(Some(""), Some(""));
         assert_eq!(ewf.content_base_url(), "https://feed.example/atom.xml");
     }
@@ -1898,8 +1752,7 @@ mod tests {
         .id
     }
 
-    /// `count` entries on one feed, oldest first, so the last id returned is
-    /// the newest by `published_at`.
+    /// `count` entries, oldest first (last id is newest).
     async fn seed_offline_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
         let mut ids = Vec::with_capacity(count);
         for i in 0..count {
@@ -1953,8 +1806,7 @@ mod tests {
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
         let ids = seed_offline_entries(&db, feed_id, 4).await;
 
-        // Oldest entry: read, so it is out of the unread half, but starred, so
-        // it is exactly what the leftover budget is for.
+        // Oldest: read but starred, so it fills the leftover budget.
         mark_as_read(&db, ids[0]).await.unwrap();
         star_entry(&db, ids[0]).await.unwrap();
 
@@ -1977,8 +1829,7 @@ mod tests {
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
         let ids = seed_offline_entries(&db, feed_id, 2).await;
 
-        // Unread *and* starred: in both queries, and a duplicate here would be
-        // a duplicate row on the library page and a wasted slot in the budget.
+        // Unread *and* starred: must not appear twice.
         star_entry(&db, ids[0]).await.unwrap();
 
         let set = list_offline_set(&db, user_id, 10).await.unwrap();
@@ -2163,9 +2014,7 @@ mod tests {
         let feed1 = create_test_feed(&db, category1, "https://example.com/feed1.xml").await;
         let feed2 = create_test_feed(&db, category2, "https://example.com/feed2.xml").await;
 
-        // Same matching title in both users' feeds; filter has no feed_id/
-        // category_id scoping, only a search term, so ownership must come
-        // entirely from the c.user_id = ?1 seed condition.
+        // No feed/category scoping: ownership comes only from the user_id seed condition.
         let e1 = upsert_entry_id(
             &db,
             feed1,
@@ -2434,7 +2283,6 @@ mod tests {
         .unwrap();
 
         mark_as_read(&db, entry1.id).await.unwrap();
-        // Star entry2
         star_entry(&db, entry2.id).await.unwrap();
 
         // Search for "Rust" with unread_only - should only return entry2
@@ -2505,7 +2353,6 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
 
-        // Count should be 5
         let count = count_by_user(&db, user_id, &filter).await.unwrap();
         assert_eq!(count, 5);
     }
@@ -2625,10 +2472,8 @@ mod tests {
         assert!(!titles.iter().any(|t| t == "go")); // no "rust" -> excluded
     }
 
-    // M1 regression: `NOT (NULL LIKE ...)` is NULL (not TRUE), so a naive
-    // `(NOT e.author LIKE ...)` would silently exclude every NULL-author row.
-    // The COALESCE(..., 0/FALSE) wrapper makes the leaf two-valued so negation
-    // correctly includes rows where the filtered column is NULL.
+    // `NOT (NULL LIKE ...)` is NULL; the COALESCE wrapper keeps negation
+    // including NULL-column rows.
     #[tokio::test]
     async fn query_negated_author_includes_null_author_entries() {
         let db = setup_db().await;
@@ -3052,10 +2897,7 @@ mod tests {
         assert_eq!(row.title.as_deref(), Some("Title 2"));
     }
 
-    /// Re-upserting byte-identical values must report `Unchanged` and leave the
-    /// row (including `updated_at`) untouched — feeds re-serve their whole
-    /// window every poll, so this is the common path, and rewriting every row
-    /// each time is pure WAL churn.
+    /// Re-upserting identical values reports `Unchanged` and leaves `updated_at` untouched.
     #[tokio::test]
     async fn upsert_identical_values_is_unchanged_and_does_not_write() {
         let db = setup_db().await;
@@ -3116,9 +2958,7 @@ mod tests {
         assert_eq!(edited.content.as_deref(), Some("<p>edited</p>"));
     }
 
-    /// A NULL column that stays NULL must not count as a difference — the
-    /// guard uses NULL-safe inequality (`IS NOT` / `IS DISTINCT FROM`), not
-    /// plain `<>`, which would yield NULL and silently rewrite every row.
+    /// NULL staying NULL is not a difference: the guard must be NULL-safe, not `<>`.
     #[tokio::test]
     async fn upsert_null_columns_compare_null_safely() {
         let db = setup_db().await;
@@ -3336,8 +3176,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Each call commits before the next read: the in-memory pool has one
-        // connection, which an open transaction would hold.
+        // Commit before each read: the one-connection pool would be held by a tx.
         macro_rules! in_tx {
             ($db:expr, $f:ident($($arg:expr),*)) => {{
                 let mut tx = $db.begin().await.unwrap();
@@ -3430,8 +3269,6 @@ mod tests {
         star_entry(&db, entries[1].id).await.unwrap();
         star_entry(&db, entries[3].id).await.unwrap();
 
-        // Entries are ordered by published_at DESC, so among the starred ones
-        // entry 3 (now+30s) has no newer sibling and entry 1 (now+10s) is older.
         let filter = EntryFilter {
             starred_only: true,
             ..Default::default()
@@ -3467,8 +3304,7 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // 5 entries published ascending — entries[4] is newest in the
-        // published-DESC list order.
+        // entries[4] is newest in list order.
         let mut entries = Vec::new();
         for i in 0..5 {
             let published = Utc::now() + chrono::Duration::seconds(i * 10);
@@ -3503,8 +3339,7 @@ mod tests {
         )
         .unwrap();
 
-        // Snapshot boundary 10 minutes ago: the just-read entries[2] is
-        // inside it, the hour-old entries[1] is not.
+        // Snapshot boundary: 10 minutes ago.
         let snapshot = (Utc::now() - chrono::Duration::minutes(10))
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();
@@ -3705,16 +3540,14 @@ mod tests {
 
     #[tokio::test]
     async fn composite_cursor_walks_non_monotonic_data_without_skip() {
-        // Repro for #164: when id↔published_at order diverges (OPML re-import,
-        // back-dated feed items), the legacy `e.id < ?` cursor silently skips.
-        // The composite cursor must visit every entry.
+        // #164: when id and published_at order diverge, the legacy `e.id < ?`
+        // cursor skips entries; the composite cursor must not.
         let db = setup_db().await;
         let user_id = create_test_user(&db, "u").await;
         let cat_id = create_test_category(&db, user_id, "c").await;
         let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
 
-        // 6 monotonic entries (newer ts ⇒ later id), then 4 "back-dated" entries
-        // with NEW ids but OLD timestamps (mimics OPML re-import).
+        // 6 monotonic entries, then 4 back-dated ones (new ids, old timestamps).
         let monotonic = [
             ("g1", "2026-04-01 10:00:00"),
             ("g2", "2026-04-02 10:00:00"),
@@ -3792,9 +3625,7 @@ mod tests {
 
     #[tokio::test]
     async fn composite_cursor_walks_non_monotonic_data_oldest_first_without_skip() {
-        // Same shape as composite_cursor_walks_non_monotonic_data_without_skip
-        // but exercises the oldest_first=true (ASC) path of the bounded-OR
-        // predicate. Triggered in production by the GReader `r=o` query param.
+        // As above, but the oldest_first (ASC) path, used by GReader `r=o`.
         let db = setup_db().await;
         let user_id = create_test_user(&db, "u").await;
         let cat_id = create_test_category(&db, user_id, "c").await;
@@ -3875,9 +3706,7 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_bare_i64_cursor_still_paginates() {
-        // In-flight cursors from pre-#164 deployments must still work for one
-        // grace period. Under monotonic data (the common case), the legacy
-        // `e.id < ?` predicate is correct.
+        // Legacy `e.id < ?` cursors still work on monotonic data.
         let db = setup_db().await;
         let user_id = create_test_user(&db, "u").await;
         let cat_id = create_test_category(&db, user_id, "c").await;
@@ -3964,10 +3793,7 @@ mod tests {
         }
     }
 
-    /// Captures the EXPLAIN QUERY PLAN output for a SELECT, concatenating every
-    /// `detail` column so callers can `assert!(plan.contains("idx_entry_…"))`.
-    /// The planner only needs the parameter count to match, so `n_params` dummy
-    /// `i64`s are bound.
+    /// Concatenated EXPLAIN QUERY PLAN `detail`s; binds `n_params` dummy `i64`s.
     async fn explain_plan_for(db: &Db, sql: &str, n_params: usize) -> String {
         let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
         let rows: Vec<(i64, i64, i64, String)> = match db.inner() {
@@ -3992,8 +3818,7 @@ mod tests {
     async fn list_by_user_uses_partial_index_for_starred() {
         let db = setup_db().await;
         let _ = create_test_user(&db, "u").await;
-        // Tiny in-memory dataset is enough — INDEXED BY is mandatory and the
-        // planner has no choice to override the hint.
+        // INDEXED BY is mandatory, so a tiny dataset suffices.
         let sql = r"
             SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.full_content, e.summary, e.author,
                    e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
@@ -4036,9 +3861,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_by_user_no_predicate_uses_sort_ts_index() {
-        // End-to-end: prepared SQL must include the INDEXED BY hint for the
-        // "All Entries" case, otherwise the planner falls back to walking
-        // every row via category->feed->entry.
+        // The "All Entries" SQL must carry the INDEXED BY hint.
         let db = setup_db().await;
         let user_id = create_test_user(&db, "u").await;
         let cat_id = create_test_category(&db, user_id, "c").await;
@@ -4067,10 +3890,7 @@ mod tests {
         .unwrap();
         assert_eq!(rows.len(), 3);
 
-        // Plan check: a hand-built copy of the same query (same shape as the
-        // builder produces with the no-predicate hint) must scan via
-        // `idx_entry_sort_ts`. We test the shape, not the exact runtime
-        // statement the dynamic builder assembles.
+        // Plan check on a hand-built copy of the query shape.
         let sql = r"
             SELECT e.id FROM entry e INDEXED BY idx_entry_sort_ts
             INNER JOIN feed f ON e.feed_id = f.id
@@ -4088,12 +3908,8 @@ mod tests {
 
     #[tokio::test]
     async fn continuation_page0_unfiltered_uses_sort_ts_index() {
-        // Regression guard for the page-0 index hint in
-        // `list_by_user_with_continuation`. Without `INDEXED BY idx_entry_sort_ts`
-        // the planner walks category->feed->entry and temp-B-tree-sorts the whole
-        // corpus before LIMIT — a ~350× slowdown on a large instance. The
-        // behavioral walk test would not catch a dropped hint, because the results
-        // are identical, so this pins the query plan directly.
+        // Pins the page-0 hint in `list_by_user_with_continuation`: a dropped
+        // hint gives identical results but a whole-corpus sort, so check the plan.
         let db = setup_db().await;
         let user_id = create_test_user(&db, "u").await;
         let cat_id = create_test_category(&db, user_id, "c").await;
@@ -4109,10 +3925,7 @@ mod tests {
             .unwrap();
         }
 
-        // Hand-built copy of the SQL `list_by_user_with_continuation` emits for a
-        // default filter, PublishedAt order and no continuation. The entry hint
-        // resolves to `INDEXED BY idx_entry_sort_ts`, and the ORDER BY includes
-        // the tie-breaker `e.id DESC` the continuation builder always appends.
+        // Hand-built copy of the default-filter, PublishedAt, no-continuation SQL.
         let sql = r"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
@@ -4134,18 +3947,13 @@ mod tests {
         );
     }
 
-    /// Locks the query plan for the snapshot-widened unread neighbours query.
-    /// Without the `idx_entry_sort_ts` hint and entry-first CROSS JOIN, the
-    /// planner answers `(read_at IS NULL OR read_at >= ?)` with a MULTI-INDEX OR
-    /// that scans the read-majority of the table into a temp B-tree — O(table)
-    /// per call, growing unbounded with inbox size.
+    /// Locks the plan for the snapshot-widened unread neighbours query (must not
+    /// fall back to an O(table) MULTI-INDEX OR).
     #[tokio::test]
     async fn find_neighbors_unread_read_after_uses_sort_ts_not_multi_index_or() {
         let db = setup_db().await;
         let _ = create_test_user(&db, "u").await;
-        // Mirrors the next-side SQL `find_neighbors` builds for an unread filter
-        // with `read_after` set. Each `$N` is distinct (the builder binds the
-        // sort_ts value twice); only the parameter count matters to the planner.
+        // Mirrors `find_neighbors`' next-side SQL; only the parameter count matters.
         let sql = r"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
@@ -4391,10 +4199,7 @@ mod tests {
         assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 1);
         assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 0);
 
-        // Every victim of every batch must have been tombstoned, not just the
-        // first of each: the prune writes tombstones as one set-based INSERT
-        // per batch, so a partial write would silently resurrect entries on
-        // the next refresh.
+        // Every victim of every batch must be tombstoned, or it resurrects on refresh.
         for i in 0..5 {
             let g = format!("g{i}");
             assert!(

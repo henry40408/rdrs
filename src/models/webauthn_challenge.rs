@@ -40,11 +40,8 @@ pub struct WebauthnChallenge {
     pub expires_at: DateTime<Utc>,
 }
 
-/// Row-shaped decode target: `challenge_type` is stored as TEXT, so it is read
-/// as `String` here and mapped to the `ChallengeType` enum in `From`. This keeps
-/// the storage backend-agnostic (plain TEXT/VARCHAR on both `SQLite` and Postgres)
-/// and preserves the original default-to-`Registration` behavior for any value
-/// that does not parse.
+/// Row decode target: `challenge_type` is TEXT, mapped in `From` (unparseable →
+/// `Registration`).
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct WebauthnChallengeRow {
     pub id: i64,
@@ -131,7 +128,7 @@ pub async fn find_and_delete_challenge(
     .map_err(AppError::Database)?
     .ok_or(AppError::ChallengeNotFound)?;
 
-    // Delete the challenge after retrieval
+    // Single-use: delete after retrieval.
     db_execute!(db, "DELETE FROM webauthn_challenge WHERE id = $1", row.id)
         .map_err(AppError::Database)?;
 

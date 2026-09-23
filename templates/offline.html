@@ -3,18 +3,9 @@
 {% block title %}Offline - RDRS{% endblock %}
 
 {% block body %}
-{# Served from the service worker's cache when a navigation cannot reach the
-   network, so it must stay true for every visitor and every moment: no user
-   data, no counts, no flash. The way out is an ordinary link rather than a
-   scripted retry — the page has to work when the scripts it would need are the
-   very thing that failed to load.
-
-   That constraint is also why the saved-entries link is unconditional. This one
-   page is shared by every reader and cached before any of them has an opinion
-   about offline reading, so it cannot know whether there is a library to reach.
-   With one, the worker answers `/entries/offline` from the cache; without one,
-   that navigation fails and lands the reader back here — which the text above
-   the link has already explained. #}
+{# Served from the SW cache to everyone: no user data, and a plain link rather
+   than a scripted retry, since scripts may be what failed. The saved-entries
+   link is unconditional because this shared page cannot know if a library exists. #}
 <div class="auth-layout">
     <div class="auth-card" data-testid="offline-page">
         <h1>rdrs</h1>

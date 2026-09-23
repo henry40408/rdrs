@@ -24,9 +24,7 @@ Feature: Triage entries (star, mark-read, summarize)
     When I click the read toggle for the entry titled "Test Entry 1"
     Then the entry row for "Test Entry 1" shows as unread
 
-  # Regression guard: the 0.55.0 redesign silently dropped the per-row
-  # mark-read control and the open-original link. These assertions fail loudly
-  # if a future UI change removes any per-row control again.
+  # Regression guard: a redesign once dropped per-row controls.
   Scenario: Every entry row keeps its full set of per-row controls
     When I open the inbox
     Then every entry row exposes the read toggle, star, open-original, time, and feed controls
@@ -43,9 +41,7 @@ Feature: Triage entries (star, mark-read, summarize)
     Then I see 0 entries in the entry list
     And the document did not reload
 
-  # The age options are the dropdown path that leaves rows behind, so a
-  # regression to `location.reload()` costs the reader their scroll position
-  # and open entry for a list that only shrank by one row.
+  # A `location.reload()` here would lose scroll and the open entry.
   Scenario: Marking entries older than 1 day as read swaps the list in place
     Given the feed "Triage Feed" has an entry titled "Ancient News" published 3 days ago
     When I open the inbox
@@ -133,11 +129,8 @@ Feature: Triage entries (star, mark-read, summarize)
     Then the reading pane shows the title "Test Entry 1"
     And the entry list does not show "Test Entry 3"
 
-  # Replacing the row container rebuilt every row and every favicon in it
-  # (measured: none of six preserved), and a rebuilt <img> is what WebKit
-  # blinks. The container is morphed instead — which also means it never takes
-  # the skip-when-unchanged shortcut, since morphing an identical tree already
-  # touches nothing (see the feed-switch scenario below).
+  # Replacing the container rebuilt every favicon, which WebKit blinks; it is
+  # morphed instead (so it never takes the skip-when-unchanged shortcut).
   Scenario: Mark Above as Read keeps the rows and favicons already on screen
     Given the "Triage Feed" feed has a favicon
     When I open the entries page for category "Triage Category" showing all statuses
@@ -147,11 +140,8 @@ Feature: Triage entries (star, mark-read, summarize)
     Then every entry in the list is marked read
     And the entry list contents are still the ones I tagged
 
-  # The refresh answers with page 1 again, so an offset kept from before the
-  # mark points at rows the reader has already triaged — and on an unread list
-  # it points past the end of everything that just disappeared. `status=all`
-  # keeps the rows (and therefore the scroll extent), which is what makes the
-  # offset observable at all.
+  # The refresh returns page 1; `status=all` keeps the rows so the offset is
+  # observable.
   Scenario: Mark Above as Read returns the list to the top
     Given I have a feed "Scroll Feed" with 30 test entries in category "Triage Category"
     When I open the entries page for category "Triage Category" showing all statuses
@@ -160,13 +150,8 @@ Feature: Triage entries (star, mark-read, summarize)
     Then every entry in the list is marked read
     And the entry list is scrolled to the top
 
-  # The *entry list* going back to the top is the point of the scenario above.
-  # The sidebar beside it is not: it is a separate scroller, and the reader's
-  # place in a long category list has nothing to do with the rows that were just
-  # triaged. Hiding fully-read groups is what made the difference visible —
-  # emptying a group takes it out of the list, which the sidebar treats as a
-  # structural change and answers with a full re-render, and that rebuild used
-  # to drop the offset.
+  # Only the entry list returns to the top; hiding a fully-read group triggers a
+  # full sidebar re-render, which used to drop the sidebar's offset.
   Scenario: Mark Above as Read leaves the sidebar scrolled where it was
     Given fully-read categories and feeds are hidden
     And I have 20 more categories with unread entries
@@ -177,14 +162,9 @@ Feature: Triage entries (star, mark-read, summarize)
     And the sidebar shows no unread for category "Triage Category"
     Then the sidebar is still scrolled where it was
 
-  # The list container used to take the same skip-when-unchanged shortcut as a
-  # replacement target: identical server answer, no swap. Every feed's empty
-  # state is the same markup, so marking a second feed read answered with a
-  # list byte-identical to the first feed's — the swap was skipped and the rows
-  # just marked stayed on screen, unread, under a flash saying they had been
-  # marked, until a reload. The feed switch in between is the whole point: it
-  # answers for `[data-list-pane]`, so it rewrites this container without ever
-  # updating what the shortcut compares against.
+  # Every feed's empty state is identical markup, so the skip-when-unchanged
+  # shortcut left the second feed's rows on screen. The feed switch in between
+  # rewrites the container without updating what the shortcut compares.
   Scenario: Mark Above as Read still refreshes the list after switching feeds
     Given I have a feed "Second Feed" with 3 test entries in category "Triage Category"
     When I open the entries page for feed "Triage Feed"

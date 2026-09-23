@@ -10,26 +10,19 @@ use crate::{db_execute, query_scalar};
 
 /// Entries deleted per transaction during a drain.
 const BATCH_SIZE: usize = 500;
-/// Run a full VACUUM only when freed pages reach this fraction of the file. A
-/// full VACUUM rewrites the whole database under a write lock (~`db_size/650`
-/// seconds), so it is not worth doing for the handful of pages a routine prune
-/// frees — only after a large drain.
+/// Full VACUUM only when freed pages reach this fraction: it rewrites the whole
+/// DB under a write lock, so only worth it after a large drain.
 const VACUUM_FREELIST_RATIO: f64 = 0.20;
 
-/// Start the retention worker. Every `interval` it prunes read, aged,
-/// non-starred entries for users who opted in (those with
-/// `user_settings.retention_read_days > 0`), then runs maintenance. Prunes
-/// nothing when nobody opted in.
-///
-/// `interval` is a `Duration` rather than a count of hours so tests can drive
-/// several ticks; production passes 24 hours.
+/// Start the retention worker: every `interval` (24 h in production) prune
+/// read, aged, non-starred entries for users with
+/// `user_settings.retention_read_days > 0`, then run maintenance.
 pub fn start_retention_worker(
     db: Db,
     interval: Duration,
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
         tracing::info!(
             event = "retention.worker_started",
@@ -37,11 +30,8 @@ pub fn start_retention_worker(
             "retention worker started"
         );
         let mut interval = tokio::time::interval(interval);
-        // `tokio::time::interval` fires its first tick immediately, so tick 0
-        // lands moments after start-up — where `Db::connect` has just refreshed
-        // the planner statistics. Refreshing them again there would be work the
-        // process has already done; every later tick is an interval apart and is
-        // the only periodic refresh a deployment gets.
+        // Tick 0 fires immediately, right after `Db::connect` refreshed planner
+        // stats, so it skips the refresh.
         let mut tick: u64 = 0;
 
         loop {
@@ -79,17 +69,9 @@ pub fn start_retention_worker(
                             Err(e) => tracing::error!(event = "retention.maintenance_failed", error = %e, "retention maintenance failed"),
                         }
                     } else if !is_first_tick {
-                        // Statistics go stale as the table grows, which has
-                        // nothing to do with whether a prune found anything to
-                        // delete — and on a deployment where nobody opted into
-                        // retention, `total` is always 0, so gating the refresh
-                        // on it means the planner never gets fresh numbers. Only
-                        // the freelist-driven VACUUM genuinely needs the prune to
-                        // have run, so that half stays inside `run_maintenance`.
-                        //
-                        // A prune that *did* delete something changes the
-                        // distribution, so `run_maintenance` refreshes even on
-                        // the first tick; this branch is the redundant case.
+                        // Refresh stats regardless of `total`: with nobody opted in it is
+                        // always 0 and stats would never refresh. Only the VACUUM depends on
+                        // a prune (inside `run_maintenance`, which also refreshes on tick 0).
                         if let Err(e) = db.optimize().await {
                             tracing::error!(event = "retention.optimize_failed", error = %e, "planner statistics refresh failed");
                         }
@@ -140,10 +122,8 @@ mod tests {
         assert!(!run_maintenance(&db).await.unwrap());
     }
 
-    /// A file-backed database carrying one index with no `sqlite_stat1` row —
-    /// the condition `PRAGMA optimize` acts on, and what a migration leaves
-    /// behind. File-backed because `Db::connect` refreshes on open, so the index
-    /// has to be created afterwards and survive on disk.
+    /// File-backed DB with one index lacking a `sqlite_stat1` row (what
+    /// `PRAGMA optimize` acts on), created after `Db::connect`'s own refresh.
     async fn db_with_an_unanalyzed_index(dir: &tempfile::TempDir) -> Db {
         let path = dir.path().join("t.sqlite3");
         let db = Db::connect(path.to_str().unwrap(), crate::config::Backend::Sqlite)
@@ -177,16 +157,8 @@ mod tests {
             .unwrap()
     }
 
-    /// `tokio::time::interval` fires its first tick immediately, so tick 0 lands
-    /// moments after start-up — where `Db::connect` has just refreshed the
-    /// statistics. Doing it again there is work the process already did.
-    ///
-    /// The interval is an hour, so the only tick that can run inside the wait is
-    /// the first one; the refresh not having happened is therefore the first
-    /// tick declining to do it. (An assertion that something did *not* happen
-    /// can only ever be as strong as the wait, but the regression it guards —
-    /// the first tick refreshing again — makes the row appear in milliseconds,
-    /// as the sibling test below shows.)
+    /// Tick 0 must not refresh stats `Db::connect` just refreshed. The hourly
+    /// interval means only tick 0 runs within the wait.
     #[tokio::test]
     async fn test_worker_skips_the_redundant_refresh_on_its_first_tick() {
         let dir = tempfile::tempdir().unwrap();
@@ -206,11 +178,8 @@ mod tests {
         );
     }
 
-    /// Regression: the statistics refresh used to sit inside the `total > 0`
-    /// branch, so a deployment where nobody opted into retention — `total` is
-    /// then always 0 — never got one, and its planner statistics aged
-    /// indefinitely. Only the freelist-driven VACUUM depends on a prune having
-    /// happened; the refresh does not.
+    /// Regression: the stats refresh sat inside `total > 0`, so deployments with
+    /// nobody opted into retention never refreshed.
     #[tokio::test]
     async fn test_worker_refreshes_statistics_on_a_later_tick_without_a_prune() {
         let dir = tempfile::tempdir().unwrap();
@@ -286,7 +255,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Simulate one worker tick's drain.
         let deleted = entry::prune_read_retention_batch(&db, BATCH_SIZE)
             .await
             .unwrap();

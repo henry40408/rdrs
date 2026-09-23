@@ -19,8 +19,7 @@ fn parse_chinese_month(s: &str) -> Option<u32> {
     }
 }
 
-/// Parse timezone offset like "+0000", "+0800", "-0500".
-/// Returns offset in seconds.
+/// Parse an offset like "+0800" into seconds.
 fn parse_timezone_offset(s: &str) -> Option<i32> {
     let s = s.trim();
     if s.len() < 5 {
@@ -49,7 +48,6 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
         s
     };
 
-    // Expected format: "6 一月 2026 14:28:00 +0000"
     let parts: Vec<&str> = s.splitn(4, ' ').collect();
     if parts.len() < 4 {
         return None;
@@ -59,7 +57,6 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
     let month = parse_chinese_month(parts[1])?;
     let year: i32 = parts[2].parse().ok()?;
 
-    // Parse time and timezone: "14:28:00 +0000"
     let time_tz = parts[3];
     let time_parts: Vec<&str> = time_tz.splitn(2, ' ').collect();
     let time_str = time_parts.first()?;
@@ -68,7 +65,6 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
     let date = NaiveDate::from_ymd_opt(year, month, day)?;
     let naive_dt = NaiveDateTime::new(date, time);
 
-    // Parse timezone offset if present
     if let Some(tz_str) = time_parts.get(1)
         && let Some(offset_secs) = parse_timezone_offset(tz_str)
     {
@@ -80,13 +76,12 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
     Some(naive_dt.and_utc())
 }
 
-/// Normalize timezone format: convert "+08:00" to "+0800".
-/// Some feeds use ISO 8601 style timezone in RFC 2822 dates, which dateparser can't handle.
+/// Convert a "+08:00" suffix to "+0800"; some feeds put ISO 8601 offsets in
+/// RFC 2822 dates, which dateparser rejects.
 pub fn normalize_timezone_format(text: &str) -> String {
     let text = text.trim();
     let len = text.len();
 
-    // Check if ends with timezone like "+08:00" or "-05:30" (6 chars)
     if len >= 6 {
         let suffix = &text[len - 6..];
         if let Some(sign) = suffix.chars().next()
@@ -95,7 +90,6 @@ pub fn normalize_timezone_format(text: &str) -> String {
             && suffix[1..3].chars().all(|c| c.is_ascii_digit())
             && suffix[4..6].chars().all(|c| c.is_ascii_digit())
         {
-            // Convert "+08:00" to "+0800"
             let mut result = text[..len - 6].to_string();
             result.push(sign);
             result.push_str(&suffix[1..3]);
@@ -107,14 +101,9 @@ pub fn normalize_timezone_format(text: &str) -> String {
     text.to_string()
 }
 
-/// Parse a datetime string from the database, returning `None` if every
-/// supported format fails. Tries, in order: RFC 3339, SQL datetime
-/// (`%Y-%m-%d %H:%M:%S`), dateparser (RFC 2822 and other localized formats),
-/// then the Chinese date format.
-///
-/// Prefer this over [`parse_datetime`] when an unparseable value must be
-/// distinguished from a valid one (e.g. aggregates over timestamps, where the
-/// `Utc::now()` fallback would silently corrupt the result).
+/// Parse a stored datetime, or `None` if every format fails (RFC 3339, SQL
+/// datetime, dateparser, Chinese). Use over [`parse_datetime`] where a
+/// `Utc::now()` fallback would corrupt the result.
 pub fn try_parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
@@ -126,21 +115,17 @@ pub fn try_parse_datetime(s: &str) -> Option<DateTime<Utc>> {
         .or_else(|| parse_chinese_datetime(s))
 }
 
-/// Parse a datetime string from the database (stored as SQL datetime or RFC 3339).
-/// Falls back to `Utc::now()` if parsing fails.
+/// Parse a stored datetime, falling back to `Utc::now()`.
 pub fn parse_datetime(s: &str) -> DateTime<Utc> {
     try_parse_datetime(s).unwrap_or_else(Utc::now)
 }
 
-/// Custom timestamp parser for feed-rs that handles:
-/// - Standard formats (via dateparser)
-/// - ISO 8601 style timezone in RFC 2822 dates (+08:00 -> +0800)
-/// - Chinese date formats (e.g., "週二, 6 一月 2026 14:28:00 +0000")
+/// feed-rs timestamp parser: dateparser, plus "+08:00" offsets in RFC 2822 and
+/// Chinese dates (e.g. "週二, 6 一月 2026 14:28:00 +0000").
 pub fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
     dateparser::parse(text)
         .map(|dt| dt.with_timezone(&Utc))
         .ok()
-        // Try with normalized timezone format (convert +08:00 to +0800)
         .or_else(|| {
             let normalized = normalize_timezone_format(text);
             if normalized == text {
@@ -158,8 +143,6 @@ pub fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
     use chrono::{Datelike, Timelike};
-
-    // === parse_datetime tests (from models) ===
 
     #[test]
     fn test_parse_datetime_rfc3339() {
@@ -196,8 +179,6 @@ mod tests {
         assert_eq!(dt.day(), 6);
     }
 
-    // === Chinese datetime tests ===
-
     #[test]
     fn test_parse_chinese_datetime_with_weekday() {
         let dt = parse_chinese_datetime("週二, 6 一月 2026 14:28:00 +0000");
@@ -232,8 +213,6 @@ mod tests {
         assert_eq!(parse_timezone_offset("-0500"), Some(-5 * 3600));
     }
 
-    // === normalize_timezone_format tests (from feed_sync) ===
-
     #[test]
     fn test_normalize_timezone_format() {
         assert_eq!(
@@ -254,8 +233,6 @@ mod tests {
         );
     }
 
-    // === parse_timestamp tests (from feed_sync) ===
-
     #[test]
     fn test_parse_timestamp_colon_timezone() {
         let result = parse_timestamp("Thu, 22 Jan 2026 15:09:47 +08:00");
@@ -275,11 +252,8 @@ mod tests {
 
     #[test]
     fn test_parse_timestamp_various_formats() {
-        // Standard RFC2822
         assert!(parse_timestamp("Thu, 22 Jan 2026 15:09:47 +0800").is_some());
-        // ISO 8601 / RFC 3339
         assert!(parse_timestamp("2026-01-22T15:09:47+08:00").is_some());
-        // Chinese format
         assert!(parse_timestamp("週四, 22 一月 2026 15:09:47 +0800").is_some());
     }
 
@@ -347,7 +321,6 @@ mod tests {
     fn test_parse_datetime_falls_back_to_utc_now() {
         // Completely unparsable string — falls back to Utc::now()
         let dt = parse_datetime("totally unparsable");
-        // Should be close to now
         let diff = (Utc::now() - dt).num_seconds().abs();
         assert!(diff < 5);
     }

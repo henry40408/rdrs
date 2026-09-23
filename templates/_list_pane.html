@@ -1,18 +1,10 @@
-{# The whole left column: header (breadcrumb, title, tabs, filter bar) + the
-   scrolling row list. Extracted from `_entries_layout.html` so the category
-   swap fragment (`_entries_pane_fragment.html`) can ship the *same* markup —
-   category navigation replaces this element in place instead of reloading the
-   document, and a second hand-written copy of the header would drift.
-
-   Needs `title`, `entries`, `next_cursor` and `entries_layout` in scope. #}
+{# The whole left column, shared with the category swap fragment so the two
+   cannot drift. Needs `title`, `entries`, `next_cursor`, `entries_layout`. #}
 {%- import "_icons.html" as icons -%}
 <div class="list-pane" data-list-pane>
     {% if let Some(action) = entries_layout.search_action.as_ref() %}
-    {# Scoped search lives in a drawer above the header rather than inline in
-       the filter bar: at ≤1024px the bar wraps and a permanently mounted input
-       ate a whole row of the list. Rendered open when the request carries `q`,
-       so a `?q=` deep link (and every list swap that re-renders this partial)
-       arrives in the right state with no client-side flash. #}
+    {# Search drawer rather than inline (it cost a whole row at ≤1024px).
+       Rendered open when `q` is present so deep links and swaps don't flash. #}
     <div id="search-drawer" class="search-drawer{% if entries_layout.search.is_some() %} is-open{% endif %}" data-search-drawer>
         <div class="search-drawer-clip">
             <div class="search-drawer-row">

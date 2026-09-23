@@ -1,5 +1,4 @@
-//! Sidebar ordering and the hide-fully-read toggle — a port of
-//! `sidebar_prefs.steps.js`.
+//! Sidebar ordering and the hide-fully-read toggle.
 
 use anyhow::{Context, Result, ensure};
 use cucumber::{given, then, when};
@@ -7,10 +6,8 @@ use rdrs_e2e::dom::Dom;
 use rdrs_e2e::wait::{eventually, eventually_eq};
 use rdrs_e2e::world::RdrsWorld;
 
-/// The two sidebar settings ship in the same "Display Preferences" form as the
-/// theme, so each of these submits the whole form — which is why they re-read
-/// the page first rather than posting a hand-built body: whatever the other
-/// fields currently hold is what gets written back.
+/// Shared with the theme; the page is re-read so submitting writes back the
+/// other fields' current values.
 const PREFERENCES_FORM: &str = r#"form[action="/user-settings/preferences"]"#;
 
 async fn submit_preferences(world: &RdrsWorld) -> Result<()> {
@@ -31,8 +28,7 @@ async fn set_sidebar_order(world: &mut RdrsWorld, order: String) -> Result<()> {
     submit_preferences(world).await
 }
 
-// Registered under both keywords: one scenario sets it up as a `Given` and
-// another flips it mid-run as an `And` after a `When`.
+// Registered as `Given` and `When`: used both ways.
 #[given("fully-read categories and feeds are hidden")]
 #[when("fully-read categories and feeds are hidden")]
 async fn hide_fully_read(world: &mut RdrsWorld) -> Result<()> {
@@ -47,9 +43,7 @@ async fn feed_all_read(world: &mut RdrsWorld, title: String) -> Result<()> {
     world.seed().mark_feed_read(user_id, &title).await
 }
 
-/// Ordered and exhaustive: comparing the whole list also pins the count, so a
-/// row that should have been hidden fails here rather than passing unnoticed at
-/// the end of the list.
+/// Exhaustive, so a row that should be hidden fails here.
 #[then(expr = "the sidebar categories read {string}")]
 async fn sidebar_categories_read(world: &mut RdrsWorld, expected: String) -> Result<()> {
     expect_labels(
@@ -70,15 +64,9 @@ async fn sidebar_feeds_read(world: &mut RdrsWorld, expected: String) -> Result<(
     .await
 }
 
-/// Hiding fully-read feeds can empty the open category's list completely, and
-/// the list is mounted either way — so its margins showed as a gap under the
-/// category row, reading as a group that failed to render.
-///
-/// Measured as the distance to the row below rather than by inspecting the
-/// list: what regressed is the space the reader sees, and stating it that way
-/// keeps the assertion true however the list is (or isn't) hidden. Waiting for
-/// the list to mount first is what keeps it from passing on a sidebar whose
-/// feeds simply have not arrived yet.
+/// Hiding fully-read feeds can empty the open category's list, whose margins
+/// then showed as a gap. Measured as distance to the next row, after the list
+/// mounts so it cannot pass before the feeds arrive.
 #[then(expr = "the sidebar leaves no gap below category {string}")]
 async fn no_gap_below_category(world: &mut RdrsWorld, name: String) -> Result<()> {
     let driver = world.driver()?;

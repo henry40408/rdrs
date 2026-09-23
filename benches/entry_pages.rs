@@ -1,21 +1,13 @@
-//! Server-side latency benchmark for the entry-list pages: handler, queries and
-//! template render, driven in-process through the real router.
-//!
-//! The counterpart to `e2e`'s `dom-bench`, which times only the browser's half
-//! of a swap. This is the half a change to the list handlers or the entry
-//! queries can move, and what "capture a baseline before and after" measures
-//! for them.
+//! Server-side latency benchmark for the entry-list pages (handler, queries,
+//! render) through the real router; `dom-bench` covers the browser side.
 //!
 //! ```text
 //! RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- [--label before] [--entries 2000] [--iterations 200]
 //! ```
 //!
-//! Seeds one account with `--entries` entries spread over 4 categories × 5
-//! feeds — every third read, every tenth starred, every twentieth summarized —
-//! into an in-memory SQLite database, then prints p50/p90/mean per route in
-//! microseconds. In-memory means it measures the code rather than the disk, so
-//! numbers are only comparable between runs on the same machine; interleave
-//! the before and after runs rather than trusting one of each.
+//! Seeds one account (4 categories × 5 feeds) into in-memory SQLite and prints
+//! p50/p90/mean per route in µs. Compare only on the same machine, with
+//! interleaved before/after runs.
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -119,8 +111,7 @@ async fn seed(db: &Db, n: usize) -> (i64, i64) {
     (feeds[0], first_category.unwrap())
 }
 
-/// The value of the first hidden input called `name`, as the Load-More form
-/// would submit it.
+/// The first hidden input called `name`, as the Load-More form submits it.
 fn hidden_value(html: &str, name: &str) -> Option<String> {
     let marker = format!(r#"name="{name}" value=""#);
     let start = html.find(&marker)? + marker.len();

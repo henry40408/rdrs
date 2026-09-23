@@ -1,8 +1,7 @@
 // Progressive enhancement: without JS the server-rendered "Queued" cards stay.
 const results = document.querySelector('[data-summarizer-results]');
 if (results) {
-  // One request in flight at a time, so there is never more than one
-  // AbortController to track and Retry can re-queue a card without clobbering it.
+  // One request in flight, so Retry can re-queue a card without clobbering it.
   let running = false;
   let currentController = null;
 
@@ -82,8 +81,7 @@ if (results) {
     }
   };
 
-  // Re-entrant-safe: a second call during a walk is a no-op, and the newly
-  // queued card is picked up by the running loop, which re-queries each pass.
+  // Re-entrant-safe: the running loop re-queries and picks up newly queued cards.
   const runQueue = async () => {
     if (running) return;
     running = true;
@@ -93,8 +91,7 @@ if (results) {
         if (!next) break;
         const keepGoing = await summarizeCard(next);
         if (!keepGoing) {
-          // Stop auto-processing, but leave every queued card recoverable
-          // rather than stranded without controls.
+          // Stop, but leave queued cards recoverable rather than stranded.
           results
             .querySelectorAll('[data-summarizer-card][data-state="queued"]')
             .forEach((c) => setRecoverable(c, 'Stopped — Retry to run this one.'));

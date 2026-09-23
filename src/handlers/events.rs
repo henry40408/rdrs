@@ -13,13 +13,12 @@ use crate::AppState;
 use crate::middleware::auth::PageAuthUser;
 use crate::services::{EventKind, SummaryEventData, UserEvent};
 
-/// Build the `sidebar` SSE event (no data payload; the client just refetches).
+/// The `sidebar` event; no payload, the client refetches.
 fn sidebar_event() -> Event {
     Event::default().event("sidebar").data("1")
 }
 
-/// Map a domain event to its SSE wire form. `Sidebar` carries no data (the
-/// client just refetches); `Summary` carries `{entry_id, status}`.
+/// Map a domain event to its SSE wire form.
 fn to_sse_event(ev: &UserEvent) -> Event {
     match &ev.kind {
         EventKind::Sidebar => sidebar_event(),
@@ -36,15 +35,13 @@ fn to_sse_event(ev: &UserEvent) -> Event {
     }
 }
 
-/// A `sidebar` resync nudge, emitted when the broadcast receiver lags so the
-/// client refetches and converges.
+/// Resync nudge emitted when the broadcast receiver lags.
 fn sidebar_resync_event() -> Event {
     sidebar_event()
 }
 
-/// Build the per-connection SSE stream: deliver this user's events, drop other
-/// users', resync on lag, and END when `shutdown` fires (so SIGINT tears the
-/// connection down and graceful shutdown can complete).
+/// Per-connection stream: this user's events only, resync on lag, and end on
+/// `shutdown` so graceful shutdown can complete.
 pub fn user_event_stream(
     mut rx: Receiver<UserEvent>,
     user_id: i64,
@@ -66,10 +63,8 @@ pub fn user_event_stream(
     }
 }
 
-/// `GET /events` — one SSE stream per tab. Authenticated via the session
-/// cookie (`PageAuthUser`); events are filtered to the authenticated user.
-/// Registered OUTSIDE the ETag/Date/Compression/Timeout layers in
-/// `create_router` (those buffer or time out a long-lived stream).
+/// `GET /events` — one SSE stream per tab. Must stay outside the
+/// ETag/Compression/Timeout layers, which would buffer or kill the stream.
 pub async fn events_stream(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -96,11 +91,7 @@ mod tests {
         let shutdown = CancellationToken::new();
         let mut stream = Box::pin(user_event_stream(bus.subscribe(), 1, shutdown.clone()));
 
-        // Another user's event is filtered out; user 1's event is delivered.
-        // axum's `Event` exposes no public getters, so we assert on stream
-        // *control* (exactly one item reaches us, proving the filter dropped
-        // user 2) rather than inspecting the event payload — the wire payload
-        // is covered by `summary_event_data_serializes_to_expected_json`.
+        // `Event` has no getters, so assert that exactly one item arrives.
         bus.emit_sidebar(2);
         bus.emit_summary(1, 50, Some(SummaryStatus::Completed));
 
@@ -121,8 +112,6 @@ mod tests {
 
     #[tokio::test]
     async fn stream_delivers_matching_sidebar_event() {
-        // Exercises the `EventKind::Sidebar` arm of `to_sse_event` (the
-        // user-filtering test above only delivers a Summary event).
         let bus = EventBus::new(16);
         let shutdown = CancellationToken::new();
         let mut stream = Box::pin(user_event_stream(bus.subscribe(), 1, shutdown));

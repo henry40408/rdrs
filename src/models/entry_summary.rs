@@ -38,10 +38,7 @@ impl SummaryStatus {
     }
 }
 
-/// Decodes the DB `status` TEXT column into `SummaryStatus`. Unknown values map
-/// to `Failed`, matching the old `row_to_entry_summary` behaviour. Used by
-/// `#[sqlx(try_from = "String")]` on `EntrySummary::status` (the blanket
-/// `TryFrom` supplied by this `From` impl is infallible).
+/// Decodes the `status` TEXT column; unknown values map to `Failed`.
 impl From<String> for SummaryStatus {
     fn from(s: String) -> Self {
         SummaryStatus::parse(&s).unwrap_or(SummaryStatus::Failed)
@@ -78,8 +75,7 @@ pub async fn find_by_user_and_entry(
     .map_err(AppError::Database)
 }
 
-/// Resets an existing row to pending, so a retry after a failure reuses the
-/// same record instead of accumulating one per attempt.
+/// Resets an existing row to pending, so retries reuse one record.
 pub async fn upsert_pending(db: &Db, user_id: i64, entry_id: i64) -> AppResult<EntrySummary> {
     db_execute!(
         db,
@@ -197,9 +193,8 @@ pub async fn get_statuses_for_entries(
         return Ok(HashMap::new());
     }
 
-    // The original used a runtime-built `IN (?, ?, ...)` clause. A variable-length
-    // `IN` list can't be a static literal / single portable bind, so it is
-    // rewritten as one index-covered point query per entry (identical result).
+    // A variable-length `IN` list can't be a static literal, so this is one
+    // index-covered point query per entry.
     let mut map = HashMap::new();
     for &entry_id in entry_ids {
         if let Some((_entry_id, status_str)) = query_opt!(
@@ -219,8 +214,7 @@ pub async fn get_statuses_for_entries(
     Ok(map)
 }
 
-/// Pending or processing rows left behind by a shutdown mid-job, for the
-/// worker to re-queue at startup.
+/// Pending or processing rows left by a shutdown, for re-queueing at startup.
 pub async fn find_incomplete(db: &Db) -> AppResult<Vec<(i64, i64, String)>> {
     query_all!(
         db,
@@ -245,8 +239,7 @@ pub async fn delete_expired(db: &Db, hours: i64) -> AppResult<usize> {
     Ok(rows as usize)
 }
 
-/// Count the user's entries that have a COMPLETED summary. Index-covered by
-/// `idx_entry_summary_user_status`. Used for the sidebar "Summarized" badge.
+/// Count the user's COMPLETED summaries (index-covered by `idx_entry_summary_user_status`).
 pub async fn count_completed(db: &Db, user_id: i64) -> AppResult<i64> {
     query_scalar!(
         db,
@@ -499,8 +492,7 @@ mod tests {
         let u1 = create_test_user(&db, "u1").await;
         let u2 = create_test_user(&db, "u2").await;
 
-        // create_test_entry reuses the same category name per user, so build
-        // entries manually with unique GUIDs for the multi-entry u1 scenario.
+        // create_test_entry reuses the category name, so build entries manually.
         let cat1 = category::create_category(&db, u1, "Tech1")
             .await
             .unwrap()

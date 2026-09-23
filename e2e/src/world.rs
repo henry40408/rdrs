@@ -1,13 +1,9 @@
-//! The Cucumber world: one browser session and one throwaway account per
-//! scenario.
+//! The Cucumber world: one browser session, one throwaway account and one
+//! borrowed server per scenario.
 //!
-//! The session cannot be opened in `new`, because whether the page's scripts run
-//! is decided by the scenario's `@nojs` tag and `World::new` never sees it. A
-//! `before` hook opens it instead, which is also the only order that works:
-//! `Emulation.setScriptExecutionDisabled` applies to the next document.
-//!
-//! The server, its database and the mock upstreams are process-wide (see
-//! `server.rs`); what stays per-scenario is the account and the browser.
+//! The session opens in a `before` hook, not `new`: only the hook sees the
+//! `@nojs` tag, and `Emulation.setScriptExecutionDisabled` applies to the next
+//! document.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -26,17 +22,9 @@ use crate::server::Endpoints;
 /// The pool of servers scenarios borrow from, published once by the runner.
 static POOL: OnceLock<Pool> = OnceLock::new();
 
-/// A set of interchangeable servers, one borrowed per running scenario.
-///
-/// Cucumber has no worker concept, so the first cut shared a single server for
-/// the whole run — which fails on one thing: **the summary worker drains its
-/// queue one job at a time, per server** (Kagi is rate-limited per key), and its
-/// database work runs at background priority so it yields to every interactive
-/// request. Four scenarios summarising against one server queue behind each
-/// other for longer than any sensible assertion waits.
-///
-/// A pool sized to the concurrency limit restores what per-worker servers gave:
-/// a scenario holds a server for its whole run.
+/// Interchangeable servers, one borrowed per running scenario. Not one shared
+/// server: its summary worker runs one job at a time, so concurrent summarizing
+/// scenarios would queue past any assertion timeout.
 struct Pool {
     /// Servers not currently lent out.
     free: std::sync::Mutex<Vec<Endpoints>>,
@@ -68,57 +56,47 @@ fn pool() -> &'static Pool {
 #[derive(Debug, World)]
 #[world(init = Self::new)]
 pub struct RdrsWorld {
-    /// The account this scenario runs as, registered lazily by the sign-in
-    /// step so that scenarios about signing up can claim the name themselves.
+    /// Registered lazily by the sign-in step, so sign-up scenarios can claim
+    /// the name themselves.
     pub user: Credentials,
     /// The account's row id, once it exists.
     user_id: Option<i64>,
     api: Api,
     seed: Seed,
     browser: Option<Browser>,
-    /// Ids of entries seeded during the scenario, in insertion order — what
-    /// the "the second entry" style steps index into.
+    /// Seeded entry ids in insertion order, for "the second entry" steps.
     pub seeded_entries: Vec<i64>,
-    /// The one-time link an admin issued for this account, when a scenario is
-    /// about redeeming it. `currentUser.invitePath` in the JavaScript suite.
+    /// The one-time invite link issued for this account.
     pub invite_path: Option<String>,
-    /// A second account the scenario created, when it needs a row in the admin
-    /// table that is not its own. `currentUser.otherUsername` before.
+    /// A second account, for admin-table rows that are not the scenario's own.
     pub other_username: Option<String>,
-    /// The sidebar's unread count, read just before a mutation fired out of
-    /// band — what the SSE assertion compares against.
+    /// Sidebar unread count before an out-of-band mutation, for SSE asserts.
     pub unread_before: Option<u32>,
-    /// CDP request interception, attached the first time a scenario asks to
-    /// hold a response back. Most scenarios never do, and the attachment costs
-    /// a WebSocket, so it is not part of opening the browser.
+    /// CDP interception, attached lazily since it costs a WebSocket.
     network: Option<Network>,
-    /// The held fragment and full-content responses, by the step that armed
-    /// them — `delayedFragments` / `delayedFullContentFetches` before.
+    /// Held fragment and full-content responses.
     pub delayed_fragment: Option<RouteHandle>,
     pub delayed_full_content: Option<RouteHandle>,
-    /// The list pane's `data-snapshot-at` when it was last tagged, for the
-    /// "has the render stamp advanced?" assertion.
+    /// Last-seen list pane `data-snapshot-at`, to assert the stamp advanced.
     pub pane_stamp: Option<String>,
     /// The SSE-driven summary fragment, held open until a step releases it.
     pub held_summary_fragment: Option<RouteHandle>,
     /// Counts re-queue POSTs, to prove an in-flight toggle is inert.
     pub summarize_posts: Option<RouteHandle>,
-    /// The held summarize POST, so the busy label stays up long enough to be
-    /// measured against the bar's recorded geometry.
+    /// Held summarize POST, so the busy label stays up long enough to measure.
     pub delayed_summarize: Option<RouteHandle>,
-    /// The mobile action bar's control geometry, as `(label, x, width)` per
-    /// button, captured before an action changes a label.
+    /// Mobile action bar `(label, x, width)` per button, captured before a
+    /// label changes.
     pub action_bar: Option<Vec<(String, f64, f64)>>,
     /// The server this scenario borrowed, returned to the pool on drop.
     endpoints: Option<Endpoints>,
-    /// Held for the scenario's lifetime so the pool cannot lend the same
-    /// server twice; released with the world.
+    /// Keeps the pool from lending this server twice.
     _lease: OwnedSemaphorePermit,
 }
 
 impl Drop for RdrsWorld {
-    /// Returns the borrowed server before the lease is released, so the next
-    /// scenario through the permit always finds one waiting.
+    /// Returns the server before the lease drops, so the next permit holder
+    /// always finds one.
     fn drop(&mut self) {
         if let Some(endpoints) = self.endpoints.take()
             && let Ok(mut free) = pool().free.lock()
@@ -131,8 +109,7 @@ impl Drop for RdrsWorld {
 impl RdrsWorld {
     async fn new() -> Result<Self> {
         let pool = pool();
-        // Waits when every server is busy, which is the point: the permit is
-        // what makes "pop a free server" infallible below.
+        // The permit makes popping a free server below infallible.
         let lease = Arc::clone(&pool.permits)
             .acquire_owned()
             .await
@@ -170,22 +147,19 @@ impl RdrsWorld {
         })
     }
 
-    /// This scenario's username and password, owned so the caller can keep
-    /// using the world while it holds them.
+    /// This scenario's username and password, owned.
     pub fn credentials(&self) -> (String, String) {
         (self.user.username.clone(), self.user.password.clone())
     }
 
-    /// The one-time link issued for this account, or an error when no step has
-    /// asked an admin to create it.
+    /// The one-time link issued for this account, if a step created one.
     pub fn invite_path(&self) -> Result<String> {
         self.invite_path
             .clone()
             .context("no invite link: no step created an account for this scenario")
     }
 
-    /// The second account this scenario created, or an error when no step
-    /// registered one.
+    /// The second account, if a step registered one.
     pub fn other_username(&self) -> Result<String> {
         self.other_username
             .clone()
@@ -206,8 +180,7 @@ impl RdrsWorld {
         Ok(())
     }
 
-    /// The scenario's browser, or an error when no session was opened — a
-    /// `before` hook that did not run.
+    /// The scenario's browser, opened by the `before` hook.
     pub fn browser(&self) -> Result<&Browser> {
         self.browser
             .as_ref()
@@ -279,10 +252,8 @@ impl RdrsWorld {
         })
     }
 
-    /// Waits for the browser to land on `expected`, Playwright's `waitForURL`.
-    ///
-    /// Compares path and query rather than the whole URL: the server's port is
-    /// ephemeral, so the old assertions' `${serverUrl}/…` has no stable form.
+    /// Waits for the browser's path and query to equal `expected` (the port is
+    /// ephemeral, so full URLs are unstable).
     pub async fn expect_path(&self, expected: &str) -> Result<()> {
         crate::wait::eventually_eq(&format!("URL is {expected}"), expected.to_owned(), || {
             self.path()
@@ -295,18 +266,13 @@ impl RdrsWorld {
         self.browser_mut()?.set_viewport(viewport).await
     }
 
-    /// Holds every request matching `pattern` for `delay`, then lets it through —
-    /// Playwright's `page.route` with a sleep.
+    /// Holds every request matching `pattern` for `delay`, then lets it through.
     pub async fn delay_requests(&mut self, pattern: &str, delay: Duration) -> Result<RouteHandle> {
         self.route(pattern, Action::Delay(delay)).await
     }
 
-    /// Answers every request to the seeded entries' origin with a stub page.
-    ///
-    /// The shortcut that opens an entry's link in a new tab asserts on *which*
-    /// URL it targets, not that the page loads — and `https://example.com` fails
-    /// DNS resolution on a machine without internet, which collapses the popup's
-    /// URL to `chrome-error://chromewebdata/`.
+    /// Stubs the seeded entries' origin: offline, `https://example.com` fails
+    /// DNS and the popup URL collapses to `chrome-error://chromewebdata/`.
     pub async fn stub_external_pages(&mut self) -> Result<()> {
         self.route(
             r"^https://example\.com/",
@@ -319,9 +285,7 @@ impl RdrsWorld {
         .map(|_| ())
     }
 
-    /// GETs from the server as the signed-in browser, returning the body.
-    /// `page.request.get` in the JavaScript suite — used for the OPML export,
-    /// which is a download rather than a page.
+    /// GETs as the signed-in browser and returns the body (e.g. OPML export).
     pub async fn get_as_user(&self, path: &str) -> Result<String> {
         let (jar, csrf) = self.browser_credentials().await?;
         let response = reqwest::Client::builder()
@@ -346,9 +310,7 @@ impl RdrsWorld {
             .map(|cookie| format!("{}={}", cookie.name, cookie.value))
             .collect::<Vec<_>>()
             .join("; ");
-        // The server writes `__Host-csrf_token` instead of `csrf_token`
-        // whenever the deployment is Secure. E2E runs over plain HTTP, so this
-        // is not load-bearing yet — but it will be the day E2E moves to HTTPS.
+        // Secure deployments use `__Host-csrf_token`; E2E is plain HTTP today.
         let csrf = cookies
             .iter()
             .find(|cookie| cookie.name == "__Host-csrf_token")
@@ -358,8 +320,7 @@ impl RdrsWorld {
         Ok((jar, csrf))
     }
 
-    /// Holds every request matching `pattern` open until the handle is
-    /// released.
+    /// Holds matching requests open until the handle is released.
     pub async fn hold_requests(&mut self, pattern: &str) -> Result<RouteHandle> {
         self.attach_network().await?;
         self.network
@@ -369,8 +330,7 @@ impl RdrsWorld {
             .await
     }
 
-    /// Counts matching requests of one method without changing them —
-    /// Playwright's `page.on("request", …)`.
+    /// Counts matching requests of one method without changing them.
     pub async fn watch_requests(&mut self, pattern: &str, method: &str) -> Result<RouteHandle> {
         self.attach_network().await?;
         self.network
@@ -381,9 +341,6 @@ impl RdrsWorld {
     }
 
     /// Adds an interception rule, attaching CDP on first use.
-    ///
-    /// Most scenarios never intercept anything and the attachment costs a
-    /// WebSocket, so it is not part of opening the browser.
     async fn route(&mut self, pattern: &str, action: Action) -> Result<RouteHandle> {
         self.attach_network().await?;
         self.network
@@ -401,12 +358,8 @@ impl RdrsWorld {
         Ok(())
     }
 
-    /// POSTs to the server as the signed-in browser, out of band.
-    ///
-    /// It shares the browser's session cookie but bypasses the page's own patched
-    /// `fetch`, so it must attach the CSRF token itself — exactly what `csrf.js`
-    /// does in the real UI. Used to fire a mutation the page did not initiate, so
-    /// the SSE event it emits is the only thing that can update the open page.
+    /// POSTs as the signed-in browser, out of band, so only the resulting SSE
+    /// event can update the open page. Attaches the CSRF token as `csrf.js` would.
     pub async fn post_as_user(&self, path: &str) -> Result<()> {
         let (jar, csrf) = self.browser_credentials().await?;
         let response = reqwest::Client::builder()
@@ -418,8 +371,7 @@ impl RdrsWorld {
             .send()
             .await
             .with_context(|| format!("posting {path} as the signed-in user"))?;
-        // Any non-error status will do — 200, or a 303 back to the list. What
-        // matters is the side effect, not the body.
+        // Any non-error status (200 or 303); only the side effect matters.
         anyhow::ensure!(
             !response.status().is_client_error() && !response.status().is_server_error(),
             "POST {path} answered {}",

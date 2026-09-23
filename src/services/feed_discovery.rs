@@ -19,15 +19,13 @@ pub async fn discover_feed(
     user_agent: &str,
     fetcher: &Fetcher,
 ) -> AppResult<DiscoveredFeed> {
-    // SSRF guard before any network I/O: this URL comes from whoever is adding
-    // the subscription, and the same check has to run again on the feed link
-    // discovered inside the HTML below — that one comes from the *page*.
+    // SSRF guard before any network I/O; the discovered feed link is checked
+    // again below since it comes from the page.
     let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
     fetcher
         .validate(&parsed_url)
         .map_err(|_e| AppError::InvalidUrl)?;
 
-    // Fetch the URL via the shared, connection-pooled client (UA per request).
     let retry_config = RetryConfig::default();
     let url_owned = url.to_string();
 
@@ -56,19 +54,17 @@ pub async fn discover_feed(
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    // Check if this is a feed
     if is_feed_content_type(&content_type) || looks_like_feed(&body) {
         return parse_feed_content(url, &body);
     }
 
-    // It's HTML, try to find feed links
+    // HTML: look for feed links.
     let feed_url = find_feed_link_in_html(&body, &parsed_url)?;
     let parsed_feed_url = Url::parse(&feed_url).map_err(|_e| AppError::InvalidUrl)?;
     fetcher
         .validate(&parsed_feed_url)
         .map_err(|_e| AppError::InvalidUrl)?;
 
-    // Fetch and parse the discovered feed
     let feed_response = send_with_retry_on_error(&retry_config, || {
         fetcher
             .client(false)
@@ -160,9 +156,8 @@ mod tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// Every suite here drives a `wiremock` server, which binds loopback — what
-    /// the guard exists to refuse. Allowing that one address is the same opt-in
-    /// a deployment uses for a LAN feed, not a bypass of its own.
+    /// wiremock binds loopback, so allow it the same way a deployment opts in a
+    /// LAN feed.
     fn loopback_fetcher() -> Fetcher {
         Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
             .expect("the guarded client must build")
@@ -239,8 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_a_private_address_the_policy_does_not_allow() {
-        // The mock server is up and would answer, but nothing should reach it:
-        // the guard runs before any network I/O.
+        // The guard must run before any network I/O.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_string(RSS))
@@ -252,8 +246,7 @@ mod tests {
         assert!(matches!(result, Err(AppError::InvalidUrl)));
     }
 
-    /// The URL a page *claims* is its feed is as untrusted as the page: a public
-    /// site can point `<link rel=alternate>` at the reader's own network.
+    /// A page's claimed feed URL is as untrusted as the page.
     #[tokio::test]
     async fn rejects_a_discovered_feed_link_pointing_inward() {
         let server = MockServer::start().await;
@@ -281,7 +274,7 @@ mod tests {
 
     #[tokio::test]
     async fn discover_by_body_sniffing() {
-        // content-type is text/html but body looks like a feed — covers looks_like_feed
+        // text/html but the body looks like a feed.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(

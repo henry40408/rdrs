@@ -1,7 +1,4 @@
-//! The sidebar: category and feed rows, their badges, and the in-place
-//! reconciliation that keeps them from being rebuilt.
-//!
-//! Split out of `entries.steps.js` — see [`super::entries`].
+//! Sidebar category/feed rows, badges, and in-place reconciliation.
 
 use anyhow::{Result, ensure};
 use cucumber::{then, when};
@@ -13,10 +10,8 @@ use thirtyfour::prelude::*;
 const CATEGORY_LINK: &str = "#sidebar-categories a[data-category-id]";
 const FEED_LINK: &str = ".sidebar-feed[data-feed-id]";
 
-/// The category shortcuts (`[`, `]`, `{`, `}`) read the sidebar's category list
-/// and do nothing at all when it is empty (an early return in `app.js`), so a
-/// keypress that races the sidebar's fetch silently no-ops and the assertion
-/// that follows fails for reasons that have nothing to do with the shortcut.
+/// The category shortcuts no-op on an empty category list, so a keypress
+/// racing the sidebar fetch would fail for unrelated reasons.
 #[when("the sidebar has loaded its categories")]
 async fn sidebar_loaded(world: &mut RdrsWorld) -> Result<()> {
     world
@@ -49,8 +44,7 @@ async fn highlights_category(world: &mut RdrsWorld, name: String) -> Result<()> 
     .await
 }
 
-// Also an `And` after a `When`, where it waits for the sidebar to catch up
-// before the next interaction.
+// Also used as an `And` after a `When` to wait for the sidebar.
 #[then(expr = "the sidebar lists feed {string}")]
 #[when(expr = "the sidebar lists feed {string}")]
 async fn lists_feed(world: &mut RdrsWorld, title: String) -> Result<()> {
@@ -114,7 +108,7 @@ async fn feed_shows_icon(world: &mut RdrsWorld, title: String) -> Result<()> {
     Ok(())
 }
 
-/// The no-icon fallback, same as the entry rows: first letter, uppercased.
+/// No-icon fallback: the first letter, uppercased.
 #[then(expr = "the sidebar feed {string} shows an initial chip")]
 async fn feed_shows_chip(world: &mut RdrsWorld, title: String) -> Result<()> {
     let expected: String = title.chars().take(1).flat_map(char::to_uppercase).collect();
@@ -130,11 +124,8 @@ async fn feed_shows_chip(world: &mut RdrsWorld, title: String) -> Result<()> {
     .await
 }
 
-/// A row built by a re-render carries no `data-e2e-tag`, so a tag set before an
-/// interaction and still there afterwards proves the row — and the favicon
-/// inside it — was patched in place rather than rebuilt. Rebuilding an `<img>`
-/// costs a blank frame in `WebKit`, which is what reconciling the feed list
-/// avoids.
+/// A re-rendered row has no `data-e2e-tag`, so a surviving tag proves the row
+/// (and favicon) was patched in place; a rebuilt `<img>` blanks a frame in `WebKit`.
 #[when("I tag the sidebar feed rows")]
 async fn tag_feed_rows(world: &mut RdrsWorld) -> Result<()> {
     let tagged = world
@@ -174,11 +165,8 @@ async fn feed_rows_still_tagged(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// `<rdrs-sidebar>` hydrates from the SSR bootstrap on mount and then re-fetches
-/// `/api/sidebar` asynchronously to refresh badges. Scenarios that depend on
-/// the latest unread counts wait here until the visible badge for `name` is
-/// gone, which means both the component's data and the DOM reflect the freshest
-/// payload.
+/// `<rdrs-sidebar>` re-fetches `/api/sidebar` after mount; wait until `name`'s
+/// badge is gone so the freshest counts are on screen.
 #[when(expr = "the sidebar shows no unread for category {string}")]
 async fn category_has_no_unread(world: &mut RdrsWorld, name: String) -> Result<()> {
     eventually(
@@ -204,7 +192,7 @@ async fn category_has_no_unread(world: &mut RdrsWorld, name: String) -> Result<(
                     .await?
                     .is_none());
             }
-            // The link itself is gone, which also means no badge.
+            // Link gone means no badge either.
             Ok(true)
         },
     )
@@ -221,8 +209,7 @@ async fn highlights_summarized(world: &mut RdrsWorld) -> Result<()> {
     expect_testid_active(world, "nav-summarized").await
 }
 
-/// The Starred sidebar item carries no `data-testid`, so it is addressed by
-/// `href`.
+/// The Starred item has no `data-testid`; address it by `href`.
 #[then("the sidebar highlights Starred")]
 async fn highlights_starred(world: &mut RdrsWorld) -> Result<()> {
     eventually("the Starred item is active", || async {
@@ -253,10 +240,8 @@ async fn summarized_count(world: &mut RdrsWorld, count: String) -> Result<()> {
     .await
 }
 
-/// The reported bug in one assertion: with enough categories to make
-/// `.sidebar-nav` scroll, a document reload (or an `innerHTML` re-render of the
-/// sidebar) sends it back to the top and the category the reader just clicked
-/// scrolls out of view.
+/// Regression: a reload or `innerHTML` re-render reset `.sidebar-nav` scroll to
+/// the top, hiding the just-clicked category.
 #[when("I scroll the sidebar categories to the bottom")]
 async fn scroll_sidebar_bottom(world: &mut RdrsWorld) -> Result<()> {
     let offset = world
@@ -277,10 +262,8 @@ async fn scroll_sidebar_bottom(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Deliberately the *last* category: a click scrolls its target into view
-/// first, so clicking one above the fold would move `.sidebar-nav` itself and
-/// the assertion that follows would measure the test's own scrolling rather
-/// than the swap's effect.
+/// The *last* category, so the click's scroll-into-view does not move
+/// `.sidebar-nav` and confound the assertion.
 #[when("I click the last sidebar category")]
 async fn click_last_category(world: &mut RdrsWorld) -> Result<()> {
     let links = world.driver()?.css_all(CATEGORY_LINK).await?;
@@ -320,11 +303,8 @@ async fn sidebar_still_scrolled(world: &mut RdrsWorld) -> Result<()> {
         noted > 0.0,
         "the noted offset is gone — the document reloaded"
     );
-    // Not exact equality: the open category's feed list mounts and unmounts as
-    // the reader moves, which legitimately changes the scroll extent (and a
-    // bottom-anchored offset then gets clamped). What must hold is that the
-    // sidebar stays where it was rather than snapping back to the top — a
-    // reload or a full re-render lands on 0, which this catches.
+    // Not exact: the open category's feed list changes the scroll extent. A reload
+    // or full re-render lands on 0, which this catches.
     ensure!(
         (now - noted).abs() < 80.0,
         "the sidebar moved from {noted} to {now}"

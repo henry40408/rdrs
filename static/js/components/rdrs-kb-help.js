@@ -1,15 +1,8 @@
-// <rdrs-kb-help> — Keyboard shortcut help overlay (Shadow DOM)
-//
-// The shadow stylesheet references design tokens with no `var(--x, fallback)`
-// defaults, on purpose: custom properties inherit across the shadow boundary and
-// app.css defines every token used here, so a fallback can only fire when the
-// whole app is already unstyled. Each one is an unsynced second copy that also
-// freezes the *light* half of a `light-dark()` pair — four had already drifted
-// before removal. Add the token to app.css instead of reintroducing them.
+// <rdrs-kb-help> — keyboard shortcut help overlay (Shadow DOM).
+// Tokens deliberately have no `var(--x, fallback)`: they inherit from app.css,
+// and fallbacks just drift. Add missing tokens to app.css.
 
-// Adopted as a constructable stylesheet rather than an inline style element:
-// markup parsed into a shadow root is policed by `style-src` like any other, and
-// `style-src 'self'` would simply not apply it. The CSSOM route is not markup.
+// Constructable stylesheet: `style-src 'self'` blocks an inline style element in a shadow root.
 const HELP_STYLES = new CSSStyleSheet();
 HELP_STYLES.replaceSync(`
 :host {
@@ -155,9 +148,7 @@ class RdrsKbHelp extends HTMLElement {
         });
         this.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            // Otherwise it bubbles to the document-level entries handler, whose
-            // `help.isVisible` guard re-checks after hide() flipped it — and the
-            // reading pane closes too.
+            // Otherwise the document-level handler also closes the reading pane.
             e.preventDefault();
             e.stopPropagation();
             this.hide();

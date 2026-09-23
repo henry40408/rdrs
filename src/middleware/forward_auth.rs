@@ -17,11 +17,9 @@ use crate::models::{category, session};
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
-/// Path prefixes that must never trigger forward-auth auto-login: machine
-/// endpoints (`GReader` native clients, JSON/passkey APIs, SSE, static assets,
-/// the open-tracking pixel) authenticate by their own means, and the two PWA
-/// paths must stay cookie-free so they can be cached publicly — `/offline`
-/// renders the same for everyone, so there is nobody to log in as.
+/// Prefixes that must never trigger forward-auth auto-login: machine endpoints
+/// authenticate themselves, and the PWA paths must stay cookie-free to be
+/// publicly cacheable.
 const SKIP_PREFIXES: &[&str] = &[
     "/api",
     "/reader",
@@ -53,11 +51,9 @@ pub fn role_from_groups(groups: &[String], admin_group: &str) -> Role {
     }
 }
 
-/// The identity supplied by a trusted forward-auth proxy on this request, if
-/// any. Returns `None` when the feature is off, the peer IP is missing or not
-/// in `RDRS_TRUSTED_PROXY_NETWORKS`, or the identity header is absent/empty. Shared
-/// by the middleware and the `AuthUser`/`PageAuthUser` extractors so the
-/// trust logic lives in one place.
+/// Identity from a trusted forward-auth proxy, or `None` if the feature is off,
+/// the peer isn't in `RDRS_TRUSTED_PROXY_NETWORKS`, or the header is empty.
+/// Shared with the auth extractors so trust logic lives in one place.
 pub fn forward_auth_identity(
     config: &Config,
     peer_ip: Option<IpAddr>,
@@ -85,13 +81,11 @@ pub async fn forward_auth(
 ) -> Response {
     let config = &state.config;
 
-    // Feature off → nothing to do.
     if !config.auth_proxy_enabled() {
         return next.run(req).await;
     }
 
-    // Only engage for browser page routes; skip before any DB work so
-    // API/static requests with a session cookie don't pay a pointless lookup.
+    // Page routes only; skip before any DB work.
     if SKIP_PREFIXES
         .iter()
         .any(|p| req.uri().path().starts_with(p))
@@ -99,9 +93,8 @@ pub async fn forward_auth(
         return next.run(req).await;
     }
 
-    // Already carrying a VALID (non-expired) session → leave it to the normal
-    // flow. A present-but-invalid cookie (e.g. after logout or expiry) must NOT
-    // block forward-auth, or the user is locked out.
+    // A valid session wins; an invalid cookie must NOT block forward-auth, or
+    // the user is locked out.
     if let Some(token) = crate::middleware::auth::session_token_from_jar(&jar, &state.config.secret)
     {
         let valid = session::find_by_token(&state.db, &token)
@@ -112,7 +105,6 @@ pub async fn forward_auth(
         }
     }
 
-    // Trusted-peer + identity-header check (shared with the auth extractors).
     let peer_ip = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -121,7 +113,7 @@ pub async fn forward_auth(
         return next.run(req).await;
     };
 
-    // Optional group → role mapping (recomputed on every login when enabled).
+    // Group → role mapping, recomputed on every login when enabled.
     let desired_role = if config.group_mapping_enabled() {
         let groups = req
             .headers()
@@ -136,13 +128,10 @@ pub async fn forward_auth(
 
     let allow_creation = config.auth_proxy_user_creation;
 
-    // Captured as owned values (not borrowed from `req`) before the async
-    // block, since `req` is still needed afterwards to build the redirect.
     let user_agent = request_user_agent(req.headers());
     let ip = config.client_ip(peer_ip, req.headers()).to_string();
 
-    // Resolve (or JIT-create) the account and open a session. `None` means
-    // "reject" (unknown user with creation off, or a disabled account).
+    // Resolve or JIT-create the account; `None` = reject.
     let outcome: AppResult<Option<String>> = async {
         let user = if let Some(u) = user::find_by_username(&state.db, &username).await? {
             if u.is_disabled() {
@@ -163,8 +152,7 @@ pub async fn forward_auth(
                 None if user::count(&state.db).await? == 0 => Role::Admin,
                 None => Role::User,
             };
-            // Sentinel hash never verifies, so local password login is
-            // impossible for forward-auth-provisioned accounts.
+            // Sentinel hash never verifies: no local password login.
             let created = user::create_user(&state.db, &username, "!", role).await?;
             category::create_category(&state.db, created.id, "Uncategorized").await?;
             created
@@ -196,8 +184,7 @@ pub async fn forward_auth(
     };
 
     let cookie = build_session_cookie(&token, &config.secret, config.cookie_secure);
-    // Pair the readable CSRF cookie with the session, so a forward-auth user's
-    // very first rendered form already carries a matching token.
+    // Set the CSRF cookie now so the first rendered form has a valid token.
     let csrf = crate::middleware::build_csrf_cookie(&token, &config.secret, config.cookie_secure);
 
     // Redirect to the same URL; the just-set cookie authenticates the retry.

@@ -1,14 +1,7 @@
-//! The Cucumber runner.
+//! The Cucumber runner (`harness = false`); run `cargo test --test e2e` from `e2e/`.
 //!
-//! `harness = false`: cucumber drives the scenarios itself, so there is no
-//! libtest harness collecting `#[test]` functions. Run it with
-//! `cargo test --test e2e` from `e2e/`.
-//!
-//! What `playwright.config.js` expressed as a project plus worker-scoped
-//! fixtures is expressed here as one server started up front and a `before`
-//! hook that opens a session per scenario. The viewport tags (`@mobile`,
-//! `@tablet`, `@desktop`) are documentation: the scenarios set their own
-//! viewport through a `Given` step, as they did under Playwright.
+//! Viewport tags (`@mobile`, `@tablet`, `@desktop`) are documentation only:
+//! scenarios set their viewport through a `Given` step.
 
 mod steps;
 
@@ -18,25 +11,18 @@ use rdrs_e2e::Harness;
 use rdrs_e2e::browser::{Browser, Scripting};
 use rdrs_e2e::world::{RdrsWorld, set_pool};
 
-/// Where the `.feature` files live, and what a run covers by default.
+/// Default features path.
 const FEATURES: &str = "features";
 
-/// Overrides [`FEATURES`] with a single file or directory.
-///
-/// Stands in for `npx playwright test --grep`, which is how one feature was
-/// run while working on it. Cucumber's own CLI is not reachable here — the
-/// runner owns `main` so it can start the server first.
+/// Overrides [`FEATURES`] with one file or directory; cucumber's CLI is
+/// unavailable because the runner owns `main`.
 const FEATURES_VAR: &str = "RDRS_E2E_FEATURES";
 
-/// The most scenarios — and so browsers — to run at once, whatever the machine.
+/// Upper bound on concurrent scenarios (and browsers).
 const CONCURRENCY_CEILING: usize = 4;
 
-/// How many scenarios run at once, one per core up to [`CONCURRENCY_CEILING`].
-///
-/// A fixed four was wrong in the sibling project this was ported from: fine on
-/// a developer's machine and too many for a two-core CI runner, where four
-/// browsers contend for two cores until pages take longer to settle than the
-/// steps wait for.
+/// One scenario per core up to [`CONCURRENCY_CEILING`]; more browsers than
+/// cores makes pages settle slower than the steps wait.
 fn max_concurrent_scenarios() -> usize {
     std::thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
@@ -45,9 +31,7 @@ fn max_concurrent_scenarios() -> usize {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // One server per concurrent scenario, all killed when this binding drops
-    // at the end of `main`. Sized to the concurrency limit so a scenario never
-    // shares a server — see `world::Pool` for what goes wrong when they do.
+    // One server per concurrent scenario so none is shared (see `world::Pool`).
     let concurrency = max_concurrent_scenarios();
     let mut servers = Vec::with_capacity(concurrency);
     for _ in 0..concurrency {
@@ -58,8 +42,6 @@ async fn main() -> anyhow::Result<()> {
     Browser::prepare().await?;
 
     let writer = RdrsWorld::cucumber()
-        // Each scenario gets its own browser and its own account, so they do
-        // not interfere. `Browser::prepare` must have run first.
         .max_concurrent_scenarios(concurrency)
         .fail_on_skipped()
         .before(|_feature, _rule, _scenario, world| {

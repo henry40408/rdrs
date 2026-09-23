@@ -5,11 +5,8 @@ Feature: Live updates via SSE
     Given I am signed in
     And I have a feed "SSE Feed" with 5 test entries in category "SSE Category"
 
-  # Must-have: the sidebar unread count must drop within a few seconds
-  # after an external action marks an entry read, with no page reload.
-  # The external action is a direct authenticated POST /entries/{id}/read
-  # (same as the in-page read button) which emits an SSE sidebar event;
-  # the open EventSource receives it and triggers an /api/sidebar refetch.
+  # An external POST /entries/{id}/read emits an SSE sidebar event, which must
+  # refetch /api/sidebar and drop the count without a reload.
   Scenario: Sidebar unread count updates live without a page reload
     When I open the inbox
     And a background request marks "Test Entry 1" as read

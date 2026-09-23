@@ -1,14 +1,8 @@
-//! The in-place-swap assertions: tag the DOM, do something, and check that what
-//! is still tagged is everything that should not have been rebuilt.
+//! In-place-swap assertions: tag the DOM, act, check the tags survived.
 //!
-//! Split out of `entries.steps.js` — see [`super::entries`].
-//!
-//! Every tag here is a **JS property**, not a `data-` attribute. An attribute
-//! would change the node's `outerHTML`, and `outerHTML` is what `performSwap`
-//! compares to decide a row fragment is unchanged — so tagging by attribute
-//! would defeat the very skip these scenarios assert. (The sidebar's own
-//! tagging in [`super::sidebar`] does use attributes: that path reconciles
-//! rather than comparing markup.)
+//! Tags are **JS properties**, not `data-` attributes: an attribute changes
+//! `outerHTML`, which `performSwap` compares to skip unchanged rows. (The
+//! sidebar in [`super::sidebar`] reconciles instead, so it uses attributes.)
 
 use anyhow::{Result, ensure};
 use cucumber::{then, when};
@@ -118,8 +112,7 @@ async fn list_contents_still_tagged(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Arms the check for the *next* list-pane render before the click that causes
-/// it, so the assertion can tell a landed response from a guess.
+/// Arms the check for the *next* list-pane render, before the click.
 #[when("I tag the entry list pane")]
 async fn tag_list_pane(world: &mut RdrsWorld) -> Result<()> {
     let state = world
@@ -154,7 +147,7 @@ async fn tag_list_pane(world: &mut RdrsWorld) -> Result<()> {
 #[then("the entry list pane is still the one I tagged")]
 async fn pane_still_tagged(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
-    // Two frames for the swap logic that runs on the response to have its say.
+    // Two frames for the swap logic to run.
     driver
         .eval("return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));")
         .await?;
@@ -189,8 +182,7 @@ async fn pane_still_tagged(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// `data-snapshot-at` has one-second resolution, so two renders inside the same
-/// second carry the same stamp and "did it advance?" would be unanswerable.
+/// `data-snapshot-at` has one-second resolution.
 #[when("I let the render stamp age")]
 async fn age_render_stamp(_world: &mut RdrsWorld) -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
@@ -216,10 +208,8 @@ async fn stamp_advanced(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// A document load wipes anything hung off `window`, so a marker set before the
-/// interaction and still readable after it proves the switch stayed in the same
-/// document — which is the whole point of the list-pane swap, since a reload
-/// resets the sidebar's own scroll offset.
+/// A document load wipes `window`, so a surviving marker proves no reload
+/// (which would reset the sidebar scroll).
 #[when("I mark the document for reload detection")]
 async fn mark_document(world: &mut RdrsWorld) -> Result<()> {
     world
@@ -242,8 +232,7 @@ async fn document_did_not_reload(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Waits for every favicon in the list to have decoded, so a later assertion
-/// about the images is not racing their load.
+/// Waits for every list favicon to decode.
 #[when("the entry list favicons have loaded")]
 async fn favicons_loaded(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;

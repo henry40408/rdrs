@@ -1,21 +1,10 @@
-// static/js/csrf.js — echo the CSRF token back to the server on every
-// state-changing request: as the `X-CSRF-Token` header on same-origin `fetch()`,
-// and as a hidden `_csrf` field on native POST form submits. Loaded from
-// base.html ahead of the feature modules, so the `fetch` patch is in place
-// before anything calls it.
+// Echoes the CSRF token as `X-CSRF-Token` on same-origin fetch and `_csrf` on
+// native POST forms. Loaded first so the fetch patch precedes any request.
 
 function csrfToken() {
-  // Both names must be matched: the server writes __Host-csrf_token on a Secure
-  // deployment (middleware::csrf::csrf_cookie_name), and a plain `csrf_token=`
-  // pattern does not match it — the `-` before the name fails the `(?:^|;\s*)`
-  // anchor, so every JS-driven POST would send no token and get 403'd.
-  //
-  // __Host- wins when both are present, mirroring the resolution order in
-  // middleware::auth::session_token_from_jar. A browser can hold both cookie
-  // generations at once and document.cookie orders by creation time, so
-  // "whichever comes first" would validate an older value against a newer
-  // session. Preferring the prefix also blocks cookie tossing: a sibling
-  // subdomain can set `csrf_token`, never a __Host- prefixed name.
+  // Match both names (plain `csrf_token=` won't match `__Host-csrf_token`).
+  // __Host- wins, mirroring session_token_from_jar: it avoids pairing an older
+  // cookie with a newer session and blocks cookie tossing from subdomains.
   const read = (name) => {
     const m = document.cookie.match(
       new RegExp(`(?:^|;\\s*)${name}=([^;]*)`)
@@ -55,14 +44,8 @@ window.fetch = function (input, init) {
   return nativeFetch(input, init);
 };
 
-// Capture phase, so this runs ahead of the form-swap handler that serialises the
-// form into a body.
-//
-// The server renders the field (the `csrf_field` macro), so the usual job is to
-// overwrite: `slide_session_cookie` rotates the session token on the way out of
-// a response, leaving the markup's snapshot staler than the cookie `csrf_guard`
-// checks against. Still created when missing, for any form that predates the
-// server-side rendering.
+// Capture phase, ahead of the form-swap handler that serialises the body.
+// Overwrites the server-rendered field: session rotation can leave it stale.
 document.addEventListener(
   "submit",
   (event) => {

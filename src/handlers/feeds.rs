@@ -14,11 +14,7 @@ use crate::models::{category, feed};
 use crate::services::{feed_discovery, feed_sync, opml};
 use url::Url;
 
-// Form-action POST endpoints for the SSR /feeds page. Each accepts
-// application/x-www-form-urlencoded (or multipart for import) bodies and
-// returns a FlashRedirect response (303 + flash cookie + Location). The
-// GReader /reader/api/0/subscription/{edit,import,export} endpoints stay
-// alive — external clients (FreshRSS, Reeder) depend on them.
+// Form-POST endpoints for the SSR /feeds page, answered with FlashRedirect.
 
 #[derive(Debug, Deserialize)]
 pub struct CreateFeedForm {
@@ -96,19 +92,8 @@ pub async fn create_feed_form(
     }
 }
 
-/// The optional text fields are `Option<String>` so that "the request omitted
-/// this field" and "the request sent it blank" stay distinguishable:
-///
-/// - absent (`None`) — leave the stored value alone. A partial update that
-///   only touches, say, the category cannot wipe the rest by accident.
-/// - present and blank (`Some("")`) — a deliberate erase. The edit form
-///   round-trips the current value into every input, so a blank one that
-///   reaches the server was blanked by the user.
-/// - present and non-blank — trimmed and stored.
-///
-/// `title` is the exception: a feed with no title has nothing to render in the
-/// sidebar, so a blank title keeps the old one and `None` is unreachable in
-/// practice. It stays `Option<String>` only for symmetry with the rest.
+/// Optional text fields: absent keeps the stored value, blank erases, anything
+/// else is trimmed and stored. Exception: a blank `title` keeps the old one.
 #[derive(Debug, Deserialize)]
 pub struct EditFeedForm {
     pub url: String,
@@ -127,9 +112,6 @@ pub struct EditFeedForm {
     pub http2_disabled: Option<String>,
 }
 
-/// Resolves one optional text field against the value already stored.
-///
-/// `submitted` is what the request carried, `stored` what the feed holds today.
 /// Absent keeps `stored`; blank clears; anything else wins after trimming.
 fn resolve_optional_field(submitted: Option<&str>, stored: Option<&str>) -> Option<String> {
     match submitted {
@@ -159,9 +141,7 @@ pub async fn edit_feed_form(
     let user_id = auth_user.user.id;
     let new_category_id = req.category_id;
 
-    // Editing the URL was the one way into the feed table that asked nothing of
-    // the value at all — not even a scheme — so it could point the sync worker
-    // at anything reachable from the server.
+    // SSRF-validate: the sync worker will fetch this URL.
     let url_ok = Url::parse(&new_url).is_ok_and(|u| state.fetcher.validate(&u).is_ok());
     if !url_ok {
         return FlashRedirect::error(
@@ -182,8 +162,6 @@ pub async fn edit_feed_form(
             .await?
             .ok_or(AppError::CategoryNotFound)?;
 
-        // A blank title would leave the feed nameless, so it keeps the old one
-        // rather than clearing.
         let title: Option<String> = match req.title.as_deref().map(str::trim) {
             Some(t) if !t.is_empty() => Some(t.to_string()),
             _ => f.title.clone(),
@@ -378,12 +356,8 @@ pub async fn import_opml_form(
     headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    // This route is multipart, so `csrf_guard` passes it through unread; the
-    // token is validated here instead. Browsers inject it as the `_csrf` field
-    // via `csrf.js`; programmatic clients may instead send the `X-CSRF-Token`
-    // header (mirroring the patched `fetch`). Either source is accepted. The
-    // whole form is read (no early break) so the field is seen wherever it sits
-    // in the part order.
+    // Multipart bypasses `csrf_guard`, so CSRF is checked here: `_csrf` field
+    // or `X-CSRF-Token` header. Read every part so the field is found anywhere.
     let mut content = String::new();
     let mut csrf = headers
         .get(crate::middleware::CSRF_HEADER)
@@ -433,9 +407,7 @@ pub async fn import_opml_form(
     };
     let user_id = auth_user.user.id;
     let result = opml::import_outlines(&state.db, user_id, outlines, &state.fetcher).await;
-    // The import dropped its transient OPML parse tree and per-feed buffers;
-    // return those freed pages to the OS now instead of waiting for the
-    // allocator's lazy purge.
+    // Return the import's freed buffers to the OS now.
     crate::reclaim_memory();
     match result {
         Ok(summary) => {

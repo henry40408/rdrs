@@ -72,8 +72,7 @@ const TRACKING_PARAMS: &[&str] = &[
 /// Tracking query parameter prefixes
 const TRACKING_PARAM_PREFIXES: &[&str] = &["utm_", "mtm_"];
 
-/// Matched case-insensitively, and by prefix for the `utm_`/`mtm_` families,
-/// whose suffixes are open-ended.
+/// Matched case-insensitively; `utm_`/`mtm_` suffixes are open-ended.
 fn is_tracking_param(name: &str) -> bool {
     let name_lower = name.to_lowercase();
     TRACKING_PARAMS.iter().any(|&p| name_lower == p)
@@ -85,20 +84,12 @@ fn is_tracking_param(name: &str) -> bool {
 /// Attributes that carry the real image URL for lazy-loaded images, in priority order.
 const LAZY_SRC_ATTRS: &[&str] = &["data-src", "data-lazy-src", "data-original"];
 
-/// ASCII-case-insensitive substring test, for the pre-pass gates below.
-///
-/// Case-insensitive because HTML tag and attribute names are, as are the parsers
-/// each gate fronts: a feed shipping `<IMG DATA-SRC=...>` must not slip past a
-/// lowercase-only check and silently lose its pass. `needle` must be lowercase.
-///
-/// Scanning a few KiB for a short needle costs microseconds against the hundreds
-/// a parse costs, so it is worth paying on every document.
+/// ASCII-case-insensitive substring test for the pre-pass gates, since HTML
+/// names are case-insensitive. `needle` must be lowercase.
 fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     debug_assert!(needle.bytes().all(|b| !b.is_ascii_uppercase()));
     let (h, n) = (haystack.as_bytes(), needle.as_bytes());
-    // `windows(0)` panics, so the empty needle is answered before it is reached
-    // — every caller passes a literal, but a panic is not a thing to leave lying
-    // in a function this hot.
+    // `windows(0)` panics.
     if n.is_empty() {
         return true;
     }
@@ -124,16 +115,8 @@ fn style_dim(style: &str, prop: &str) -> Option<String> {
 
 /// Pre-ammonia pass: drop `aria-hidden="true"` subtrees, content included.
 ///
-/// Ammonia strips `class`, `style` and `aria-hidden` alike, so markup the source
-/// site only kept off-screen through its own stylesheet lands in the reading
-/// pane as literal text — no CSS of ours can hide it, because the hook it was
-/// hidden by is gone. The loudest example is the line-number gutter
-/// VitePress/Shiki emits beside every code block: stripped of its class it
-/// renders as a column of bare numbers below the code, once per block.
-///
-/// `aria-hidden="true"` is the author stating the subtree carries nothing a
-/// reader needs — the same signal Readability uses — so honour it generically
-/// rather than blocklisting per-site class names.
+/// Ammonia strips the `class`/`style` that kept such markup (e.g. Shiki's
+/// line-number gutter) off-screen, so it would otherwise render as bare text.
 fn drop_aria_hidden(html: &str) -> Cow<'_, str> {
     if aria_hidden_gate(html) {
         drop_aria_hidden_inner(html)
@@ -142,9 +125,8 @@ fn drop_aria_hidden(html: &str) -> Cow<'_, str> {
     }
 }
 
-/// Gate for [`drop_aria_hidden`]: the selector cannot match without the
-/// attribute name present, and attribute names are never entity-decoded, so
-/// the literal bytes have to be there for the parser to see it too.
+/// Gate for [`drop_aria_hidden`]: attribute names are never entity-decoded, so
+/// the literal bytes must be present.
 fn aria_hidden_gate(html: &str) -> bool {
     contains_ignore_ascii_case(html, "aria-hidden")
 }
@@ -164,18 +146,16 @@ fn drop_aria_hidden_inner(html: &str) -> Cow<'_, str> {
         RewriteStrSettings::new().append_element_content_handler(handler),
     )
     .unwrap_or_else(|_| html.to_string());
-    // A site that wraps its whole article in `aria-hidden="true"` (sloppy, but
-    // it happens) would otherwise leave the entry blank; a gutter beats nothing.
+    // A wholly `aria-hidden` article would otherwise render blank.
     if stripped.trim().is_empty() && !html.trim().is_empty() {
         return Cow::Borrowed(html);
     }
     Cow::Owned(stripped)
 }
 
-/// Pre-ammonia pass: for any `<img>` lacking BOTH `width` and `height`, inject
-/// them from `data-original-width`/`data-original-height` or an inline
-/// `style="width:..px;height:..px"`. Ammonia strips those hint sources, so this
-/// must run before it. Only injects when a usable integer PAIR is found.
+/// Pre-ammonia pass: give an `<img>` lacking both `width` and `height` a
+/// positive integer pair from `data-original-*` or inline `style`, which ammonia
+/// strips.
 fn harvest_image_dimensions(html: &str) -> Cow<'_, str> {
     if harvest_gate(html) {
         harvest_image_dimensions_inner(html)
@@ -184,14 +164,8 @@ fn harvest_image_dimensions(html: &str) -> Cow<'_, str> {
     }
 }
 
-/// Gate for [`harvest_image_dimensions`]: the handler fires only on an image
-/// element, and only injects when it finds a hint in `data-original-*` or an
-/// inline `style`.
-///
-/// `<image` is accepted alongside `<img` on purpose. HTML tree construction
-/// rewrites a stray `<image>` start tag to `img`, and while `lol_html` tokenises
-/// rather than building a tree, that is a dependency's implementation detail —
-/// cheaper to admit the tag than to depend on it not being adjusted.
+/// Gate for [`harvest_image_dimensions`]. Accepts `<image` too, since HTML
+/// parsers may rewrite it to `img`.
 fn harvest_gate(html: &str) -> bool {
     (contains_ignore_ascii_case(html, "<img") || contains_ignore_ascii_case(html, "<image"))
         && (contains_ignore_ascii_case(html, "style")
@@ -212,9 +186,7 @@ fn harvest_image_dimensions_inner(html: &str) -> Cow<'_, str> {
             .get_attribute("data-original-height")
             .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
             .or_else(|| style_dim(&style, "height"));
-        // Require a positive integer pair: a harvested 0 (e.g.
-        // `style="width:0px"`) would inject `width="0"` and collapse the box to
-        // zero height while suppressing the 16/9 loading fallback.
+        // A harvested 0 would collapse the box and suppress the 16/9 fallback.
         let positive = |s: &Option<String>| {
             s.as_deref()
                 .and_then(|v| v.parse::<u32>().ok())
@@ -233,13 +205,8 @@ fn harvest_image_dimensions_inner(html: &str) -> Cow<'_, str> {
     .map_or(Cow::Borrowed(html), Cow::Owned)
 }
 
-/// Promote lazy-loaded image URLs into `src` before sanitization.
-///
-/// Many sites ship a `data:` SVG placeholder in `src` and keep the real URL in a
-/// `data-*` attribute. Ammonia later drops both — disallowed scheme, unknown
-/// attribute — leaving an empty `<img>` and making images disappear. Running
-/// this first moves the real URL into `src` so the rest of the pipeline can
-/// proxy it.
+/// Promote lazy-loaded image URLs into `src` before ammonia drops the `data:`
+/// placeholder and the `data-*` attribute holding the real URL.
 fn promote_lazy_images(html: &str) -> Cow<'_, str> {
     if lazy_gate(html) {
         promote_lazy_images_inner(html)
@@ -248,14 +215,8 @@ fn promote_lazy_images(html: &str) -> Cow<'_, str> {
     }
 }
 
-/// Gate for [`promote_lazy_images`]: a promotion needs one of
-/// [`LAZY_SRC_ATTRS`], so without any of them the pass cannot change a byte.
-/// Worth gating harder than the other two — this one builds a full scraper DOM
-/// *and* compiles a CSS selector per call, and on a real corpus fewer than 2% of
-/// entries carry a lazy attribute at all.
-///
-/// It deliberately does not mention `<img`: html5ever rewrites a stray `<image>`
-/// start tag to `img`, so keying on the attribute sidesteps the question.
+/// Gate for [`promote_lazy_images`], the costliest pass (full DOM plus a
+/// selector); keyed on the attribute, not `<img`, to sidestep `<image>`.
 fn lazy_gate(html: &str) -> bool {
     LAZY_SRC_ATTRS
         .iter()
@@ -279,7 +240,7 @@ fn promote_lazy_images_inner(html: &str) -> Cow<'_, str> {
             continue;
         }
 
-        // Find the first usable lazy URL (non-empty, not another placeholder).
+        // First usable lazy URL (non-empty, not another placeholder).
         let lazy = LAZY_SRC_ATTRS.iter().find_map(|attr| {
             el.attr(attr)
                 .filter(|u| !u.is_empty() && !u.starts_with("data:"))
@@ -291,7 +252,6 @@ fn promote_lazy_images_inner(html: &str) -> Cow<'_, str> {
 
         let new_src = format!("src=\"{real}\"");
         if let Some(placeholder) = current_src {
-            // Replace the `data:` placeholder src with the real URL.
             let old_amp = format!("src=\"{}\"", placeholder.replace('&', "&amp;"));
             let old_raw = format!("src=\"{placeholder}\"");
             if result.contains(&old_amp) {
@@ -300,7 +260,6 @@ fn promote_lazy_images_inner(html: &str) -> Cow<'_, str> {
                 result = result.replacen(&old_raw, &new_src, 1);
             }
         } else {
-            // No src at all: convert the lazy attribute into `src`.
             let old_amp = format!("{}=\"{}\"", attr_name, real.replace('&', "&amp;"));
             let old_raw = format!("{attr_name}=\"{real}\"");
             if result.contains(&old_amp) {
@@ -334,8 +293,8 @@ fn is_tracking_pixel(width: Option<&str>, height: Option<&str>, src: Option<&str
     is_tracking_size || is_tracking_url
 }
 
-/// Strip tracking query parameters from an http(s) URL, returning the rewritten
-/// URL only if something was removed. Non-http(s) inputs return `None`.
+/// Strip tracking params from an http(s) URL; `None` if nothing was removed or
+/// the URL is not http(s).
 fn strip_tracking_params_from_url(href: &str) -> Option<String> {
     if !href.starts_with("http://") && !href.starts_with("https://") {
         return None;
@@ -371,23 +330,17 @@ fn strip_tracking_params_from_url(href: &str) -> Option<String> {
     Some(url.to_string())
 }
 
-/// Strip tracking query parameters from an outbound entry/display URL, always
-/// returning an owned `String`. Unlike [`strip_tracking_params_from_url`],
-/// inputs with nothing to strip (or non-http(s) URLs) come back unchanged rather
-/// than `None`. Cleans the entry `link` shown in the UI and handed to the
-/// summarizer and bookmark services.
+/// Like `strip_tracking_params_from_url` but always returns the (possibly
+/// unchanged) URL. Used for entry links shown and handed to external services.
 pub fn strip_tracking_params(url: &str) -> String {
     strip_tracking_params_from_url(url).unwrap_or_else(|| url.to_string())
 }
 
-/// Consolidated post-ammonia rewrite: one streaming `lol_html` pass folding the
-/// former four `parse_fragment` passes — remove tracking pixels, strip tracking
-/// params, rewrite image URLs to the signed proxy, add link privacy attributes —
-/// into a single parse of the already-sanitized HTML.
+/// Post-ammonia rewrite in one `lol_html` pass: remove tracking pixels, strip
+/// tracking params, proxy images, add link privacy attributes.
 ///
-/// `lol_html` exposes attribute values verbatim, so `&amp;` is normalized to `&`
-/// before parsing a URL: ammonia emits `&amp;` for query separators and
-/// `Url::parse` needs the raw `&` to split query pairs.
+/// Attribute values are verbatim, so ammonia's `&amp;` is normalized to `&`
+/// before `Url::parse`.
 fn rewrite_post_ammonia(
     html: &str,
     secret: &[u8],
@@ -400,17 +353,14 @@ fn rewrite_post_ammonia(
     let img_handler = element!("img", |el| {
         let width = el.get_attribute("width");
         let height = el.get_attribute("height");
-        // Normalize ammonia's `&amp;` back to `&` so URL parsing and proxy
-        // signing operate on the real URL.
         let src = el.get_attribute("src").map(|s| s.replace("&amp;", "&"));
 
-        // Remove tracking pixels outright.
         if is_tracking_pixel(width.as_deref(), height.as_deref(), src.as_deref()) {
             el.remove();
             return Ok(());
         }
 
-        // Rewrite the image src to the signed proxy URL (skip data: URLs).
+        // Rewrite to the signed proxy URL (skip data: URLs).
         if let Some(src) = src {
             if src.starts_with("data:") {
                 return Ok(());
@@ -422,12 +372,9 @@ fn rewrite_post_ammonia(
             } else {
                 None
             };
-            // Fail closed. This branch cannot produce a working image either
-            // way: a path-relative src resolves against *our* origin and 404s,
-            // and a protocol-relative one resolves to the author's host —
-            // fetched outside the proxy, leaking the reader's IP and a read
-            // receipt. Dropping it makes "every image goes through the proxy" an
-            // invariant. Callers should pass a base so this stays rare.
+            // Fail closed: an unresolvable src would 404 on our origin or be fetched
+            // from the author's host outside the proxy, leaking the reader's IP. Every
+            // image must go through the proxy.
             let Some(url) = absolute_url else {
                 el.remove();
                 return Ok(());
@@ -449,12 +396,10 @@ fn rewrite_post_ammonia(
         let Some(href) = el.get_attribute("href") else {
             return Ok(());
         };
-        // Normalize ammonia's `&amp;` back to `&` so query pairs split correctly.
         let href = href.replace("&amp;", "&");
         if !href.starts_with("http://") && !href.starts_with("https://") {
             return Ok(());
         }
-        // Strip tracking params first, then apply privacy attributes.
         if let Some(stripped) = strip_tracking_params_from_url(&href) {
             el.set_attribute("href", &stripped)?;
         }
@@ -470,29 +415,17 @@ fn rewrite_post_ammonia(
     rewritten.unwrap_or_else(|_| html.to_string())
 }
 
-/// The markup an AI summary may keep. Much narrower than [`sanitize_html`]'s
-/// set because a summary is prose: no images, no tables, no headings, and no
-/// links — see [`sanitize_summary`].
+/// Markup an AI summary may keep: inline prose only, no images, tables,
+/// headings or links. See [`sanitize_summary`].
 const SUMMARY_TAGS: &[&str] = &[
     "p", "br", "strong", "em", "b", "i", "ul", "ol", "li", "code",
 ];
 
 /// Reduce a model-written summary to inline prose markup.
 ///
-/// The summary is written by Kagi from an article nobody here controls, so it is
-/// attacker-influenced exactly as feed content is — and it reaches the page
-/// through `|safe`. Our CSP already refuses what a `<style>` or an `on*=` in it
-/// would try, but until now CSP was the *only* thing between an injected tag and
-/// the reading pane.
-///
-/// `a` is deliberately absent, unlike in [`sanitize_html`]: a summary is prose
-/// *about* an article, so a link inside it serves no reader — while a link
-/// inside a box the UI presents as trustworthy is a ready-made phishing
-/// primitive. Dropping the tag keeps the anchor's text.
-///
-/// Escaping is the quieter half of the win: a summary containing `5 < 10` now
-/// renders as written, where the bare `<` used to open a bogus tag and swallow
-/// what followed.
+/// The summary is attacker-influenced like feed content and rendered via
+/// `|safe`. `a` is excluded: a link in a box the UI presents as trustworthy is
+/// a phishing primitive. Stray `<` is escaped rather than opening a tag.
 pub fn sanitize_summary(summary: &str) -> String {
     Builder::default()
         .tags(SUMMARY_TAGS.iter().copied().collect())
@@ -500,17 +433,13 @@ pub fn sanitize_summary(summary: &str) -> String {
         .to_string()
 }
 
-/// Reduce untrusted feed markup to the tag whitelist below, then rewrite what
-/// survives: tracking pixels removed, tracking params stripped, links given
-/// `target`/`referrerpolicy`, and **every image routed through the signed image
-/// proxy**.
+/// Sanitize untrusted feed markup to the whitelist, then remove tracking
+/// pixels/params, add link privacy attributes, and route **every image through
+/// the signed image proxy**.
 ///
-/// `base_url` is part of that last guarantee, not a nicety: an image `src` that
-/// cannot be resolved to an absolute `http(s)` URL is dropped rather than passed
-/// through, so a caller that omits the base silently loses relative images. Pass
-/// [`crate::models::entry::EntryWithFeed::content_base_url`], which always
-/// yields one; `None` is for callers with genuinely no document to resolve
-/// against, and for tests.
+/// An image `src` that cannot resolve to absolute `http(s)` is dropped, so pass
+/// [`crate::models::entry::EntryWithFeed::content_base_url`]; `None` is for
+/// callers with no document base, and tests.
 pub fn sanitize_html(
     content: &str,
     secret: &[u8],
@@ -556,14 +485,12 @@ pub fn sanitize_html(
 
     let url_schemes: HashSet<&str> = ["http", "https"].iter().copied().collect();
 
-    // Step 0: Drop author-hidden scaffolding, then promote lazy-loaded image
-    // URLs into src before ammonia drops the data: placeholder and the unknown
-    // data-* attributes. Both read attributes ammonia is about to strip.
+    // Step 0: pre-passes read attributes ammonia is about to strip.
     let visible = drop_aria_hidden(content);
     let unlazied = promote_lazy_images(&visible);
     let unlazied = harvest_image_dimensions(&unlazied);
 
-    // Step 1: Ammonia sanitization (already adds rel="noopener noreferrer")
+    // Step 1: ammonia (adds rel="noopener noreferrer").
     let sanitized = Builder::default()
         .tags(allowed_tags)
         .link_rel(Some("noopener noreferrer"))
@@ -571,9 +498,7 @@ pub fn sanitize_html(
         .clean(&unlazied)
         .to_string();
 
-    // Steps 2-5 folded into a single streaming lol_html pass: remove tracking
-    // pixels, strip tracking params, rewrite image URLs to the signed proxy, and
-    // add link privacy attributes — all in one parse of the sanitized HTML.
+    // Steps 2-5: single lol_html rewrite pass.
     rewrite_post_ammonia(&sanitized, secret, base_url, referrer, proxy_base_url)
 }
 
@@ -607,9 +532,7 @@ mod tests {
 
     #[test]
     fn summary_drops_images_and_event_handlers() {
-        // An `<img>` here would be an un-proxied external fetch on a page that
-        // never routes images that way — the same leak the entry pipeline
-        // closes, arriving through a different door.
+        // An `<img>` would be an un-proxied external fetch.
         let input = r#"<p onclick="x()">Body <img src="//evil.tld/beacon.gif"></p>"#;
         let output = sanitize_summary(input);
         assert!(!output.contains("evil.tld"), "{output}");
@@ -619,8 +542,6 @@ mod tests {
 
     #[test]
     fn summary_unlinks_anchors_but_keeps_their_text() {
-        // `a` is excluded on purpose: a link inside a box the UI frames as
-        // trustworthy is a phishing primitive, and a prose summary needs none.
         let input = r#"<p>See <a href="https://evil.tld/login">your account</a>.</p>"#;
         let output = sanitize_summary(input);
         assert!(!output.contains("<a"), "{output}");
@@ -630,15 +551,13 @@ mod tests {
 
     #[test]
     fn summary_escapes_plain_text_rather_than_parsing_it() {
-        // Rendered raw, the bare `<` opens a tag and eats the rest of the line.
         let output = sanitize_summary("Latency held at 5 < 10 ms & stayed there.");
         assert_eq!(output, "Latency held at 5 &lt; 10 ms &amp; stayed there.");
     }
 
     #[test]
     fn summary_leaves_markdown_untouched_as_text() {
-        // Kagi returns markdown today and nothing converts it, so sanitizing
-        // must not disturb what already reaches the page.
+        // Kagi returns markdown; sanitizing must not disturb it.
         let input = "**Bold** and _italic_ with a [link](https://example.com).";
         assert_eq!(sanitize_summary(input), input);
     }
@@ -669,7 +588,6 @@ mod tests {
     fn test_preserve_images() {
         let input = r#"<img src="https://example.com/image.jpg" alt="Image">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        // Image URLs should be rewritten to proxy URLs with signature
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("&s="));
         assert!(!output.contains("src=\"https://example.com/image.jpg\""));
@@ -677,10 +595,8 @@ mod tests {
 
     #[test]
     fn test_rewrite_preserves_data_urls() {
-        // The post-ammonia rewrite must leave `data:` image sources untouched and
-        // never proxy them. (The full `sanitize_html` pipeline runs ammonia first,
-        // which drops the disallowed `data:` scheme outright — so this targets the
-        // rewrite pass directly, where the data: skip lives.)
+        // Targets the rewrite pass directly: the full pipeline drops `data:` in
+        // ammonia first.
         let input = r#"<img src="data:image/png;base64,abc123" alt="Data URL">"#;
         let output = rewrite_post_ammonia(input, TEST_SECRET, None, None, None);
         assert!(output.contains("data:image/png;base64,abc123"));
@@ -693,7 +609,6 @@ mod tests {
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("src=\"https://a.com/1.jpg\""));
         assert!(!output.contains("src=\"https://b.com/2.jpg\""));
-        // Both should be rewritten with signatures
         let proxy_count = output.matches("/api/proxy/image?url=").count();
         assert_eq!(proxy_count, 2);
         let sig_count = output.matches("&s=").count();
@@ -702,9 +617,8 @@ mod tests {
 
     #[test]
     fn test_promote_lazy_image_data_lazy_src() {
-        // Lazy-loaded images (e.g. WordPress + lazy-load plugins) carry a data: SVG
-        // placeholder in src and the real URL in data-lazy-src. The real image must
-        // be promoted and proxied, not dropped.
+        // WordPress-style lazy load: data: placeholder in src, real URL in
+        // data-lazy-src. It must be promoted and proxied.
         let input = r#"<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-lazy-src="https://example.com/real.jpg" alt="Photo">"#;
         let output = sanitize_with_base(input, "https://example.com/post");
         assert!(
@@ -743,11 +657,9 @@ mod tests {
 
     #[test]
     fn test_real_src_not_overridden_by_lazy_attr() {
-        // When src is already a real URL, it must win even if a lazy attr exists.
         let input =
             r#"<img src="https://example.com/real.jpg" data-src="https://example.com/other.jpg">"#;
         let output = sanitize_with_base(input, "https://example.com/post");
-        // real.jpg must be the one proxied; other.jpg must not appear.
         assert!(output.contains("/api/proxy/image?url="));
         assert!(
             !output.contains("other.jpg"),
@@ -812,10 +724,7 @@ mod tests {
 
     #[test]
     fn test_remove_tracking_pixel_with_data_src_attr() {
-        // A tracking pixel may also carry a `data-src`; the real `src` is the
-        // flagged tracking URL and the tag must still be removed. ammonia strips
-        // the unknown `data-src` attribute, then the lol_html pass parses the tag
-        // structurally and removes it based on the real `src`.
+        // The real `src` is a tracking URL, so the tag is removed despite `data-src`.
         let input = r#"<p>Text</p><img data-src="https://example.com/real.jpg" src="https://pixel.tracker.com/p.gif" width="1" height="1">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("<img"), "tracking pixel should be removed");
@@ -824,10 +733,7 @@ mod tests {
 
     #[test]
     fn test_keep_normal_image_with_data_src_when_only_data_src_flagged() {
-        // A normal image whose `src` is NOT a tracking URL must be kept (and
-        // proxied) even if a `data-src` happens to look tracking-ish; only the
-        // real `src` counts. `promote_lazy_images` leaves the real `src` alone, so
-        // the kept image is the proxied photo, not the data-src URL.
+        // Only the real `src` counts: a tracking-ish `data-src` does not drop it.
         let input = r#"<img data-src="https://pixel.tracker.com/x.gif" src="https://example.com/photo.jpg" width="800" height="600">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(
@@ -846,7 +752,6 @@ mod tests {
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("pixel.a.com"));
         assert!(!output.contains("beacon.b.com"));
-        // The non-tracking image survives as a proxied URL.
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("<p>a</p>"));
         assert!(output.contains("<p>b</p>"));
@@ -857,7 +762,6 @@ mod tests {
         let input = r#"<img src="https://example.com/photo.jpg" width="800" height="600">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("<img"));
-        // The normal image is kept and proxied.
         assert!(output.contains("/api/proxy/image?url="));
     }
 
@@ -902,8 +806,7 @@ mod tests {
 
     #[test]
     fn test_strip_tracking_params_removes_trackers() {
-        // The public helper (used for entry links) strips utm_*/click IDs while
-        // keeping genuine query params, and always returns an owned String.
+        // Strips utm_*/click IDs, keeps genuine params.
         let cleaned = strip_tracking_params(
             "https://example.com/article?id=42&utm_source=news&fbclid=FB1&page=2",
         );
@@ -915,12 +818,10 @@ mod tests {
 
     #[test]
     fn test_strip_tracking_params_returns_input_when_clean() {
-        // Nothing to strip → the URL is returned unchanged (not None).
         assert_eq!(
             strip_tracking_params("https://example.com/article?id=42&page=2"),
             "https://example.com/article?id=42&page=2"
         );
-        // A param-free URL is likewise untouched.
         assert_eq!(
             strip_tracking_params("https://example.com/article"),
             "https://example.com/article"
@@ -929,7 +830,7 @@ mod tests {
 
     #[test]
     fn test_strip_tracking_params_passes_through_non_http() {
-        // Non-http(s) inputs (e.g. relative or mailto) are returned verbatim.
+        // Non-http(s) inputs are returned verbatim.
         assert_eq!(
             strip_tracking_params("/relative/path?utm_source=x"),
             "/relative/path?utm_source=x"
@@ -944,7 +845,6 @@ mod tests {
     fn test_preserve_url_without_params() {
         let input = r#"<a href="https://example.com/page">Link</a>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        // A param-free URL is preserved verbatim in href (only privacy attrs added).
         assert!(output.contains("href=\"https://example.com/page\""));
     }
 
@@ -972,9 +872,7 @@ mod tests {
     fn test_relative_images_without_base_url_are_dropped() {
         let input = r#"<p>Text</p><img src="/images/photo.jpg" alt="Photo">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        // Fail closed. Keeping the src would resolve it against whatever origin
-        // the document happens to be on rather than the feed's, so the image is
-        // broken at best and off-origin at worst; the rest of the entry stays.
+        // Fail closed: the src would resolve against the wrong origin.
         assert!(!output.contains("<img"), "{output}");
         assert!(!output.contains("/images/photo.jpg"), "{output}");
         assert!(output.contains("<p>Text</p>"), "{output}");
@@ -982,11 +880,8 @@ mod tests {
 
     #[test]
     fn protocol_relative_image_never_escapes_the_proxy() {
-        // `//evil.tld/x.gif` reads as relative to a check that only tests for an
-        // `http(s)://` prefix, but is absolute to a browser. Left unrewritten it
-        // is fetched straight from the author's host — the reader's IP and a read
-        // receipt with it — which our CSP stops but a third-party client's
-        // webview does not.
+        // `//evil.tld/x.gif` is absolute to a browser; unrewritten it leaks the
+        // reader's IP to the author's host.
         let input = r#"<img src="//evil.tld/x.gif">"#;
 
         let no_base = sanitize_html(input, TEST_SECRET, None, None, None);
@@ -997,8 +892,8 @@ mod tests {
         assert!(!with_base.contains(r#"src="//evil.tld"#), "{with_base}");
     }
 
-    /// Every `src="..."` value in `html`, in document order. Only `<img>` keeps
-    /// a `src` through sanitization, so this needs no tag matching.
+    /// Every `src="..."` value in `html`; only `<img>` keeps `src` after
+    /// sanitization.
     fn image_srcs(html: &str) -> Vec<&str> {
         html.match_indices(r#"src=""#)
             .map(|(i, m)| {
@@ -1010,10 +905,8 @@ mod tests {
 
     #[test]
     fn every_emitted_image_src_is_proxied_or_inline_data() {
-        // Stated as an invariant rather than a list of known-bad inputs:
-        // anything the rewrite cannot turn into a signed proxy URL must not
-        // reach the page, so a src form nobody has thought of yet fails here
-        // instead of silently shipping unproxied.
+        // Invariant: anything that cannot become a signed proxy URL must not reach
+        // the page.
         let inputs = [
             r#"<img src="//evil.tld/x.gif">"#,
             r#"<img src="/\/evil.tld/x.gif">"#,
@@ -1041,8 +934,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_image_url_with_query_params_containing_ampersand() {
-        // The src carries a `&` in its query. lol_html decodes attribute values and
-        // re-encodes on write, so the rewrite must still succeed and proxy the URL.
+        // lol_html decodes attribute values and re-encodes on write.
         for src in [
             "https://example.com/image.jpg?size=800&format=webp",
             "https://cdn.example.com/photo?w=800&h=600",
@@ -1061,7 +953,6 @@ mod tests {
     fn test_mixed_absolute_and_relative_images() {
         let input = r#"<img src="https://cdn.example.com/abs.jpg"><img src="/images/rel.jpg">"#;
         let output = sanitize_with_base(input, "https://example.com/page");
-        // Both should be rewritten
         let proxy_count = output.matches("/api/proxy/image?url=").count();
         assert_eq!(proxy_count, 2);
     }
@@ -1082,9 +973,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_tracking_pixel_with_gt_in_src() {
-        // A tracking pixel whose src contains a literal `>` must still be removed
-        // cleanly. The previous substring-scanning pass keyed off the first `>`
-        // and could mis-bound such a tag; the lol_html pass parses structurally.
+        // A literal `>` in src must not mis-bound the tag.
         let input = r#"<p>keep</p><img src="https://pixel.tracker.com/p.gif?q=a>b" width="1" height="1"><p>tail</p>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(
@@ -1148,7 +1037,6 @@ mod tests {
 
     #[test]
     fn test_harvest_skips_zero_dimensions() {
-        // A harvested 0 would collapse the box to zero height — never inject it.
         let input = r#"<img src="https://e.com/a.jpg" style="width:0px;height:0px">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("width=\"0\""), "{output}");
@@ -1164,9 +1052,7 @@ mod tests {
 
     #[test]
     fn test_drops_code_block_line_number_gutter() {
-        // VitePress/Shiki shape: the gutter is a sibling of <pre>, hidden by the
-        // source site's CSS via a class ammonia strips. Left in, it renders as a
-        // column of bare numbers under every code block.
+        // VitePress/Shiki shape: gutter sibling of <pre>, hidden by a stripped class.
         let input = concat!(
             r#"<div class="language-ts line-numbers-mode"><span class="lang">ts</span>"#,
             r#"<pre><code><span class="line">const a = 1;</span>"#,
@@ -1209,17 +1095,13 @@ mod tests {
         assert!(output.contains("the entire article"), "{output}");
     }
 
-    /// Documents chosen to sit near the edges of the three gates: tag- and
-    /// attribute-name casing, an `<image>` start tag, hint attributes without an
-    /// image, images without hints, markup inside comments, and `data-original`
-    /// against its `data-original-width` near-namesake.
+    /// Documents near the gates' edges: casing, `<image>`, hints without images,
+    /// images without hints, comments, `data-original` vs `data-original-width`.
     const GATE_CORPUS: &[&str] = &[
         "",
         "<p>plain</p>",
-        // Paired with visible content on purpose: an `aria-hidden` document
-        // with nothing else in it hits the pass's own "would blank the entry"
-        // fallback, which returns the input unchanged and would mask a gate
-        // that wrongly skipped it.
+        // Visible content included: a pure `aria-hidden` document hits the blank
+        // fallback and would mask a wrongly skipped gate.
         r#"<p>body</p><span ARIA-HIDDEN="true">decor</span>"#,
         r#"<p aria-hidden="false">x</p>"#,
         r#"<IMG SRC="https://e.com/a.jpg">"#,
@@ -1234,10 +1116,8 @@ mod tests {
         "<p>a &lt;img&gt; mention in text</p>",
     ];
 
-    /// The gates are only sound if each is a *superset* of the pass it fronts:
-    /// whenever a gate says "skip", running the pass anyway must be a no-op. So a
-    /// pass that grows a new trigger without its gate growing to match fails here
-    /// instead of silently ceasing to fire.
+    /// Each gate must be a superset of its pass: when it says "skip", running the
+    /// pass anyway must be a no-op.
     #[test]
     fn gates_are_supersets_of_the_passes_they_front() {
         for doc in GATE_CORPUS {
@@ -1276,10 +1156,7 @@ mod tests {
         assert!(contains_ignore_ascii_case("", ""));
     }
 
-    // The three pre-passes are gated on a cheap substring test so the common
-    // document skips their parse. HTML attribute names are case-insensitive, so
-    // each gate has to be too — these pin that, since a lowercase-only gate
-    // would make the pass silently vanish rather than fail loudly.
+    // HTML names are case-insensitive, so each gate must be too.
 
     #[test]
     fn test_uppercase_aria_hidden_attribute_still_dropped() {
@@ -1308,8 +1185,7 @@ mod tests {
 
     #[test]
     fn test_document_without_pre_pass_triggers_is_unchanged() {
-        // The gates' happy path: nothing here can trigger any of the three, so
-        // the output must match what the ammonia + rewrite steps alone produce.
+        // Nothing here triggers a pre-pass; output must equal ammonia + rewrite alone.
         let input = r"<p>Plain <strong>body</strong> text.</p>";
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert_eq!(output, "<p>Plain <strong>body</strong> text.</p>");

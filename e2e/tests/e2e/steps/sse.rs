@@ -1,7 +1,4 @@
-//! Live updates over SSE — a port of `sse.steps.js`.
-//!
-//! Every assertion here is "the open page changed without a reload", so each
-//! one polls the DOM rather than navigating.
+//! Live updates over SSE; every assertion polls the DOM without navigating.
 
 use anyhow::Result;
 use cucumber::{then, when};
@@ -9,9 +6,7 @@ use rdrs_e2e::dom::{Dom, TextContent};
 use rdrs_e2e::wait::{eventually, eventually_eq};
 use rdrs_e2e::world::RdrsWorld;
 
-/// The entry row gets a pending or processing badge over SSE after the
-/// Summarize POST. The mock Kagi upstream is deliberately slow, so this
-/// transient state is observable.
+/// The mock Kagi upstream is slow so the transient badge is observable.
 #[then("the entry row shows a pending summary badge")]
 async fn pending_badge(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -27,8 +22,7 @@ async fn pending_badge(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// The SSE event triggers a fragment swap of `#rp-summary-container` — no
-/// reload.
+/// The SSE event swaps `#rp-summary-container` in place.
 #[then("without reloading, the reading pane shows the completed summary")]
 async fn completed_summary_in_pane(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -44,7 +38,6 @@ async fn completed_summary_in_pane(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// The SSE entry-row event drives this badge swap, again without a reload.
 #[then("the entry row shows the completed summary badge")]
 async fn completed_badge(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -60,8 +53,8 @@ async fn completed_badge(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// Snapshots the sidebar's unread count and marks an entry read out of band, in
-/// one step, so the before-reading is taken before the SSE event can fire.
+/// Snapshots the unread count and marks read in one step, so the snapshot
+/// precedes the SSE event.
 #[when(expr = "a background request marks {string} as read")]
 async fn background_mark_read(world: &mut RdrsWorld, title: String) -> Result<()> {
     world.unread_before = Some(unread_count(world).await?);
@@ -73,8 +66,7 @@ async fn background_mark_read(world: &mut RdrsWorld, title: String) -> Result<()
         .await
 }
 
-/// The SSE sidebar event triggers `rdrs-sidebar.refresh()`, which calls
-/// `/api/sidebar` and updates the badge surgically — no page reload.
+/// The SSE event triggers `rdrs-sidebar.refresh()`, updating the badge in place.
 #[then("within 5 seconds the sidebar unread count decreases by one without a reload")]
 async fn unread_decreases(world: &mut RdrsWorld) -> Result<()> {
     let before = world

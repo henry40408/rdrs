@@ -1,10 +1,6 @@
-//! Redeeming a one-time link: the only way an account gets its first password.
-//!
-//! Everything here is anonymous — the token in the URL *is* the authority — so
-//! each failing case has to answer identically. An unknown token, an expired
-//! one and one that was already spent all render the same page and reveal no
-//! username, or the endpoint would become the account oracle that removing
-//! self-service registration was meant to close.
+//! Redeeming a one-time invite link. Anonymous — the token is the authority —
+//! so every failure (unknown, expired, spent) must render identically and
+//! reveal no username, or this becomes an account oracle.
 
 use std::net::SocketAddr;
 
@@ -27,17 +23,13 @@ use crate::models::{session, user, user_invite};
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
-/// Everything the redemption page needs once a token has been accepted.
 struct LiveInvite {
     invite: crate::models::user_invite::UserInvite,
     username: String,
 }
 
-/// Resolve a token to a live invite and the account it belongs to.
-///
-/// `None` covers every failure identically — unknown token, expired, already
-/// consumed, or an account that has since been deleted. Callers must not
-/// distinguish them in what they render.
+/// Resolve a token to a live invite. `None` covers every failure; callers must
+/// not distinguish them in what they render.
 async fn resolve(state: &AppState, token: &str) -> Option<LiveInvite> {
     let invite = user_invite::find_by_token(&state.db, &state.config.secret, token)
         .await
@@ -66,10 +58,7 @@ pub async fn invite_page(
         return InviteTemplate::invalid().into_response();
     };
 
-    // The username is shown only once the token has been accepted. Holding a
-    // valid link already authorises knowing whose account it opens; showing it
-    // before that would answer questions about accounts to anyone who guessed
-    // a URL.
+    // Username is shown only after the token is accepted.
     InviteTemplate::form(
         &token,
         live.username,
@@ -95,9 +84,7 @@ pub async fn redeem_form(
 ) -> Response {
     // Re-rendered on every failure below, so the retry carries a live token.
     let csrf_token = crate::middleware::csrf_token_from_jar(&jar, &state.config.secret);
-    // Throttled before the token is even looked up: this endpoint runs the
-    // strength estimator and Argon2, and it is reachable without a session, so
-    // it is the cheapest anonymous way to spend server CPU in the app.
+    // Throttle before lookup: anonymous and runs zxcvbn + Argon2.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -135,11 +122,8 @@ pub async fn redeem_form(
         .into_response();
     };
 
-    // Spend the link *before* writing the password. Two submissions racing on
-    // one token both pass `resolve` above; only the caller that wins this
-    // update may go on to write, or the loser would silently overwrite the
-    // password the winner just chose. Losing looks exactly like arriving at a
-    // spent link, which is what it is.
+    // Spend the link *before* writing the password so only the winner of a
+    // racing double-submit writes; the loser sees a spent link.
     match user_invite::consume(&state.db, live.invite.id).await {
         Ok(true) => {}
         _ => return InviteTemplate::invalid().into_response(),
@@ -158,10 +142,8 @@ pub async fn redeem_form(
         .into_response();
     }
 
-    // An admin-issued reset lands here too, and the account may well have live
-    // sessions and API tokens from before. Clearing both matches what changing
-    // a password from the settings page does: the point of a reset is that
-    // whatever came before stops working.
+    // Admin resets land here too: revoke prior sessions and API tokens, as a
+    // settings-page password change does.
     let _ = session::delete_user_sessions(&state.db, live.invite.user_id).await;
     let _ = crate::models::api_token::delete_user_tokens(&state.db, live.invite.user_id).await;
 

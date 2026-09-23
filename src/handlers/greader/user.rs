@@ -33,7 +33,6 @@ pub async fn unread_count(
 
     let mut unreadcounts: Vec<UnreadCount> = Vec::new();
 
-    // Per-feed unread counts
     for f in &feeds {
         let count = feed_unreads.get(&f.id).copied().unwrap_or(0);
         unreadcounts.push(UnreadCount {
@@ -43,7 +42,6 @@ pub async fn unread_count(
         });
     }
 
-    // Per-category unread counts
     for cat in &categories {
         let count = category_unreads.get(&cat.id).copied().unwrap_or(0);
         unreadcounts.push(UnreadCount {
@@ -53,7 +51,6 @@ pub async fn unread_count(
         });
     }
 
-    // Total unread count
     let total: i64 = feed_unreads.values().sum();
     unreadcounts.push(UnreadCount {
         id: "user/-/state/com.google/reading-list".to_string(),

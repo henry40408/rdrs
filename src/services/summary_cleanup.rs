@@ -6,22 +6,9 @@ use tokio_util::sync::CancellationToken;
 use crate::db::Db;
 use crate::models::{api_token, entry_summary, session};
 
-/// Start the cleanup worker that periodically removes expired summaries,
-/// expired session rows, *and* expired `api_token` rows.
-///
-/// The session sweep is the backstop for the lazy per-request deletes in
-/// `middleware/auth.rs` / `handlers/greader/auth.rs`: those only fire when a
-/// row is touched, so a session abandoned on an old device would otherwise
-/// live forever (see `session::delete_expired`). The `api_token` sweep is the
-/// same backstop for `handlers/greader/auth.rs`'s `validate_api_token` (see
-/// `api_token::delete_expired`). All three sweeps run on the same tick but
-/// fail independently — one sweep's error must not skip another's.
-///
-/// # Arguments
-/// * `db` - Database connection
-/// * `interval_hours` - How often to run cleanup (in hours)
-/// * `ttl_hours` - Delete summaries older than this many hours
-/// * `cancel_token` - Token to signal graceful shutdown
+/// Start the worker that periodically deletes expired summaries, sessions and
+/// `api_token` rows. The latter two back up the lazy per-request deletes, which
+/// never fire for an abandoned device. Sweeps fail independently.
 pub fn start_cleanup_worker(
     db: Db,
     interval_hours: u64,
@@ -29,7 +16,6 @@ pub fn start_cleanup_worker(
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
         tracing::info!(
             event = "cleanup.worker_started",
@@ -59,17 +45,9 @@ pub fn start_cleanup_worker(
     })
 }
 
-/// One cleanup pass: expired summaries, expired sessions, expired API tokens.
-///
-/// Extracted from the worker's `select!` arm so it can be driven directly by a
-/// test — the independence property below is otherwise unobservable, since a
-/// test that calls each `delete_expired` itself would pass just as happily
-/// against a `continue`-on-error chain.
-///
-/// Each sweep gets its own `match` rather than a `?` or a `continue`: a
-/// failure in one must not skip the others. A broken `entry_summary` table
-/// silently halting session and token expiry would turn one bug into an
-/// unbounded credential lifetime.
+/// One cleanup pass, extracted so a test can drive it. Each sweep has its own
+/// `match` so one failure cannot skip the others: a broken summary table must
+/// not halt session and token expiry.
 async fn run_sweeps(db: &Db, ttl_hours: i64) {
     tracing::debug!(event = "cleanup.sweep_started", "running cleanup sweep");
 
@@ -171,7 +149,6 @@ mod tests {
 
         assert!(entry_summary::exists(&db, user_id, entry.id).await.unwrap());
 
-        // Manually set created_at to 25 hours ago
         db_execute!(
             &db,
             "UPDATE entry_summary SET created_at = datetime('now', '-25 hours') WHERE user_id = $1 AND entry_id = $2",
@@ -193,10 +170,8 @@ mod tests {
 
         let handle = start_cleanup_worker(db, 1000, 24, cancel_token.clone());
 
-        // Cancel immediately
         cancel_token.cancel();
 
-        // Worker should stop
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(
             result.is_ok(),
@@ -284,9 +259,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Run the session sweep directly (simulating what the worker does on
-        // each tick, same as `test_cleanup_worker_runs_cleanup_on_interval`
-        // does for the summary sweep above).
+        // Run the session sweep directly, as the worker does each tick.
         let swept = session::delete_expired(&db).await.unwrap();
         assert_eq!(swept, 1);
 
@@ -325,8 +298,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Run the api_token sweep directly (simulating what the worker does on
-        // each tick), same shape as the session sweep test above.
+        // Run the api_token sweep directly, as the worker does each tick.
         let swept = api_token::delete_expired(&db).await.unwrap();
         assert_eq!(swept, 1);
 
@@ -346,10 +318,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_a_failing_sweep_does_not_skip_the_others() {
-        // The property the three separate `match`es exist for. Every other
-        // test in this file calls `delete_expired` directly, so all of them
-        // would pass unchanged against a `continue`-on-error chain; this one
-        // drives the real per-tick body with one sweep guaranteed to fail.
+        // Drives the real per-tick body with one sweep failing; the other tests
+        // would pass against a `continue`-on-error chain.
         let db = setup_db().await;
         let user_id = seed_user(&db, "testuser", Role::User).await.id;
 
@@ -374,9 +344,8 @@ mod tests {
         )
         .unwrap();
 
-        // Break the *first* sweep specifically: it runs before the other two,
-        // so if an error propagated instead of being logged and swallowed,
-        // neither of the assertions below could hold.
+        // Break the first sweep, so an error that propagated would fail both
+        // assertions below.
         db_execute!(&db, "DROP TABLE entry_summary").unwrap();
 
         run_sweeps(&db, 24).await;

@@ -1,6 +1,4 @@
-/* ===== Self-hosted webfonts (latin subset, SIL OFL — see static/fonts/OFL-*.txt) =====
-   Vendored to drop the Google Fonts CDN dependency (privacy for self-hosted
-   deployments). Newsreader and Archivo are variable, IBM Plex Mono static. */
+/* ===== Self-hosted webfonts (latin subset, SIL OFL — see static/fonts/OFL-*.txt) ===== */
 @font-face {
     font-family: 'Newsreader';
     font-style: normal;
@@ -43,12 +41,8 @@
     font-display: swap;
     src: url('/static/fonts/ibm-plex-mono-600-latin.woff2') format('woff2');
 }
-/* Star ratings. Feeds that grade with ★ routinely reach for the half-star
-   U+2BEA, which no macOS system font carries at all (0 of 671 locally), so it
-   renders as tofu; the whole star U+2605 does resolve, but only via a CJK serif
-   that clashes with Newsreader beside it. `unicode-range` keeps this face out
-   of the cascade for every other character, so the ~900 bytes are fetched only
-   by readers who actually subscribe to such a feed. */
+/* Star ratings: no macOS font has the half-star U+2BEA. `unicode-range` means
+   only pages that use these glyphs fetch the face. */
 @font-face {
     font-family: 'Noto Sans Symbols 2';
     font-style: normal;
@@ -80,13 +74,9 @@
     --font-2xl: 1.5rem;
     --font-3xl: 2rem;
 
-    /* Font families — "Wire Room". The star face goes second, never first:
-       WebKit sizes the line box from the first family listed even when its
-       `unicode-range` covers nothing on the line, and Noto's 1069/630
-       ascent/descent (Archivo's is 878/210) lifted every label ~2px off the
-       icon beside it and stretched each <kbd> from 19px to 23px. The vendored
-       faces carry no star, so second still reaches it — as long as it stays
-       ahead of the system families, which may substitute a ★ of their own. */
+    /* Font families. The star face must stay second: WebKit sizes line boxes
+       from the first family even when its `unicode-range` is unused (Noto's
+       metrics misaligned labels and <kbd>), and it must precede system fonts. */
     --font-display: 'Newsreader', 'Noto Sans Symbols 2', Georgia, serif;   /* serif display + reading */
     --font-body: 'Newsreader', 'Noto Sans Symbols 2', Georgia, serif;
     --font-ui: 'Archivo', 'Noto Sans Symbols 2', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -103,15 +93,12 @@
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
     --shadow-lg: 0 24px 64px rgba(27,28,30,0.18);
 
-    /* Layout — fluid on mid-width screens (1024–1440) so the reading pane
-       isn't cramped on ~1180px tablets; both cap at their prior fixed value. */
+    /* Layout — fluid between 1024–1440px so tablets aren't cramped. */
     --sidebar-width: clamp(200px, 16vw, 232px);
     --list-pane-width: clamp(320px, 28vw, 392px);
     --content-max-width: 720px;
     --page-max-width: 1080px;
-    /* Comfortable width for stacked form fields and 2-column info tables on
-       full pages — a field stretched to --page-max-width reads worse than the
-       whitespace it replaced. */
+    /* Readable width for stacked form fields and 2-column info tables. */
     --form-max-width: 660px;
     /* Prose / help-text measure (~68 characters) for readable line length. */
     --prose-max-width: 68ch;
@@ -126,14 +113,11 @@
     /* Icon sizes */
     --icon-sm: 14px;
 
-    /* Colors (Ink & Paper) — light-dark() resolves against color-scheme: the
-       default `light dark` follows the OS, and the [data-theme] rules below pin
-       it when the reader picks a theme. One token list instead of three. */
+    /* Colors — light-dark() follows color-scheme; [data-theme] below pins it. */
     color-scheme: light dark;
 
-    /* "Wire Room" palette: paper = app chrome / sidebar, panel = list / reading
-       / page surfaces, panel-2 = hover / inset. The --color-* names are
-       repointed onto these so the stylesheet re-themes from one place. */
+    /* Palette: paper = chrome/sidebar, panel = content surfaces, panel-2 =
+       hover/inset. --color-* map onto these. */
     --color-paper:        light-dark(#F2F1ED, #131416);   /* app chrome / sidebar */
     --color-panel:        light-dark(#FBFAF7, #1B1C1F);   /* list / reading / pages */
     --color-bg:           light-dark(#FBFAF7, #1B1C1F);   /* dominant surface = panel */
@@ -188,10 +172,8 @@ body {
     overflow-x: hidden;
 }
 
-/* Light mode uses the OS default (heavier) smoothing: on macOS `antialiased`
-   renders dark ink on light paper spindly, most visible in the serif reading
-   text whose CJK falls back to Songti. Dark mode keeps `antialiased`, since
-   light-on-dark blooms. */
+/* Light mode keeps OS default smoothing (`antialiased` renders dark-on-light
+   text spindly on macOS); dark mode uses `antialiased` to avoid blooming. */
 [data-theme="light"] body {
     -webkit-font-smoothing: auto;
     -moz-osx-font-smoothing: auto;
@@ -248,8 +230,7 @@ h2 + p.muted {
     margin-bottom: var(--space-4);
 }
 
-/* Intro sentence under an <h1> (e.g. /summarizer) — same slot as h2 + p.muted
-   but for a page-level heading. */
+/* Intro sentence under a page-level <h1>. */
 .page-lead {
     margin-top: calc(-1 * var(--space-2));
     margin-bottom: var(--space-5);
@@ -305,20 +286,11 @@ code {
 }
 
 /* ===== Sidebar ===== */
-/* No `rdrs-sidebar:not(:defined)` placeholder is needed: `--color-bg-sidebar`
-   and the `--color-paper` that `body` already paints are the same value in both
-   themes, so the column an empty <rdrs-sidebar> leaves behind is already the
-   right colour — verified by sampling presented frames under a 6x-CPU /
-   Slow-3G profile. Keep the two tokens equal or that stops being true. */
+/* No `:not(:defined)` placeholder needed as long as `--color-bg-sidebar` equals
+   `--color-paper`; keep the two tokens equal. */
 /* ===== Scriptless navigation fallback ===== */
-/* Rendered only inside `<noscript>`, so these rules cost a JavaScript reader
-   nothing but stylesheet bytes — versioned and cacheable, unlike the `no-store`
-   HTML the real sidebar's markup would have had to ride on.
-
-   A plain in-flow bar rather than an imitation of `.sidebar`: that class is
-   `position: fixed` and parked off-screen below 1024px until JavaScript toggles
-   `.open`, which would hide this navigation on exactly the devices least likely
-   to recover. */
+/* Only rendered inside `<noscript>`. An in-flow bar, not `.sidebar`, which is
+   fixed and off-screen below 1024px until JS opens it. */
 .nav-fallback {
     display: flex;
     flex-wrap: wrap;
@@ -348,8 +320,7 @@ code {
     margin-right: var(--space-2);
 }
 
-/* Sign-out is a form, not a link, because it mutates — but it belongs on the
-   same row and should read like its neighbours. */
+/* Sign-out is a form (it mutates) but should read like its neighbours. */
 .nav-fallback-logout {
     display: inline;
 }
@@ -374,9 +345,7 @@ code {
     font-variant-numeric: tabular-nums;
 }
 
-/* The sidebar column is reserved by `.main-content`'s margin whether or not
-   anything fills it; with scripting off nothing will. `<noscript>` content is
-   not parsed into elements when scripting is on, so this never matches there. */
+/* Reclaim the reserved sidebar column when scripting is off. */
 body:has(.nav-fallback) .main-content {
     margin-left: 0;
 }
@@ -393,9 +362,7 @@ body:has(.nav-fallback) .main-content {
     left: 0;
     bottom: 0;
     z-index: 100;
-    /* The sidebar itself no longer scrolls; the nav scrolls internally so the
-       header and footer stay pinned to the top and bottom (mirrors .list-pane's
-       header + scrolling body). */
+    /* The nav scrolls internally so header and footer stay pinned. */
     overflow: hidden;
 }
 
@@ -433,13 +400,8 @@ body:has(.nav-fallback) .main-content {
 .sidebar-close .ico { width: 20px; height: 20px; }
 
 /* ===== Connection lamp =====
-   State, not an announcement: `offline.js` toggles `<html data-offline>` and
-   everything here reacts to it, which is why this replaced a flash banner that
-   covered part of the list every time a connection blinked.
-
-   `margin-left: auto` rather than the header's own space-between, so the lamp
-   sits against the right edge in both layouts — on mobile the close button
-   joins the row and space-between would strand the lamp in the middle. */
+   Reacts to `<html data-offline>` from offline.js. `margin-left: auto` keeps it
+   right-aligned even when the mobile close button joins the row. */
 .conn-status {
     margin-left: auto;
     display: inline-flex;
@@ -456,17 +418,12 @@ body:has(.nav-fallback) .main-content {
     flex: none;
     border-radius: 50%;
     background: var(--color-success);
-    /* The healthy state is the one on screen all day; it reads as reassurance
-       at this weight and as decoration at full strength. */
+    /* Muted: the healthy state is on screen all day. */
     opacity: 0.5;
 }
 
-/* Offline is a wait, not a verdict: `offline.js` re-probes every 30 s, and a
-   light that breathes says the app is still trying where a solid one reads as
-   a dead indicator. Slow enough (2.6 s against the summary badge's 1 s) to sit
-   in the corner of the eye without pulling it, and it never dims past the
-   point of being readable as amber. The global `prefers-reduced-motion` rule
-   stops it; the word beside it carries the state either way. */
+/* Offline breathes (offline.js re-probes every 30 s) so it reads as "still
+   trying". Stopped by prefers-reduced-motion; the text carries the state anyway. */
 @keyframes conn-breathe {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
@@ -484,8 +441,7 @@ body:has(.nav-fallback) .main-content {
 
 .sidebar-nav {
     flex: 1;
-    /* min-height:0 lets this flex child shrink below its content height so
-       overflow-y can actually scroll instead of pushing the footer off-screen. */
+    /* min-height:0 lets this flex child shrink so overflow-y scrolls. */
     min-height: 0;
     overflow-y: auto;
     padding: 0 var(--space-3);
@@ -526,9 +482,7 @@ body:has(.nav-fallback) .main-content {
     color: var(--color-text);
 }
 
-/* The active row is the one place weight steps up: 400 baseline → 700 so the
-   current location reads at a glance instead of relying on background alone.
-   Archivo's grotesque strokes only read as "clearly bolder" at 700, not 600. */
+/* Active row steps up to 700 (Archivo only reads as bolder at 700). */
 .sidebar-item.active {
     background: var(--color-sidebar-active);
     color: var(--color-text);
@@ -537,9 +491,7 @@ body:has(.nav-fallback) .main-content {
 
 .sidebar-item.active .sidebar-item-icon { color: var(--color-accent); }
 
-/* User-supplied category names can overrun the sidebar — a long unbroken word
-   spills past its right edge. One line each, trailing fade, full name on the
-   row's `title`; the badge keeps its width, only the label shrinks. */
+/* Long user-supplied names: one line with a trailing fade; full name in `title`. */
 .sidebar-item-label {
     flex: 1;
     min-width: 0;
@@ -560,18 +512,14 @@ body:has(.nav-fallback) .main-content {
 }
 .sidebar-item-icon .ico { width: 15px; height: 15px; }
 
-/* Feeds of the open category. No indent and no guide line: the favicon column
-   already sets these rows apart from the icon-less category above, and in a
-   sidebar this narrow the line cost more room than the nesting it signalled. */
+/* Feeds of the open category: no indent; the favicon column sets them apart. */
 .sidebar-feeds {
     margin: 2px 0 var(--space-2);
     display: flex;
     flex-direction: column;
 }
 
-/* The list is mounted whether or not it has rows, and `hide fully-read` empties
-   it whenever the reader has finished a category — leaving only its margins, a
-   gap that reads as a group which failed to render. */
+/* Hide the empty list so its margins don't read as a failed render. */
 .sidebar-feeds:empty {
     display: none;
 }
@@ -579,9 +527,7 @@ body:has(.nav-fallback) .main-content {
 .sidebar-feed {
     display: flex;
     align-items: center;
-    /* .entry-favicon brings its own 5px right margin, so a row gap here would
-       double it. Horizontal padding matches `.sidebar-item`, so a feed's icon
-       starts on the same edge as a category's label. */
+    /* No gap (.entry-favicon has its margin); padding aligns with `.sidebar-item`. */
     gap: 0;
     padding: 4px 10px;
     border-radius: var(--radius-md);
@@ -720,14 +666,12 @@ body:has(.nav-fallback) .main-content {
     background: var(--color-panel);
 }
 
-/* When split-view is present, main-content must not scroll — each pane scrolls independently */
+/* With split view, main-content doesn't scroll; each pane scrolls itself. */
 .main-content:has(.split-view) {
     overflow: hidden;
 }
 
-/* Page content (non-split pages) — centered column. The token is the single
-   source of truth for the width; forms and prose are capped below via
-   --form-max-width / --prose-max-width so they stay readable. */
+/* Page content (non-split pages) — centered column; forms and prose capped below. */
 .page-content {
     width: 100%;
     max-width: var(--page-max-width);
@@ -737,22 +681,19 @@ body:has(.nav-fallback) .main-content {
     word-break: break-word;
 }
 
-/* Stacked form blocks and 2-column info tables (account info / GReader on
-   /user-settings) cap at a comfortable field width. Horizontal control strips
-   (.filter-bar) and the wide config table (.mobile-cards-settings) opt out. */
+/* Stacked forms and info tables cap at --form-max-width; .filter-bar and
+   .mobile-cards-settings opt out. */
 .page-content > form:not(.filter-bar),
 .page-content > table:not(.mobile-cards):not(.mobile-cards-settings) {
     max-width: var(--form-max-width);
 }
 
-/* Prose / help paragraphs keep a readable measure instead of running the full
-   page width. */
+/* Prose keeps a readable measure. */
 .page-content p {
     max-width: var(--prose-max-width);
 }
 
-/* Full-width page variant (/search): content spans the main column instead
-   of centering at --page-max-width. */
+/* Full-width page variant (/search). */
 .page-content-full {
     max-width: none;
 }
@@ -775,8 +716,7 @@ body:has(.nav-fallback) .main-content {
 }
 
 .list-pane-header {
-    /* 16px horizontal matches the entry rows so the header aligns with the
-       favicon leading edge. */
+    /* 16px matches the entry rows' favicon edge. */
     padding: var(--space-4) var(--space-4);
     border-bottom: 1px solid var(--color-border-light);
     flex-shrink: 0;
@@ -813,9 +753,7 @@ body:has(.nav-fallback) .main-content {
     height: 100%;
 }
 
-/* Reading-pane toolbar: prev/next on every viewport, plus the Back-to-list
-   affordance on mobile. Visible on desktop too, so the one nav element doesn't
-   have to be duplicated across breakpoints. */
+/* Reading-pane toolbar: prev/next everywhere, Back on mobile. */
 /* ===== Reading pane — the "dispatch" ===== */
 /* Sticky pane bar (Back on mobile, Prev/Next right) with a backdrop blur. */
 .reading-pane-back {
@@ -832,8 +770,7 @@ body:has(.nav-fallback) .main-content {
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Back button — mobile-only (the desktop split view never leaves the list).
-   `margin-right: auto` pins it far left so the nav stays right. */
+/* Back button — mobile-only; `margin-right: auto` pins it left. */
 .reading-pane-back-link {
     display: none;                       /* shown as inline-flex in the ≤1024px block */
     align-items: center;
@@ -850,9 +787,7 @@ body:has(.nav-fallback) .main-content {
 }
 .reading-pane-back-link .action-icon .ico { width: 18px; height: 18px; }
 
-/* Prev/Next navigation — quiet bordered buttons. app.js enables whichever
-   direction has an adjacent entry once `/api/entries/{id}/neighbors` resolves;
-   readers also navigate with the j/k keys while the pane is open. */
+/* Prev/Next buttons; app.js enables them once neighbors resolve. */
 .reading-pane-nav { display: flex; gap: 4px; }
 
 .reading-pane-nav-btn {
@@ -893,13 +828,8 @@ body:has(.nav-fallback) .main-content {
     word-break: break-word;
 }
 
-/* Mono uppercase eyebrow: FEED · AGO, favicon leading, trailing hairline.
-
-   Wrapping, not squeezing: on a narrow pane the feed name and the timestamp
-   would otherwise both shrink to a few characters and interleave. `flex-wrap`
-   alone fixes it — the default `flex: 0 1 auto` drops the timestamp to its own
-   line before either breaks mid-phrase. Do not add `flex-grow` to `.src`: it
-   would push the timestamp to the far right on wide layouts. */
+/* Eyebrow: FEED · AGO. `flex-wrap` drops the timestamp to its own line on narrow
+   panes; do not add `flex-grow` to `.src` (pushes the time right when wide). */
 .dispatch-eyebrow {
     display: flex;
     flex-wrap: wrap;
@@ -915,18 +845,15 @@ body:has(.nav-fallback) .main-content {
 }
 .dispatch-eyebrow .src {
     display: inline-flex;
-    /* Keep the favicon on the first line when a long feed name wraps inside
-       its own row — `center` would drop it to the middle of the block. */
+    /* Keep the favicon on the first line when the name wraps. */
     align-items: flex-start;
     gap: 6px;
     color: var(--color-accent-text);
 }
 .dispatch-eyebrow .entry-favicon {
     margin-right: 0;
-    /* `flex-start` pins the icon to the top of the line box, half a leading
-       above the text, so re-centre it against the first line:
-       (12.5px font * 1.5 line-height - 15px icon) / 2. Not `1lh` — the chip
-       variant's own 8.5px font-size would resolve it against the wrong box. */
+    /* Re-centre against the first line: (12.5px * 1.5 - 15px) / 2. Not `1lh`,
+       which the chip variant's own font-size would skew. */
     margin-top: 1.875px;
 }
 .dispatch-eyebrow time { color: inherit; }
@@ -948,11 +875,8 @@ body:has(.nav-fallback) .main-content {
     color: var(--color-text);
     text-wrap: pretty;
 }
-/* CJK falls back to PingFang/Hiragino, whose glyphs rise above what WebKit
-   repaints when the link changes color, leaving a strip of the old color over
-   the first line (Safari, iPad). Inline vertical padding doesn't move the
-   layout but grows the rect WebKit repaints. Recoloring the <h1> instead, or
-   a taller line-height, leaves the strip in place. */
+/* Safari/iPad: CJK fallback glyphs overflow WebKit's repaint rect, leaving a
+   stale-colour strip on hover. Inline vertical padding grows the rect. */
 .reading-pane-title a { color: inherit; text-decoration: none; padding-block: 0.15em; }
 .reading-pane-title a:hover { color: var(--color-accent); }
 
@@ -978,8 +902,7 @@ body:has(.nav-fallback) .main-content {
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Shared pane action control (also used by the summary-box Copy/Dismiss, and
-   the mobile Back-to-list link shares its hover). */
+/* Shared pane action control (also summary-box Copy/Dismiss). */
 .rp-action {
     display: inline-flex;
     align-items: center;
@@ -1007,8 +930,7 @@ body:has(.nav-fallback) .main-content {
 }
 
 .rp-action .action-icon { color: var(--color-text-secondary); display: inline-flex; }
-/* Restore the UA `[hidden]` semantics the `display: inline-flex` above defeats,
-   so the cancel-icon twin (data-cancel-swap busy toggle) stays hidden at rest. */
+/* Restore `[hidden]`, which `display: inline-flex` defeats. */
 .rp-action .action-icon[hidden] { display: none; }
 .rp-action .action-icon .ico { width: 13px; height: 13px; }
 .rp-action kbd { margin-left: 2px; }
@@ -1108,23 +1030,19 @@ body:has(.nav-fallback) .main-content {
     border-radius: var(--radius-md);
 }
 
-/* Loading skeleton: a static tinted block until JS flips data-img-state to
-   "loaded". Set server-side in sanitize so it shows on first paint. */
+/* Loading skeleton until JS sets data-img-state="loaded" (set server-side). */
 .reading-pane-article img[data-img-state="loading"] {
     background: var(--color-bg-secondary);
 }
 
-/* Dimensionless images reserve a 16/9 box while loading so the pane doesn't
-   collapse; the natural ratio takes over once loaded. Article images are
-   display:block already, so this never affects inline glyphs. */
+/* Dimensionless images reserve 16/9 while loading so the pane doesn't collapse. */
 .reading-pane-article img[data-img-state="loading"]:not([width]):not([height]) {
     aspect-ratio: 16 / 9;
     width: 100%;
     object-fit: cover;
 }
 
-/* Broken-image fallback (JS replaces the <img> with this on error). Dashed box,
-   neutral palette, centered glyph + alt caption. */
+/* Broken-image fallback (JS swaps the <img> for this on error). */
 .rp-broken-image {
     display: flex;
     flex-direction: column;
@@ -1185,9 +1103,7 @@ body:has(.nav-fallback) .main-content {
     font-size: inherit;
 }
 
-/* Rouge line-numbered code blocks nest <pre> inside a <code> + <table> inside
-   the outer <pre>, so every nested <pre> re-applies the block chrome and the
-   block balloons. Keep the chrome on the outer <pre> only. */
+/* Rouge line-numbered blocks nest <pre>s; keep the chrome on the outer one only. */
 .reading-pane-article pre pre {
     margin: 0;
     padding: 0;
@@ -1233,8 +1149,7 @@ body:has(.nav-fallback) .main-content {
     max-width: 100%;
 }
 
-/* Reset global row/cell borders and padding so layout tables stay clean. Data
-   tables (with <th>) re-apply decoration via the :has(th) rules below. */
+/* Reset table decoration; data tables (with <th>) re-apply it below. */
 .reading-pane-article tr,
 .reading-pane-article th,
 .reading-pane-article td {
@@ -1242,8 +1157,7 @@ body:has(.nav-fallback) .main-content {
     padding: 0;
 }
 
-/* Decorate only semantic data tables (those with <th>). Layout tables lacking
-   <th> are left unstyled so feeds that abuse <table> for layout render cleanly. */
+/* Decorate only tables with <th>, so layout tables from feeds render cleanly. */
 .reading-pane-article table:has(th) {
     width: 100%;
     border-collapse: collapse;
@@ -1279,8 +1193,7 @@ body:has(.nav-fallback) .main-content {
     margin-bottom: 0;
 }
 
-/* Standalone field label outside a .form-group (e.g. /summarizer's textarea) —
-   mirrors .form-group > label's mono-uppercase treatment. */
+/* Standalone field label outside .form-group; mirrors .form-group > label. */
 .field-label {
     display: block;
     margin-bottom: 5px;
@@ -1315,8 +1228,7 @@ label {
     color: var(--color-text-secondary);
 }
 
-/* Form-field labels: mono uppercase (prototype .field label). Scoped to
-   .form-group so inline checkbox / rename labels keep their own styling. */
+/* Form-field labels: mono uppercase, scoped to .form-group. */
 .form-group > label {
     margin-bottom: 5px;
     font-family: var(--font-mono);
@@ -1344,9 +1256,7 @@ select {
     transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-/* Strip WebKit's native searchfield chrome (inset rounding, magnifier, and
-   the inner clear button) so type="search" boxes — the scoped-search input —
-   render identically to the other text inputs above. */
+/* Strip WebKit's searchfield chrome so type="search" matches other inputs. */
 input[type="search"] {
     -webkit-appearance: none;
     appearance: none;
@@ -1360,13 +1270,10 @@ input[type="search"]::-webkit-search-cancel-button {
 
 select {
     cursor: pointer;
-    /* Same 44px touch height on desktop as mobile so selects don't shrink
-       between breakpoints (see the former max-width:1024px override). */
+    /* 44px touch height at every breakpoint. */
     min-height: var(--touch-min);
-    /* iOS WebKit renders <select> as a native menulist that ignores the author
-       font-size, so the control stayed small while the rest of the UI scaled up
-       (Chromium and Firefox were fine). Dropping the native appearance lays the
-       text out in the normal CSS box, at the cost of supplying our own chevron. */
+    /* iOS WebKit's native menulist ignores font-size; dropping appearance fixes
+       it at the cost of our own chevron. */
     -webkit-appearance: none;
     appearance: none;
     padding-right: var(--space-8);
@@ -1450,8 +1357,7 @@ table {
     font-size: var(--font-sm);
 }
 
-/* Row-level border-bottom avoids per-cell segments visually breaking up the
-   horizontal rule when cells have differing content heights or paddings. */
+/* Row-level border so the rule isn't broken up by uneven cells. */
 tr {
     border-bottom: 1px solid var(--color-border-light);
 }
@@ -1510,10 +1416,7 @@ td input[type="text"] {
 }
 
 /* ===== Credential cards (Active Sessions / GReader API Tokens) =====
-   These were tables until the User-Agent column made them unreadable: one long
-   client string set the height of the whole row, stranding IP and three
-   timestamps in tall, mostly empty cells. As cards, a long value only grows its
-   own. One column at every width; the cap keeps the metadata row from spreading. */
+   Cards, not tables, so a long User-Agent only grows its own card. */
 .cred-list {
     list-style: none;
     margin: var(--space-4) 0;
@@ -1540,12 +1443,7 @@ td input[type="text"] {
     padding-left: calc(var(--space-4) - var(--border-accent-width) + 1px);
 }
 
-/* The viewer's own session is identified twice, answering two questions: the
-   accent left rule above says "this one is you", while this note sits in the
-   action slot — exactly where every other card puts Revoke — and so explains the
-   missing button in place. Deliberately quiet: a filled accent chip in a
-   button's position reads as clickable, and --color-accent-subtle already means
-   "selected / active" in this stylesheet. */
+/* Explains the missing Revoke in its slot; kept quiet so it doesn't look clickable. */
 .cred-card-current {
     align-self: center;
     font-family: var(--font-ui);
@@ -1576,9 +1474,7 @@ td input[type="text"] {
     overflow-wrap: anywhere;
 }
 
-/* The User-Agent takes the full grid width — it is prose-length, not a short
-   scalar like the four fields beside it. `anywhere` (inherited from dd) lets a
-   break land inside an unbroken token, so it is shown in full, never truncated. */
+/* The User-Agent spans the full width and breaks anywhere; never truncated. */
 .cred-card-meta-wide { grid-column: 1 / -1; }
 
 .cred-card-ua {
@@ -1597,9 +1493,8 @@ td input[type="text"] {
 .cred-card-actions form { margin: 0; }
 
 /* ===== Banner Stack (accessible flash messages) =====
-   Inline, persistent notifications anchored to the top of `<main>`, replacing a
-   floating-toast pattern to satisfy WCAG 1.3.2, 2.1.1, 2.2.1 and 4.1.3. The
-   per-message role is set in JS; the dismiss control is a real <button>. */
+   Inline, persistent banners at the top of `<main>` (WCAG 1.3.2, 2.1.1, 2.2.1,
+   4.1.3). Role is set per message in JS; dismiss is a real <button>. */
 .banner-stack {
     display: flex;
     flex-direction: column;
@@ -1612,10 +1507,8 @@ td input[type="text"] {
 .banner-stack:focus { outline: none; }
 
 .banner {
-    /* The first line's height, as a length the dot and the dismiss button can
-       both centre themselves on. Written out of `--font-sm` rather than as an
-       `em` or `lh`, which would resolve against each child's own font-size —
-       the dismiss button sets its own. */
+    /* First-line height for centring the dot and dismiss. From `--font-sm`, not
+       `em`/`lh`, which would resolve per child. */
     --banner-line: calc(1.45 * var(--font-sm));
     display: grid;
     grid-template-columns: auto 1fr auto auto;
@@ -1630,9 +1523,7 @@ td input[type="text"] {
     line-height: var(--banner-line);
 }
 
-/* 8px coloured dot, centred on the first line of text — the row is
-   `align-items: start`, so each item offsets itself. The hand-tuned 0.45em this
-   replaces left the dot 0.75px low. */
+/* 8px coloured dot, centred on the first line. */
 .banner-icon {
     width: 8px;
     height: 8px;
@@ -1672,8 +1563,7 @@ td input[type="text"] {
     font-size: var(--font-base);
     line-height: 1;
     padding: 0;
-    /* Centred on the first line like the dot; the 1px this replaces sat the
-       glyph 2.14px below the message's cap height. */
+    /* Centred on the first line like the dot. */
     margin-top: calc((var(--banner-line) - 22px) / 2);
 }
 .banner-dismiss:hover {
@@ -1686,9 +1576,7 @@ td input[type="text"] {
 }
 .banner-dismiss .ico { width: 18px; height: 18px; }
 
-/* Tinted wash + border per level; border-left picks up the level colour
-   via the theme-aware tokens. (Dark border-left values matched the dark
-   token values exactly, so var() covers both schemes.) */
+/* Tinted wash + level-coloured border per level (theme-aware tokens). */
 .banner--success { background: light-dark(rgba(45, 122, 58, 0.06), rgba(74, 222, 128, 0.08)); border-color: light-dark(rgba(45, 122, 58, 0.20), rgba(74, 222, 128, 0.25)); border-left-color: var(--color-success); }
 .banner--success .banner-icon { background: var(--color-success); }
 .banner--error   { background: light-dark(rgba(185, 28, 28, 0.06), rgba(248, 113, 113, 0.08)); border-color: light-dark(rgba(185, 28, 28, 0.20), rgba(248, 113, 113, 0.25)); border-left-color: var(--color-error); }
@@ -1710,11 +1598,10 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry list — the "wire log" v2 =====
-   Grid rows: [marker | title | timerow] / [ (marker) | meta | rail-actions ].
-   Star and open-original sit in col3/row2, centred on the meta line via
-   align-self. Sizes via --sz/--mk, bumped under @media (any-pointer: coarse).
-   The .entry-* hooks are preserved for app.js and e2e. */
+/* ===== Entry list =====
+   Grid: [marker | title | timerow] / [ (marker) | meta | rail-actions ].
+   Sizes via --sz/--mk, bumped under (any-pointer: coarse). The .entry-* hooks
+   are used by app.js and e2e. */
 .entry-item {
     --sz: 24px;                 /* pointer control hit box (== WCAG AA floor) */
     --mk: 24px;                 /* marker column width */
@@ -1795,12 +1682,8 @@ td input[type="text"] {
     overflow: hidden;
     transition: color 0.1s;
 }
-/* Read state recedes by COLOUR only — weight stays 500 in both states, so
-   toggling never changes glyph advance widths and the 3-line clamp can't re-wrap
-   and shift the row. The marker dot carries the signal redundantly. Light-mode
-   read ink is lifted from --color-text-secondary (#55544F, 7.3:1) to #737068 so
-   it reads clearly lighter than an unread title while still clearing AA (4.7:1
-   on the panel); dark stays #B3B2AC, which already separated well. */
+/* Read state changes COLOUR only, so the 3-line clamp never re-wraps. Light read
+   ink #737068 is still AA (4.7:1). */
 .entry-item.entry-read .entry-item-title { font-weight: 500; color: light-dark(#737068, #B3B2AC); }
 .entry-item:hover .entry-item-title { color: var(--color-accent); }
 
@@ -1840,14 +1723,10 @@ td input[type="text"] {
 .entry-item-meta a { color: var(--color-text-secondary); font-weight: 400; text-decoration: none; }
 .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item.entry-read .entry-item-meta a { color: var(--color-text-muted); font-weight: 400; }
-/* The read-state rule above (0,3,1) out-specifies the generic `a:hover` (0,2,1),
-   so read rows lost their meta-link hover feedback. Restore it with a matching
-   read-scoped hover (0,4,1). */
+/* Restore meta-link hover on read rows, which the read rule out-specifies. */
 .entry-item.entry-read .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-meta-text { min-width: 0; flex: 1; overflow: hidden; }
-/* Shrink-wrap the link to its text: a full-width block link made the blank
-   space after a short feed name navigate to the feed instead of falling through
-   to the row's open-entry handler. max-width keeps long names truncating. */
+/* Shrink-wrap the link so blank space after a short name opens the entry. */
 .entry-feed { display: inline-block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. */
@@ -1878,16 +1757,12 @@ td input[type="text"] {
 .fav-c4 { background: #A6563E; }
 .fav-c5 { background: #6E8B3D; }
 
-/* Summary-status cluster (relocated to the timerow). completed/failed filled;
-   pending/processing hollow muted (colours set in the summary-badge* rules).
-   Kept small; SSE renderSummaryBadge target. */
+/* Summary-status cluster (SSE renderSummaryBadge target); colours set below. */
 .entry-status { flex: none; display: inline-flex; align-items: center; }
 .entry-status:empty { display: none; }
 .entry-status .ico { width: 13px; height: 13px; }
 
-/* Actions — star + open-original, on the meta row (col3/row2). A real grid cell
-   centred against the meta line via align-self, so alignment holds at any
-   control size instead of relying on a hand-tuned `bottom` offset. */
+/* Star + open-original in col3/row2, centred on the meta line via align-self. */
 .rail-actions {
     grid-column: 3;
     grid-row: 2;
@@ -1927,33 +1802,21 @@ td input[type="text"] {
 /* ===== Actions (Table cell actions) ===== */
 .actions {
     display: flex;
-    /* Not the default `stretch`: with it, each item grows to the row height and
-       positions its own text, which is how the row ended up ragged — see the
-       form rule below. */
+    /* Not `stretch`, which made the row ragged; see the form rule below. */
     align-items: center;
     gap: var(--space-3);
     flex-wrap: wrap;
 }
 
-/* A form wrapping a submit button has to be a flex box, not a block.
-   `entries` and `edit` are plain <a>s — flex items whose text sits at the top
-   of their box — while `refresh` and `delete` are a <button> inside a <form>.
-   As a block, the form lays that button out on a *line box*, so the button
-   rides the line's baseline rather than sitting at the top, and the baseline is
-   set by the strut: the form's inherited font, which is larger than the
-   button's `--font-xs`. The result is the four actions alternating up and down,
-   by however much those two fonts differ — invisible on some engines and
-   obvious on others (reported on iPadOS Safari). Making the form a flex
-   container removes the line box, and `align-items: center` above then lines
-   all four up on the same axis. */
+/* Forms holding a button must be flex, not block: a block lays the button on a
+   line box whose baseline comes from the form's larger font, so actions sit at
+   alternating heights (visible on iPadOS Safari). */
 .actions .form-inline {
     display: flex;
     align-items: center;
 }
 
-/* Plain <a> actions and .action-link form-submit buttons share the same
-   compact accent-text styling so a <form><button> next to <a>'s reads as
-   part of the same row of actions. */
+/* <a> actions and .action-link buttons share styling so they read as one row. */
 .actions a,
 .action-link {
     color: var(--color-accent);
@@ -1964,8 +1827,7 @@ td input[type="text"] {
     transition: background 0.15s, color 0.15s;
 }
 
-/* Button reset on top of the shared link styling (opacity: 1 cancels the
-   global button:hover dim). */
+/* Button reset on the shared link style (opacity: 1 cancels button:hover dim). */
 .action-link {
     background: transparent;
     border: none;
@@ -1995,13 +1857,10 @@ td input[type="text"] {
 }
 
 /* ===== Re-authentication dialog =====
-   Raised by passkey.js before a passkey is added or removed. A native <dialog>,
-   so backdrop, focus trap and Esc-to-close come from the platform. */
+   Native <dialog> from passkey.js: backdrop, focus trap and Esc for free. */
 .reauth-dialog {
-    /* `position: fixed; inset: 0; margin: auto` is what centres a modal
-       <dialog>, and all three have to be stated here: the UA stylesheet supplies
-       `margin: auto` for exactly this, but the global `* { margin: 0 }` reset
-       above wipes it and pins the dialog to the top-left corner. */
+    /* Restate the UA centring (`margin: auto`), which the `* { margin: 0 }`
+       reset wipes. */
     position: fixed;
     inset: 0;
     margin: auto;
@@ -2045,34 +1904,24 @@ td input[type="text"] {
     margin-top: var(--space-5);
 }
 
-/* The lead line on /invite/{token} sits directly above the first field's
-   label, which the base <p> reset leaves flush against it. */
+/* Space the /invite lead line from the first label. */
 .invite-lead {
     margin-bottom: var(--space-4);
 }
 
-/* An admin row carries up to six actions. Left alone the cell fits them on one
-   line and starves every other column — which is what ACTIONS did to CREATED and
-   STATUS. Capping the width wraps them into two or three short lines, and the
-   cap lives on a wrapper because `max-width` on a <td> is ignored under auto
-   table layout. The row gap is tighter than the column gap. */
+/* Cap the admin actions cell so up to six actions wrap instead of starving other
+   columns. On a wrapper, since `max-width` on a <td> is ignored. */
 .admin-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1) var(--space-3);
-    /* Both bounds, not just the cap: with only a max-width the auto table layout
-       hands this cell its *minimum* width instead — every action on its own line,
-       a six-line cell, and the column starved. The min reserves room for three. */
+    /* Both bounds: with only max-width, auto layout gives the minimum width. */
     min-width: 17rem;
     max-width: 19rem;
 }
 
-/* Keep a two-word action ("new link") on one line; breaking inside a label
-   makes the wrapped lines unreadable. */
-/* Same reason as `.actions .form-inline`: a form holding a submit button is a
-   flex box so the button is not laid out on a line box and pushed off the row's
-   axis. Every action here is a form, so the ragged effect is uniform rather
-   than alternating — still worth not having. */
+/* Don't break two-word action labels. */
+/* Flex forms, as in `.actions .form-inline`, so buttons stay on the row axis. */
 .admin-actions > form {
     display: flex;
     align-items: center;
@@ -2080,8 +1929,7 @@ td input[type="text"] {
 }
 
 /* ===== Admin: the one-time account link =====
-   Shown once, after creating an account or issuing a reset. A callout rather
-   than a form, so it reads as "act on this now" — the string is unrecoverable. */
+   A callout, since the string is unrecoverable once dismissed. */
 .invite-callout {
     border: 1px solid var(--color-accent);
     border-radius: var(--radius-md);
@@ -2103,17 +1951,13 @@ td input[type="text"] {
 .invite-callout__row {
     display: flex;
     gap: var(--space-3);
-    /* `stretch` (the flex default) rather than `center`: it makes the field and
-       the button share the row's height by construction, whichever is taller.
-       Relying on equal intrinsic heights instead holds only as long as every
-       engine lays an <input> and a <button> out the same way, and they do not.
-       The min-height below is a floor for the row, not what aligns it. */
+    /* `stretch` so field and button share height by construction; engines size
+       <input> and <button> differently. */
     align-items: stretch;
     flex-wrap: wrap;
 }
 
-/* WCAG 2.5.5 tap-target floor, same as the create-account strip. With
-   `stretch` above, whichever control is taller lifts the other to match. */
+/* WCAG 2.5.5 tap-target floor. */
 .invite-callout__row input[type="text"],
 .invite-callout__row button {
     min-height: var(--touch-min);
@@ -2126,9 +1970,7 @@ td input[type="text"] {
     font-size: var(--font-sm);
 }
 
-/* ===== Admin: add an account =====
-   Sits above the user table. There is no public sign-up, so this form is the
-   only way an account comes into being after the first one. */
+/* ===== Admin: add an account ===== */
 .admin-create-account {
     margin-bottom: var(--space-6);
 }
@@ -2150,36 +1992,28 @@ td input[type="text"] {
     min-width: 0;
 }
 
-/* One control strip, so the three boxes have to be the same height. They are not
-   by default: the base <select> carries a 44px minimum tap target
-   (--touch-min), while a text input and a button size themselves from their own
-   padding and land a few pixels short. Matching the tallest is deliberate — it
-   puts every control at or above the WCAG 2.5.5 floor. */
+/* Match the three controls to the tallest (the 44px select), keeping all at the
+   WCAG 2.5.5 floor. */
 .admin-create-account__form input[type="text"],
 .admin-create-account__form select,
 .admin-create-account__form button {
     min-height: var(--touch-min);
 }
 
-/* Secondary line under a user's status, noting when their outstanding
-   one-time link runs out. */
+/* When the user's outstanding one-time link expires. */
 .admin-invite-note {
     font-size: var(--font-sm);
 }
 
-/* A one-line note under a field explaining what will be accepted, so the
-   first rejection is not the user's first sight of the rule. Sits tight to
-   the input it belongs to rather than floating as its own paragraph. */
+/* Tight one-line note under a field stating what is accepted. */
 .form-hint {
     margin-top: var(--space-1);
     font-size: var(--font-sm);
 }
 
 /* ===== Re-authentication banner =====
-   The SSR twin of .reauth-dialog, shown at the top of /admin when the session's
-   confirmation window has lapsed. A form on the page rather than a modal: the
-   admin panel's actions are plain form POSTs with no JavaScript to catch a
-   refusal and re-prompt, so this has to work with scripts switched off. */
+   SSR twin of .reauth-dialog on /admin; a form rather than a modal so it works
+   without JavaScript. */
 .reauth-banner {
     border: 1px solid var(--color-border);
     border-left: 3px solid var(--color-accent);
@@ -2201,8 +2035,7 @@ td input[type="text"] {
     align-items: center;
 }
 
-/* Grow to fill the row but stay narrow enough on a wide screen that the
-   field does not read as the page's main content. */
+/* Fill the row, but stay narrow on wide screens. */
 .reauth-banner__row input[type="password"] {
     flex: 1 1 12rem;
     max-width: 20rem;
@@ -2218,29 +2051,21 @@ td input[type="text"] {
     margin-bottom: var(--space-5);
 }
 
-/* Let the filter group shrink below its content so the wide category
-   <select> (capped at max-width: 100% via .select-auto) can't push the
-   page past a narrow viewport. Flex items default to min-width: auto. */
+/* min-width: 0 so the wide category <select> can't overflow a narrow viewport. */
 .filter-bar .form-group {
     min-width: 0;
 }
 
-/* Selects inside .filter-bar render at the same height as sibling
-   button-style chips (e.g. .feed-filter-link on /feeds) so the row
-   reads as one control strip rather than mismatched heights. */
+/* Selects in .filter-bar match the chip height, for one even control strip. */
 .filter-bar select {
-    /* Extra right padding leaves room for the inherited chevron; the
-       base select's background-position is nudged in to match below. */
+    /* Right padding for the inherited chevron. */
     padding: var(--space-1) var(--space-6) var(--space-1) var(--space-2);
     background-position: right var(--space-2) center;
     font-size: var(--font-sm);
 }
 
-/* Icon-only chip used beside a taller sibling control. `align-self: stretch`
-   takes the height from whatever it sits next to instead of restating it: the
-   selects carry `min-height: var(--touch-min)` while the input is sized by
-   padding and font, so any fixed value would match one context and miss the
-   other. */
+/* Icon-only chip: `align-self: stretch` takes its sibling's height, since
+   selects and inputs size differently. */
 .filter-chip-btn {
     display: inline-flex;
     align-self: stretch;
@@ -2265,20 +2090,13 @@ td input[type="text"] {
 }
 
 /* ===== Scoped search drawer ===== */
-/* The scoped-search box used to sit inline in `.filter-bar`, where a wrapped bar
-   (≤1024px) gave it a whole row of the list to itself. It now drops down above
-   `.list-pane-header` when the filter-bar toggle asks for it.
-
-   `grid-template-rows: 0fr → 1fr` animates to the content's own height without
-   hard-coding one — a `max-height` guess either clips or spends the transition
-   on empty space. */
+/* Drops down above `.list-pane-header`. `grid-template-rows: 0fr → 1fr`
+   animates to the content's height without a `max-height` guess. */
 .search-drawer {
     display: grid;
     grid-template-rows: 0fr;
-    /* `visibility` flips only after the collapse finishes (0s transition on a
-       delay), so the box animates out and *then* leaves the tab order and the
-       accessibility tree, rather than holding a focusable input inside a
-       clipped container. */
+    /* `visibility` flips after the collapse, so the input leaves the tab order
+       and a11y tree only once hidden. */
     visibility: hidden;
     transition: grid-template-rows 0.16s ease, visibility 0s linear 0.16s;
     flex-shrink: 0;
@@ -2293,8 +2111,7 @@ td input[type="text"] {
     border-bottom-color: var(--color-border-light);
 }
 
-/* min-height:0 is what actually lets the grid row collapse to 0fr; without it
-   the child's content height wins and the drawer never closes. */
+/* min-height:0 lets the grid row collapse to 0fr. */
 .search-drawer-clip {
     min-height: 0;
     overflow: hidden;
@@ -2313,9 +2130,7 @@ td input[type="text"] {
     margin-bottom: 0;
 }
 
-/* Top-level forms inside .page-content need a bottom gap separating them from
-   the next block. .filter-bar is itself a form and brings its own
-   margin-bottom, so it is excluded. */
+/* Gap after top-level forms; .filter-bar has its own margin. */
 .page-content > form:not(.filter-bar) {
     margin-bottom: var(--space-6);
 }
@@ -2391,9 +2206,8 @@ td input[type="text"] {
     color: var(--color-text-muted);
 }
 
-/* Unified empty-state, editorial-modern: a thin gold accent rule above a serif
-   heading with italic muted subtext — no icon, no card, no button. Tier 1 is the
-   full-surface form used by the entries-family list pages and /search. */
+/* Empty state, Tier 1 (entries-family lists and /search): accent rule, serif
+   heading, italic subtext. */
 .empty-state {
     text-align: center;
     max-width: 30rem;
@@ -2421,8 +2235,7 @@ td input[type="text"] {
     color: var(--color-text);
     margin: 0 0 var(--space-3);
 }
-/* Shared italic subtext across all empty-state tiers; each tier only
-   sets its own font-size (and, for compact, its box). */
+/* Shared empty-state subtext; tiers only set font-size. */
 .empty-state-text,
 .empty-state-compact,
 .empty-state-quiet-text {
@@ -2450,19 +2263,14 @@ td input[type="text"] {
     box-shadow: 0 1px 0 var(--color-border);
 }
 
-/* Tier 2 — compact single-line form for narrow surfaces (reading pane, table
-   cells, stats sub-sections) where a full editorial block would break the
-   layout. The natural collapse of Tier 1 into tight space. */
+/* Tier 2 — compact single line for narrow surfaces. */
 .empty-state-compact {
     text-align: center;
     font-size: var(--font-base);
     padding: var(--space-8) var(--space-4);
 }
 
-/* Quiet list empty-state, for the entries-family views where an empty list is an
-   in-context condition rather than an announcement: no accent rule, a smaller
-   secondary heading over a muted detail line. The full Tier-1 `.empty-state` is
-   reserved for /search. */
+/* Quiet list empty state for entries-family views: no accent rule. */
 .empty-state-quiet {
     text-align: center;
     max-width: 30rem;
@@ -2502,9 +2310,7 @@ td input[type="text"] {
 }
 
 /* ===== /search page ===== */
-/* Search form follows the standard form-group / button conventions used on
-   /categories, /feeds, /user-settings. No custom borderless input; no custom
-   submit. Just typography and spacing handle the page identity. */
+/* Search form uses the standard form conventions. */
 
 .search-results {
     list-style: none;
@@ -2517,9 +2323,7 @@ td input[type="text"] {
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Results stream as blocks — no rules between them; the vertical rhythm of
-   margin and line-height carries separation. /search runs full-width, so results
-   span the main column rather than a capped measure. */
+/* Results separated by rhythm only, spanning the full column. */
 .search-result {
     margin-bottom: var(--space-5);
     animation: searchResultIn 0.45s ease backwards;
@@ -2535,8 +2339,7 @@ td input[type="text"] {
 .search-result:nth-child(6) { animation-delay: 0.24s; }
 .search-result:nth-child(n+7) { animation-delay: 0.28s; }
 
-/* Title in the app (sans) style, body-sized — a citation heading,
-   not a page heading. */
+/* Title in sans, body-sized: a citation, not a page heading. */
 .search-result-title {
     display: block;
     font-family: var(--font-ui);
@@ -2547,10 +2350,7 @@ td input[type="text"] {
     margin-bottom: var(--space-1);
     text-decoration: none;
     transition: color 0.2s;
-    /* Override .page-content's `word-break: break-word` (== overflow-wrap:
-       anywhere), which lets a Latin word break mid-word on narrow screens —
-       splitting a highlighted term like `Grok` into `Gro` / `k` so the <mark>
-       renders in fragments. overflow-wrap still wraps unbreakable tokens. */
+    /* Undo `word-break: break-word` so highlighted terms don't split mid-word. */
     word-break: normal;
     overflow-wrap: break-word;
 }
@@ -2575,16 +2375,12 @@ td input[type="text"] {
     color: var(--color-text-secondary);
     margin: 0;
 }
-/* Scoped under .page-content-full so the max-width:none reset out-specifies the
-   generic `.page-content p` prose cap (which would otherwise pin snippets to
-   --prose-max-width instead of the full column). */
+/* Out-specifies the `.page-content p` prose cap. */
 .page-content-full .search-result-snippet {
     max-width: none;
 }
 
-/* Search-term highlight — a tinted gold wash plus a 2px accent underline, so it
-   reads as a deliberate editorial mark rather than the browser's bright-yellow
-   default while staying visible on warm parchment. */
+/* Search-term highlight: gold wash + accent underline. */
 mark {
     background: linear-gradient(transparent 55%, var(--color-accent-subtle) 55%);
     color: inherit;
@@ -2617,8 +2413,7 @@ mark {
     margin-bottom: var(--space-4);
 }
 
-/* Feed icon — sized here; vertical centring comes from the flex containers it
-   lives in (.list-pane-header h1, .feed-title-line), so no vertical-align. */
+/* Feed icon; vertical centring comes from its flex containers. */
 .feed-icon {
     width: var(--icon-sm);
     height: var(--icon-sm);
@@ -2628,8 +2423,7 @@ mark {
     flex: none;
 }
 
-/* Summary-status badges — one sparkle glyph, colour + fill carry meaning.
-   Icon sizes via 1.15em of the status-cluster font (set on .entry-status). */
+/* Summary-status badges: colour + fill carry meaning; sized 1.15em. */
 .summary-badge,
 .summary-badge-pending,
 .summary-badge-processing,
@@ -2709,8 +2503,7 @@ summary {
     padding: 36px 32px 30px;
 }
 
-/* The banner stack sits directly above the wordmark, whose margin-top is 0 —
-   without this the flash message reads as part of the heading block. */
+/* Separate the banner stack from the wordmark. */
 .auth-card .banner-stack:not(:empty) {
     margin-bottom: var(--space-6);
 }
@@ -2731,35 +2524,21 @@ summary {
     color: var(--color-text-muted);
 }
 
-/* /offline reuses the auth card, but reads as a status message rather than a
-   form, so its prose is centred under the wordmark instead of ranged left. */
+/* /offline reads as a status message, so its prose is centred. */
 .offline-message {
     text-align: center;
 }
 
-/* The two links on /offline sit side by side rather than stacked: "Saved
-   entries" and "Try again" are alternatives, not a sequence. */
+/* Side by side: the /offline links are alternatives. */
 .auth-card .link a + a {
     margin-left: var(--space-4);
 }
 
 /* ===== Offline reading ===== */
 
-/* `offline.js` marks every control that reaches the server while the browser
-   reports no connection — forms (including the GET ones: Load More, search),
-   links other than the ones the service worker can answer, and the selects that
-   submit themselves.
-
-   They stay in the layout rather than disappearing: a row of buttons that
-   vanishes is a page that jumps under the reader's thumb, and a Load More that
-   is visibly out of reach explains the state better than an empty space where
-   it used to be. `pointer-events` is what makes the disabling real for a mouse;
-   the keyboard and the `j`/`k`/`s`/`m` shortcuts go through `offline.js`, which
-   answers with a message rather than silence.
-
-   Not the `disabled` property, which `setFormBusy` already owns on these same
-   controls — two owners of one attribute is how a button ends up stuck grey
-   after the connection returns. */
+/* Server-bound controls marked by offline.js. They stay in place to avoid
+   layout jumps; `pointer-events` blocks the mouse, offline.js the keyboard. Not
+   `disabled`, which `setFormBusy` owns. */
 [data-offline-disabled] {
     opacity: 0.45;
     pointer-events: none;
@@ -2777,8 +2556,7 @@ summary {
 }
 
 /* ===== Kagi summary block ===== */
-/* 2px orange left rule, accent wash, mono uppercase "KAGI SUMMARY" label
-   (via ::before), serif body — mirrors the prototype's summary-block. */
+/* Accent left rule, wash, mono "KAGI SUMMARY" label (::before), serif body. */
 .summary-box {
     position: relative;
     background: var(--color-accent-subtle);
@@ -2808,7 +2586,7 @@ summary {
     color: var(--color-text-muted);
 }
 
-/* Copy / Dismiss / Cancel — quiet mono links pinned to the label row (right). */
+/* Copy / Dismiss / Cancel links, right of the label row. */
 .summary-actions {
     position: absolute;
     top: 14px;
@@ -2866,8 +2644,7 @@ summary {
     white-space: pre-wrap;
 }
 
-/* Failed-summary banner — mirrors .banner--error's tinted wash + error
-   left-border, sized to sit inside the summary box. */
+/* Failed-summary banner, mirroring .banner--error. */
 .summary-error-banner {
     display: flex;
     align-items: flex-start;
@@ -2881,9 +2658,7 @@ summary {
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
 }
-/* One line tall and centring its icon: the row is `flex-start` so a wrapped
-   message keeps the icon at its first line, and an icon shorter than that line
-   would otherwise hug its top, ~2px above the text. */
+/* One line tall so the icon centres on the first line of a wrapped message. */
 .summary-error-banner .action-icon {
     flex: none;
     height: 1lh;
@@ -2939,9 +2714,7 @@ summary {
         display: flex;
     }
 
-    /* The lamp itself lives in the drawer, which is closed here — so the
-       hamburger carries the offline half of it. Only that half: a badge that
-       said "everything is fine" would sit on the button all day. */
+    /* The lamp's drawer is closed here, so the hamburger shows offline only. */
     :root[data-offline] .sidebar-toggle::after {
         content: "";
         position: absolute;
@@ -2996,8 +2769,7 @@ summary {
         height: auto;
     }
 
-    /* Clear the fixed hamburger that floats at top:--space-4 with a
-       --touch-min (44px) box: --space-4 gap + button + --space-4 gap. */
+    /* Clear the fixed hamburger: --space-4 + 44px + --space-4. */
     .page-content {
         padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-4);
     }
@@ -3006,14 +2778,8 @@ summary {
         padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-3);
     }
 
-    /* The search drawer opens above the header, i.e. under the fixed hamburger.
-       Indent its row past the button rather than below it — a full row of
-       clearance for one input reads as a layout bug — and hand the header back
-       its clearance since the drawer now provides it.
-
-       Block padding is --space-4, the hamburger's own top offset, rather than
-       the base --space-3: both are --touch-min tall at this width, so matching
-       the offset is what puts them on one midline. */
+    /* The search drawer sits beside the fixed hamburger rather than below it;
+       --space-4 block padding matches its offset so they share a midline. */
     .search-drawer-row {
         padding-top: var(--space-4);
         padding-bottom: var(--space-4);
@@ -3032,17 +2798,14 @@ summary {
         padding-right: var(--space-4);
     }
 
-    /* Mobile keeps the toolbar (base styles) but makes it a sticky bar over
-       the full-screen pane overlay and reveals the Back button. */
+    /* Sticky toolbar over the full-screen pane, with Back visible. */
     .reading-pane-back {
         padding: var(--space-3) var(--space-4);
         font-size: var(--font-sm);
         background: var(--color-bg);
-        /* position: sticky / top: 0 inherited from the base rule; only the
-           stacking context differs on mobile. */
+        /* Only the stacking context differs from the base sticky rule. */
         z-index: 1;
-        /* The mobile background is fully opaque, so the desktop backdrop blur
-           has no visual effect here — drop it to avoid the compositing cost. */
+        /* Background is opaque here, so skip the blur's compositing cost. */
         backdrop-filter: none;
     }
 
@@ -3051,8 +2814,7 @@ summary {
         align-items: center;
     }
 
-    /* Prev/next become icon-only to save toolbar width; keep a square-ish
-       touch target (the generic baseline already sets min-height). */
+    /* Icon-only prev/next with a square-ish touch target. */
     .nav-label {
         display: none;
     }
@@ -3062,17 +2824,9 @@ summary {
         justify-content: center;
     }
 
-    /* Actions move to a fixed bottom bar: thumb-reachable, available while the
-       article scrolls. Equal flex slots spread 2-5 controls evenly.
-
-       Nothing in this bar may be sized by its label. The labels change under the
-       thumb that just tapped one — "Summarize" → "Summarizing…" → "Dismiss" —
-       and a text-sized bar re-divides itself on every one (measured: the three
-       neighbours shrink 8.5px and slide up to 20px left). Inherited `flex-wrap`
-       is the loud half: one label growing past the row drops the last control
-       onto a second line mid-tap. Hence nowrap here, `min-width: 0` below — a
-       flex item's `min-width: auto` otherwise lets a nowrap label's min-content
-       width beat `flex-basis: 0` — and the ellipsis on the label itself. */
+    /* Fixed, thumb-reachable bottom bar with equal slots. Nothing may size by
+       its label (labels change mid-tap): hence nowrap, `min-width: 0` on items,
+       and label ellipsis. */
     .reading-pane-actions {
         position: fixed;
         left: 0;
@@ -3099,10 +2853,7 @@ summary {
         display: flex;
     }
 
-    /* Stacked icon-over-label, borderless, big icon, ≥48px tall. Side padding is
-       dropped because the slot *is* the tap target now that it no longer hugs
-       its text: those 8px decide whether the widest resting label ("Full
-       content", measured at 84px) fits or shows an ellipsis. */
+    /* Stacked icon over label, ≥48px tall; no side padding so "Full content" fits. */
     .reading-pane-actions .rp-action {
         flex: 1 1 0;
         min-width: 0;
@@ -3115,8 +2866,7 @@ summary {
         font-size: var(--font-xs);
     }
 
-    /* The label is the part that changes, so it is the part that gives: it is
-       clipped to its slot rather than widening it. */
+    /* The label clips to its slot rather than widening it. */
     .reading-pane-actions .action-label {
         max-width: 100%;
         overflow: hidden;
@@ -3135,22 +2885,9 @@ summary {
         padding-bottom: calc(3rem + 2 * var(--space-2) + var(--space-4));
     }
 
-    /* ===== Entry row — mobile (wire log) =====
-       Narrow viewports get the comfortable 36px controls too; wide touch hybrids
-       are covered separately by @media (any-pointer: coarse). Columns come from
-       --mk.
-
-       The padding looks arbitrary because it is measured to the *ink*, not to
-       the boxes. Every control keeps its full 36px box, and at that size the
-       boxes carry far more air than the text does, unevenly — so four equal
-       paddings frame the row with four different-looking margins. On a 393px
-       phone each side already spends 1px top, ~10.5px bottom (the rail's 36px
-       controls overhang the 21px meta line they share), 13.5px left (a 9px dot
-       centred in a 36px box) and 0px right.
-
-       So the paddings below are 16/16/6/4, buying margins of 17/16/16.5/17.5.
-       Equal padding was 15 a side and bought 16/12/25.5/25.5: content pinned to
-       the top left, with the sides pinched against the screen edges. */
+    /* ===== Entry row — mobile =====
+       36px controls; columns from --mk. Padding (16/16/6/4) is measured to the
+       ink, not the boxes, so the visible margins come out even. */
     .entry-item {
         --sz: 36px;
         --mk: 36px;
@@ -3163,23 +2900,20 @@ summary {
         min-width: 36px;
         min-height: 36px;
     }
-    /* No sidebar on mobile, so a slightly larger title reads well. Keeps the
-       3-line clamp from the base rule. */
+    /* Slightly larger title; keeps the 3-line clamp. */
     .entry-item-title {
         font-size: var(--font-base);
     }
 
-    /* Feed link gets a taller hit box (inline link exempt from the 44px rule).
-       inline-block so the vertical padding counts toward the tap target. */
+    /* inline-block so vertical padding enlarges the feed link's tap target. */
     .entry-item-meta a {
         display: inline-block;
         vertical-align: middle;
         padding: 0.35rem 0;
     }
 
-    /* Banner stack: tighter padding on narrow viewports. The 44px dismiss button
-       makes the grid row taller than the text, so centre every cell (overriding
-       the base align-items:start) and drop the icon's first-line offset. */
+    /* Tighter banners; the 44px dismiss makes the row taller than the text, so
+       centre every cell and drop the icon's first-line offset. */
     .banner {
         padding: var(--space-2);
         column-gap: var(--space-2);
@@ -3190,19 +2924,13 @@ summary {
         margin-top: 0;
     }
 
-    /* The fixed hamburger floats over the top-left of <main> here. Start the
-       banner stack below it, with the same --space-4 gap as above and left of
-       it, so banners stay full-width instead of indenting to dodge the button
-       (which read as the button punching a hole in the banner). Clearance =
-       16 + 44 + 16 = 76px, matching the no-flash header clearance above. */
+    /* Start banners below the fixed hamburger (16 + 44 + 16 = 76px) so they
+       stay full width. */
     .main-content > .banner-stack:not(:empty) {
         padding-top: calc(2 * var(--space-4) + var(--touch-min));
     }
 
-    /* While a banner is visible its own padding-top already clears the floating
-       hamburger, so the header below can drop to normal section spacing. The
-       heading then sits lower while a banner shows and moves up on dismiss —
-       inherent to banners occupying real space below the button. */
+    /* A visible banner already clears the hamburger, so the header needs less. */
     body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
     body:has(.main-content > .banner-stack:not(:empty)) .page-content {
         padding-top: var(--space-6);
@@ -3210,16 +2938,13 @@ summary {
 
     /* ===== Mobile touch baseline — 44px minimum tap targets ===== */
 
-    /* Buttons are already inline-flex & centered (base styles); just raise
-       them to the touch minimum. */
+    /* Buttons are already centred flex; just raise them to the minimum. */
     button,
     .btn {
         min-height: var(--touch-min);
     }
 
-    /* Link- and text-styled controls have little or no padding by default —
-       turn them into real flex boxes so min-height centers the label and the
-       whole box is tappable, not just the glyph run. */
+    /* Make link/text controls flex boxes so the whole 44px box is tappable. */
     .action-link,
     .actions a,
     .tab-bar a,
@@ -3234,10 +2959,7 @@ summary {
         min-height: var(--touch-min);
     }
 
-    /* Full-row tap target WITHOUT flex: a flex title turns each text run and the
-       search-highlight <mark> into separate flex items, which wrap into a broken
-       multi-column layout on narrow screens. Block keeps the <mark> in normal
-       inline flow; min-height still guarantees the 44px target. */
+    /* Block, not flex: flex would split text and <mark> into wrapping items. */
     .search-result-title {
         display: block;
         min-height: var(--touch-min);
@@ -3260,8 +2982,7 @@ summary {
         min-height: var(--touch-min);
     }
 
-    /* Form controls: touch height + 16px font to suppress iOS focus-zoom.
-       (select is sized unconditionally at base, so it's excluded here.) */
+    /* Touch height + 16px font to stop iOS focus-zoom (select is sized at base). */
     input[type="text"],
     input[type="password"],
     input[type="url"],
@@ -3310,12 +3031,8 @@ summary {
         min-height: var(--touch-min);
     }
 
-    /* …but a form field's label is the row, and the helper text after it
-       belongs underneath. `inline-flex` above makes the label an inline box, so
-       that text flows on into the label's own last line — which is what a
-       settings page's checkbox rows looked like. `flex` puts it back on its own
-       line; `fit-content` keeps the tap target hugging the words rather than
-       stretching a silent toggle across the full width of the form. */
+    /* Field labels use `flex` so helper text falls on its own line, and
+       `fit-content` to keep the tap target to the words. */
     .form-group > label:has(> input[type="checkbox"]),
     .form-group > label:has(> input[type="radio"]) {
         display: flex;
@@ -3342,9 +3059,7 @@ summary {
 
 /* ===== Responsive: Phone (card tables, compact spacing) ===== */
 @media (max-width: 600px) {
-    /* Responsive tables: card layout. Skeleton shared by the generic
-       .mobile-cards and the settings variant; the td treatment differs
-       below (flex label/value rows vs stacked blocks). */
+    /* Card layout for responsive tables; td treatment differs per variant below. */
     .page-content table.mobile-cards,
     .page-content table.mobile-cards-settings {
         display: block;
@@ -3397,9 +3112,7 @@ summary {
         display: none;
     }
 
-    /* Passkey card actions (the list is JS-rendered by <rdrs-passkeys>):
-       entry-item-style full-width bordered buttons. Scoped to rdrs-passkeys
-       so the Feeds card actions keep their compact text-link treatment. */
+    /* Passkey card actions: full-width bordered buttons, scoped to rdrs-passkeys. */
     rdrs-passkeys table.mobile-cards tbody td.actions a {
         flex: 1;
         justify-content: center;
@@ -3409,9 +3122,7 @@ summary {
         border-radius: var(--radius-md);
     }
 
-    /* Hide feed health info in card mode — and with it the disclosure that
-       explains those two timestamps, which would otherwise describe a row
-       nothing on this viewport renders. */
+    /* Hide feed health info (and its explaining disclosure) in card mode. */
     .feed-health-info,
     .feed-freshness-help { display: none; }
 
@@ -3460,9 +3171,7 @@ summary {
         width: 100%;
     }
 
-    /* On a phone the lone action button goes full-bleed for a comfortable tap
-       target. The form has to stretch first — a width:100% button inside a
-       content-sized flex item is still only as wide as its own label. */
+    /* Full-bleed lone action button; the form must stretch first. */
     .cred-card-actions form {
         flex: 1;
     }
@@ -3497,8 +3206,7 @@ summary {
 /* Chip-style toggle shared with the /feeds filter links. */
 .stats-period-btn,
 .feed-filter-link {
-    /* 44px touch height on every breakpoint so these chips stay level with
-       the sibling filter-bar selects (one control strip, not mismatched). */
+    /* 44px at every breakpoint to match the filter-bar selects. */
     display: inline-flex;
     align-items: center;
     min-height: var(--touch-min);
@@ -3524,8 +3232,7 @@ summary {
 .stats-period-divider,
 .stats-period-dash { color: var(--color-text-muted); }
 .stats-date-input {
-    /* Match the 44px sibling chips/Apply button so the period row stays level
-       on desktop (date inputs already hit 44px on mobile). */
+    /* 44px to keep the period row level on desktop. */
     min-height: var(--touch-min);
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-border);
@@ -3542,16 +3249,10 @@ summary {
     gap: var(--space-3);
     margin-bottom: var(--space-6);
 }
-/* Stat tiles and admin cards share the number/label typography but NOT the
-   divider logic — only the top `--tiles` row draws hairline dividers, so the
-   admin sections' first card keeps its own full border box (the old
-   `:first-child` reset out-specified `.stats-card-admin` and stripped it). The
-   base `.stats-card` carried only browser defaults, so it is dropped. */
-/* Top stat row: hairline divider between tiles, no card fill. The divider is a
-   `border-left` on EVERY tile, pulled left by its own left padding
-   (margin-left: -19px = 1px border + 18px padding) so each tile's content sits
-   flush on its grid track; `overflow: hidden` then clips the border poking past
-   the row's left edge, so a wrapped row never shows a stray row-start divider. */
+/* Stat tiles and admin cards share typography, but only the `--tiles` row draws
+   dividers, so admin cards keep their full border. */
+/* Divider is a `border-left` on every tile, pulled out by -19px (border +
+   padding); `overflow: hidden` clips it at the row start, even when wrapped. */
 .stats-cards--tiles { overflow: hidden; }
 .stats-cards--tiles > .stats-card {
     border-left: 1px solid var(--color-border-light);
@@ -3581,9 +3282,7 @@ summary {
     border-radius: var(--radius-card);
     padding: var(--space-3) var(--space-4);
 }
-/* Database card grid reflows with auto-fit so the six tiles distribute evenly
-   across the available width (no dangling orphan row) and collapse gracefully
-   on narrow screens without needing fixed column-count breakpoints. */
+/* auto-fit so the database tiles spread evenly without breakpoints. */
 .stats-cards--db { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
 .stats-section {
@@ -3608,14 +3307,12 @@ summary {
     padding-top: var(--space-6);   /* headroom for the max-value direct label */
     padding-bottom: 22px;          /* room for date labels below the baseline */
     position: relative;
-    /* Edge-bar tooltips extend past the chart; clip horizontally so they never
-       add a page-wide horizontal scrollbar. `clip` coexists with overflow-y:
-       visible, so the tooltip still floats into the reserved top padding. */
+    /* Clip edge tooltips horizontally so they never cause page scroll; `clip`
+       still lets them overflow vertically. */
     overflow-x: clip;
     overflow-y: visible;
 }
-/* Baseline hairline at y=0 spanning the full width; bars are anchored ON it and
-   zero-read days simply leave the slot above it empty (honest, no dash). */
+/* Baseline at y=0; bars sit on it and zero-read days leave the slot empty. */
 .stats-chart::after {
     content: "";
     position: absolute;
@@ -3627,9 +3324,7 @@ summary {
     pointer-events: none;
 }
 .stats-bar-col {
-    /* Columns share the full row evenly — sparse ranges (7d) spread across
-       the width like dense ones; the bar itself stays a capped, centered
-       mark so the chart never reads as fat blocks. */
+    /* Columns share the row evenly; the bar itself is a capped, centred mark. */
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
@@ -3647,16 +3342,14 @@ summary {
     /* Rounded top only — the flat bottom seats the bar on the baseline. */
     border-radius: 3px 3px 0 0;
     transition: height 0.2s, opacity 0.2s;
-    /* Geometry arrives as a .pct-N class; see the scale near the end of this
-       file. Zero-read days come through as 0% and render nothing. */
+    /* Height comes from a .pct-N class (scale at end of file). */
     height: var(--pct, 0%);
 }
 .stats-bar-col:focus-visible .stats-bar,
 .stats-bar-col:hover .stats-bar {
     opacity: 0.78;
 }
-/* The single busiest day prints its count above the bar (max only — no number
-   spam). Anchored to the bar top so it rides with the bar height. */
+/* Count above the busiest day's bar only. */
 .stats-bar-value {
     position: absolute;
     bottom: 100%;
@@ -3712,13 +3405,10 @@ summary {
     opacity: 1;
     visibility: visible;
 }
-/* statistics.js shifts an edge tooltip horizontally (overriding the translateX
-   baseline below) so it stays inside the chart. Without JS the overflow-x: clip
-   above keeps the page from scrolling and the value stays in the aria-label. */
+/* statistics.js shifts edge tooltips to stay inside; without JS they clip and
+   the value remains in the aria-label. */
 
-/* Dense ranges (30d/90d, >10 columns) can't legibly label every column, so
-   show every other label (plus the last) at all widths — prevents collisions
-   without dropping the axis entirely. */
+/* Dense ranges (>10 columns) label every other column plus the last. */
 .stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
     display: none;
 }
@@ -3731,9 +3421,7 @@ summary {
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
     .stats-period-divider { display: none; }
-    /* On a narrow screen each shown MM/DD label would still truncate ("03/…");
-       let the surviving (odd) labels overflow into the now-empty neighbouring
-       columns instead of clipping. */
+    /* Let the surviving labels overflow into empty neighbours instead of truncating. */
     .stats-chart--dense .stats-bar-label {
         overflow: visible;
         text-overflow: clip;
@@ -3795,10 +3483,8 @@ summary {
     align-items: center;
 }
 
-/* Data-table column sizing (desktop only — below 600px these flip to the
-   .mobile-cards layout). The text-heavy column absorbs the freed page width and
-   the rest shrink to their content, so action links stay anchored beside each
-   row instead of drifting to a far edge. */
+/* Column sizing (desktop only; cards below 600px): the text column absorbs the
+   slack, the rest shrink to content. */
 @media (min-width: 601px) {
     /* Feeds: Title grows; Category / Unread / Actions are content-sized. */
     .feeds-table th:not(:first-child),
@@ -3807,17 +3493,14 @@ summary {
         white-space: nowrap;
     }
 
-    /* Admin users: Username (2) and Created (5) share the slack; ID, Role,
-       Status and Actions are content-sized. */
+    /* Admin users: Username and Created share the slack. */
     .admin-users-table th:not(:nth-child(2)):not(:nth-child(5)),
     .admin-users-table td:not(:nth-child(2)):not(:nth-child(5)) {
         width: 1%;
         white-space: nowrap;
     }
 
-    /* The actions cell is a flex row (.actions); once its column is squeezed
-       to content width the default flex-wrap:wrap would stack each link on its
-       own line, so pin it to a single horizontal row on desktop. */
+    /* Keep the squeezed actions cell on one row. */
     .feeds-table td.actions,
     .admin-users-table td.actions {
         flex-wrap: nowrap;
@@ -3825,9 +3508,8 @@ summary {
 }
 
 /* ===== Categories: inline rename form ===== */
-/* Inline rename — name reads as plain sans text matching the table cells;
-   hairline rule on hover; gold rule on focus; SAVE appears like a
-   typesetter's correction mark only when the row is being edited. */
+/* Inline rename: looks like plain text; hairline on hover, gold on focus, SAVE
+   only while editing. */
 .cat-rename {
     display: flex;
     align-items: baseline;
@@ -3861,11 +3543,8 @@ summary {
     box-shadow: none;
 }
 
-/* Fade a too-long name's trailing edge rather than using `text-overflow:
-   ellipsis`, which is useless on an <input> in Firefox 151+ (the field-sizing
-   rewrite, Bugzilla 2031757, dropped the glyph under the UA-forced `overflow:
-   clip`). `overflow: hidden` above is the no-mask fallback; skipped while
-   editing so the caret and full text stay visible. */
+/* Fade long names with a mask: `text-overflow: ellipsis` is broken on <input>
+   in Firefox 151+ (Bugzilla 2031757). Skipped while editing. */
 .cat-rename input[type="text"]:not(:focus) {
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
@@ -3885,10 +3564,7 @@ summary {
 }
 
 /* ── Entries keyboard focus ───────────────────────────────────────────── */
-/* Bottom-of-list-pane form wrappers (Load More, Mark Above as Read) —
-   top margin separating them from the last row, side padding aligning
-   with the rest of the list, and matching bottom margin so the buttons
-   don't sit flush with the .list-pane edge. */
+/* Load More / Mark Above as Read wrappers at the bottom of the list pane. */
 .load-more-form,
 .mark-above-form {
     margin-top: var(--space-4);
@@ -3896,11 +3572,8 @@ summary {
     padding: 0 var(--space-5);
 }
 
-/* Mobile: pull the load-more / mark-above wrappers in from space-5 to space-4,
-   so a full-width button doesn't overshoot the list's rows on a narrow screen.
-   Not tied to .entry-item's own padding — that is set per side for optical
-   balance at 36px controls, not as a shared list inset. Placed here so it
-   follows the base .load-more-form rule in source order. */
+/* Mobile: narrower inset so full-width buttons don't overshoot the rows. Must
+   follow the base .load-more-form rule. */
 @media (max-width: 1024px) {
     .load-more-form,
     .mark-above-form {
@@ -3966,19 +3639,16 @@ summary {
 }
 
 /* ===== Touch devices — no hover, no hardware keyboard =====
-   Placed AFTER the width-based media blocks on purpose: same specificity, so
-   source order decides and the touch sizing wins (this ordering bug was found
-   and fixed in the prototype). WCAG 2.5.5: every control ≥ 44px. */
+   Must follow the width-based media blocks: same specificity, so source order
+   lets touch sizing win. WCAG 2.5.5: every control ≥ 44px. */
 @media (hover: none) {
-    /* Entry-row control sizing lives in the @media (any-pointer: coarse) block
-       below (input-based, covers hybrids); nothing row-specific here now. */
+    /* Entry-row sizing lives in the (any-pointer: coarse) block below. */
 
     /* kbd hints and the keyboard-shortcut affordances are keyboard-only. */
     .rp-action kbd,
     .reading-pane-nav-btn kbd { display: none; }
 
-    /* Vertical padding measured to the ink, matching the ≤1024px block — see
-       the optical-balance note there. */
+    /* Padding measured to the ink, as in the ≤1024px block. */
     .entry-item { padding-top: 16px; padding-bottom: 6px; }
 
     /* 44px minimum interactive controls. */
@@ -3996,14 +3666,8 @@ summary {
 
     .sidebar-item { min-height: var(--touch-min); }
 
-    /* The 44px dismiss button (above) makes the banner grid row taller than a
-       single line of text; center every cell (overriding the base
-       align-items:start) and drop the icon's first-line offset so the dot
-       centers too. Give the dismiss its full 44px tap target on both axes —
-       base .banner-dismiss is 22px and only min-height fired above, so on wide
-       touch layouts it would otherwise stay 22px wide. Mirrors the
-       max-width:1024px block for wide touch devices (e.g. iPad landscape) that
-       keep the persistent split layout instead of the mobile drawer. */
+    /* As in the ≤1024px block, for wide touch layouts (iPad landscape): centre
+       the banner cells and give dismiss a full 44px square. */
     .banner { align-items: center; }
     .banner-icon { margin-top: 0; }
     .banner-dismiss { min-width: var(--touch-min); }
@@ -4017,21 +3681,14 @@ summary {
 }
 
 /* ===== Entry-row touch targets =====
-   Any device with a coarse pointer (phones, tablets, and hybrids like touch
-   laptops / iPad+trackpad) gets 36px row controls — comfortably above WCAG AA
-   (24px) without the density cost of 44px. Pure-mouse desktops keep the compact
-   24px base. Explicit min-width/height out-specifies the generic touch
-   `button { min-height: 44px }` (element selector) that also matches on pure-
-   touch devices. --touch-min (44px) is intentionally NOT reused here. */
+   Coarse pointers (incl. hybrids) get 36px row controls: above WCAG AA 24px
+   without 44px density cost. Explicit sizes out-specify the touch `button` rule. */
 @media (any-pointer: coarse) {
     .entry-item {
         --sz: 36px;
         --mk: 36px;
         --dot-shift: -7px;
-        /* 36px controls need the same optical padding as the ≤1024px block —
-           see the note there. Restated rather than inherited: this block is
-           last, so whichever of the three touch paths a device matches, the row
-           ends up with one padding. */
+        /* Restated ink-measured padding; this block is last, so it wins. */
         padding: 16px 16px 6px 4px;
     }
     .unread-toggle,
@@ -4049,12 +3706,8 @@ summary {
     }
 }
 
-/* ===== /search: query-syntax help panel + inline parse-error banner =====
-   Tokens matched to the repo's actual scale (no --space-sm/md/--color-danger-*
-   exist): spacing mirrors .feed-http-settings/.feed-http-hint (space-4/space-3/
-   space-1); the error tint mirrors .banner--error's error-colour wash. */
-/* Compact search form: keyword input and submit button share one row so the
-   button no longer drops to its own line. */
+/* ===== /search: query-syntax help panel + inline parse-error banner ===== */
+/* Keyword input and submit share one row. */
 .search-form-row {
     display: flex;
     gap: var(--space-2);
@@ -4106,8 +3759,7 @@ summary {
 
 /* ===== Layout helpers ===== */
 
-/* Inline form wrappers around a single button, so a row of actions sits on one
-   line. Replaces `style="display:inline"`, which `style-src 'self'` rejects. */
+/* Inline form wrappers; replaces `style="display:inline"`, which CSP forbids. */
 .form-inline {
     display: inline;
 }
@@ -4119,22 +3771,16 @@ summary {
     font-size: var(--font-xs);
 }
 
-/* The icon sprite in _icon_sprite.html. It already carries width/height/overflow
-   as SVG presentation attributes so it collapses even without this file; taking
-   it out of flow here means it cannot contribute a stray inline box either. */
+/* Take the icon sprite out of flow (it is already zero-sized via attributes). */
 .icon-sprite {
     position: absolute;
     overflow: hidden;
 }
 
 /* ===== Percentage scale =====
-   Bar geometry for the statistics charts. The values are data, but a
-   Content-Security-Policy of `style-src 'self'` forbids the inline `style`
-   attribute that used to carry them, and no CSS function can read an arbitrary
-   number out of an attribute. So the server rounds to a whole percent (see
-   `bar_percent` in handlers/pages) and picks a class from this scale.
-   `--pct` is consumed as `height` by .stats-bar and as `width` by
-   .stats-progress-fill, so one scale serves both charts. */
+   `style-src 'self'` forbids inline `style`, so the server picks a class by
+   whole percent (`bar_percent`). `--pct` is height for .stats-bar and width for
+   .stats-progress-fill. */
 .pct-0 { --pct: 0%; }
 .pct-1 { --pct: 1%; }
 .pct-2 { --pct: 2%; }

@@ -1,17 +1,7 @@
-//! The rdrs server under test, plus the two upstreams it is pointed at.
+//! An rdrs server under test plus its two mock upstreams.
 //!
-//! Replaces `support/server.js` and the worker-scoped fixtures in
-//! `support/fixtures.js`. Playwright ran one server per worker; cucumber has no
-//! worker concept, only a cap on concurrent scenarios, so this starts **one**
-//! server for the whole run. Nothing is lost by that: every scenario already
-//! created its own throwaway account, and rdrs scopes categories, feeds and
-//! entries to a user, so scenarios are isolated by account rather than by
-//! process. It is also markedly faster — one binary start and one migration
-//! run instead of one per worker.
-//!
-//! The binary is spawned directly rather than through `cargo run`, so the PID
-//! held here is the server's own. Killing `cargo` would leave the server it
-//! spawned holding the port.
+//! The binary is spawned directly, not via `cargo run`, so killing our PID
+//! kills the server rather than leaving it holding the port.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -38,14 +28,11 @@ const MOCK_RSS_FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>"#;
 
-/// How long the mock Kagi upstream sits on a request before answering.
-///
-/// Deliberately slow: the summarizer scenarios assert on the pending and
-/// processing SSE events, which an instant response would race past.
+/// Mock Kagi delay; summarizer scenarios assert on pending/processing SSE
+/// events an instant response would race past.
 const KAGI_LATENCY: Duration = Duration::from_millis(300);
 
-/// The addresses a scenario needs, cheap to clone and free of anything that
-/// owns a process.
+/// The addresses a scenario needs; cheap to clone, owns no process.
 #[derive(Debug, Clone)]
 pub struct Endpoints {
     /// Base URL of the rdrs server under test.
@@ -56,8 +43,7 @@ pub struct Endpoints {
     pub feed_url: String,
 }
 
-/// A running rdrs server and its mock upstreams. Everything is torn down when
-/// this is dropped.
+/// A running rdrs server and its mock upstreams, torn down on drop.
 pub struct Harness {
     endpoints: Endpoints,
     child: Child,
@@ -69,11 +55,6 @@ pub struct Harness {
 impl Harness {
     /// Builds the binary if needed, starts the mocks and the server, and waits
     /// for `/health`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the binary cannot be built or spawned, when a mock cannot
-    /// bind, or when the server does not answer within [`STARTUP_TIMEOUT`].
     pub async fn start() -> Result<Self> {
         let binary = ensure_binary()?;
         let temp = tempfile::Builder::new()
@@ -94,36 +75,26 @@ impl Harness {
             .env("RDRS_SERVER_BIND", format!("127.0.0.1:{port}"))
             .env("RDRS_MULTI_USER_ENABLED", "true")
             .env("RUST_LOG", "warn")
-            // This is always a throwaway test server. Minimal Argon2 cost makes
-            // the register/login every scenario performs cost microseconds
-            // instead of hundreds of ms. Never set in production.
+            // Minimal Argon2 cost for per-scenario logins. Never in production.
             .env("RDRS_FAST_HASH", "1")
-            // Every scenario signs in from 127.0.0.1 against one shared bucket,
-            // so the limiter would start refusing logins a handful of scenarios
-            // in. It has its own unit and integration coverage; the browser
-            // suite is not where it is exercised.
+            // All scenarios share 127.0.0.1's bucket; the limiter would refuse
+            // logins a few scenarios in. It is covered elsewhere.
             .env("RDRS_LOGIN_RATE_LIMIT_ATTEMPTS", "0")
-            // Scenarios seed straight into SQLite, which never runs the
-            // handlers carrying the sidebar cache's bust hooks. A render that
-            // overlaps the seeding then caches a half-seeded world for the full
-            // TTL, and every later assertion about categories or unread counts
-            // reads it. Never set in production: the cache is what keeps chrome
-            // off the hot read path.
+            // Direct SQLite seeding skips the cache's bust hooks, so a render
+            // mid-seed would cache a half-seeded sidebar for the whole TTL.
+            // Never in production.
             .env("RDRS_DISABLE_SIDEBAR_CACHE", "1")
             .env("RDRS_KAGI_API_BASE", &kagi_url)
-            // The mock feed upstream binds loopback, which the SSRF guard
-            // refuses by default. This is the same opt-in a self-hoster uses to
-            // subscribe to something on their own LAN, not a test-only bypass.
+            // The mock feed binds loopback, which the SSRF guard refuses by
+            // default; this is the self-hoster LAN opt-in, not a test bypass.
             .env("RDRS_FETCH_ALLOW_PRIVATE_HOSTS", "127.0.0.1")
-            // Inherited, so a refusal to start is visible in the test output
-            // rather than swallowed into a pipe nobody reads.
+            // Inherited so startup failures show in the test output.
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .with_context(|| format!("spawning the rdrs server at {}", binary.display()))?;
 
-        // Bound before the wait, so a server that never answers is still killed
-        // when the error propagates.
+        // Bound before the wait so a server that never answers is still killed.
         let harness = Self {
             endpoints: Endpoints {
                 base_url: base_url.clone(),
@@ -154,13 +125,8 @@ impl Drop for Harness {
     }
 }
 
-/// Path to the server binary, building it first when it is not there.
-///
-/// The **dev** profile, matching `global-setup.js`: the release profile is
-/// tuned for the Docker image (`lto = true`, `codegen-units = 1`), which this
-/// is not asking for, and dev shares its artefacts with `cargo nextest run`.
-///
-/// CI builds it in an earlier step, so this is the local-developer path.
+/// Path to the dev-profile server binary, building it if missing. Dev, not
+/// release: release is LTO-tuned for Docker and slow to build.
 fn ensure_binary() -> Result<PathBuf> {
     let binary = repo_root().join("target/debug/rdrs");
     if binary.is_file() {
@@ -218,11 +184,8 @@ async fn serve(app: Router) -> Result<(String, JoinHandle<()>)> {
     Ok((url, task))
 }
 
-/// An unused TCP port.
-///
-/// Inherently a race — the port is released before the server claims it — but
-/// the same one `support/server.js` ran, and with one server per run rather
-/// than one per worker there is far less to collide with.
+/// An unused TCP port. Racy (released before the server claims it), but with
+/// one server per run there is little to collide with.
 fn free_port() -> Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0").context("probing for a free port")?;
     Ok(listener.local_addr()?.port())

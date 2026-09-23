@@ -1,14 +1,8 @@
-//! Which entries a reader's client actually rendered, and the per-feed rate
-//! derived from it.
+//! Entries a reader's client rendered, and the per-feed open rate.
 //!
-//! Every predicate here compares `entry.created_at` against
-//! `user_settings.pixel_tracking_enabled_at` **column to column**, never against
-//! a bound timestamp. On `SQLite` those columns hold `datetime('now')` TEXT
-//! (`%Y-%m-%d %H:%M:%S`) while sqlx encodes a bound `DateTime<Utc>` as RFC 3339
-//! (`...T...+00:00`), and `'T' > ' '`, so a bound comparison silently reports
-//! every entry as newer than the baseline. Writes use the `datetime('now')`
-//! literal for the same reason — `pg_rewrite` turns it into `now()` on
-//! `PostgreSQL`, so one statement stays correct on both backends.
+//! Compare `entry.created_at` to `pixel_tracking_enabled_at` column to column,
+//! never to a bound timestamp: `SQLite` stores `datetime('now')` TEXT while sqlx
+//! binds RFC 3339, and `'T' > ' '` breaks the comparison.
 
 use chrono::{DateTime, Utc};
 
@@ -16,12 +10,8 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::{db_execute, query_all, query_opt};
 
-/// Tracked entries a feed needs before its open rate is shown rather than
-/// suppressed as `—`.
-///
-/// Below this, one open either way swings the percentage far enough to invert
-/// the "should I unsubscribe?" answer the number exists to support — a feed that
-/// has published twice cannot tell you anything about itself yet.
+/// Tracked entries a feed needs before its open rate is shown instead of `—`;
+/// smaller samples swing too much to mean anything.
 pub const MIN_TRACKED_FOR_RATE: i64 = 5;
 
 /// One feed's open counts over the tracked window.
@@ -29,22 +19,19 @@ pub const MIN_TRACKED_FOR_RATE: i64 = 5;
 pub struct FeedOpenRate {
     pub feed_id: i64,
     pub title: Option<String>,
-    /// Entries that carried a pixel — those created at or after the opt-in and
-    /// not yet pruned by retention.
+    /// Entries created since opt-in and not yet pruned by retention.
     pub tracked: i64,
-    /// Of those, the ones a client actually rendered.
+    /// Of those, the ones a client rendered.
     pub opened: i64,
 }
 
 impl FeedOpenRate {
-    /// Whole-percent open rate, or `None` while the sample is too small to say
-    /// anything (see [`MIN_TRACKED_FOR_RATE`]).
+    /// Whole-percent open rate, or `None` below [`MIN_TRACKED_FOR_RATE`].
     pub fn percent(&self) -> Option<i64> {
         if self.tracked < MIN_TRACKED_FOR_RATE {
             return None;
         }
-        // Rounded integer division, matching `bar_percent` on the statistics
-        // page — no float, so no lossy cast to justify.
+        // Rounded integer division, matching `bar_percent`.
         Some((self.opened.saturating_mul(100) + self.tracked / 2) / self.tracked)
     }
 }
@@ -53,18 +40,13 @@ impl FeedOpenRate {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TrackingWindow {
     pub enabled_at: Option<DateTime<Utc>>,
-    /// Oldest entry still in the window. Retention prunes read entries out from
-    /// under the metric, so this can be far newer than `enabled_at`.
+    /// Oldest surviving entry; retention can make this far newer than `enabled_at`.
     pub oldest_tracked: Option<DateTime<Utc>>,
 }
 
 impl TrackingWindow {
-    /// The date to show as "tracked since": the later of the opt-in and the
-    /// oldest entry that survived retention.
-    ///
-    /// Reporting the raw opt-in date would overstate the window — the entries
-    /// backing the earlier part of it have been deleted, so the denominator no
-    /// longer covers them.
+    /// "Tracked since": the later of the opt-in and the oldest surviving entry,
+    /// since pruned entries no longer count in the denominator.
     pub fn tracked_since(&self) -> Option<DateTime<Utc>> {
         match (self.enabled_at, self.oldest_tracked) {
             (Some(enabled), Some(oldest)) => Some(enabled.max(oldest)),
@@ -74,15 +56,10 @@ impl TrackingWindow {
     }
 }
 
-/// Record that `entry_id` was rendered by one of `user_id`'s clients. Returns
-/// whether this was the first time.
+/// Record that `entry_id` was rendered for `user_id`; returns whether it was new.
 ///
-/// Ownership, opt-in and the opt-in baseline are all enforced inside the one
-/// statement, so a hit on a valid token for an entry the reader does not own —
-/// or for one that predates their opt-in — writes nothing rather than being
-/// caught by a separate check the caller could forget. `ON CONFLICT DO NOTHING`
-/// makes a re-fetch (a re-render, a second client, a proxy retry) idempotent:
-/// the metric counts entries opened, not requests served.
+/// Ownership and opt-in are enforced in the statement itself; `ON CONFLICT DO
+/// NOTHING` makes re-fetches idempotent.
 pub async fn record_open(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
     let affected = db_execute!(
         db,
@@ -104,20 +81,13 @@ pub async fn record_open(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool
     Ok(affected > 0)
 }
 
-/// Per-feed open counts for one reader, feeds with no tracked entries included
-/// (as `0/0`) so `/feeds` can render a row for every feed.
-///
-/// One aggregate for the whole page rather than a count per feed: `/feeds`
-/// already renders every subscription, and a per-row query would be an N+1 over
-/// the largest table in the schema. Returns nothing at all when the reader is
-/// opted out, which is what suppresses the column.
+/// Per-feed open counts (untracked feeds as `0/0`) in one aggregate to avoid
+/// N+1. Empty when opted out, which hides the column.
 pub async fn open_rates_by_feed(db: &Db, user_id: i64) -> AppResult<Vec<FeedOpenRate>> {
     query_all!(db, FeedOpenRate, OPEN_RATES_SQL, user_id).map_err(AppError::Database)
 }
 
-/// Hoisted so the query-plan regression test asserts against the SQL that
-/// actually runs. It needs `idx_entry_feed_created_at` to stay off the `entry`
-/// table entirely — see the 0014 migration for what it cost without it.
+/// Hoisted for the query-plan test; must stay covered by `idx_entry_feed_created_at`.
 const OPEN_RATES_SQL: &str = "SELECT f.id AS feed_id, f.title AS title, \
                 COUNT(e.id) AS tracked, \
                 COUNT(o.entry_id) AS opened \
@@ -140,9 +110,7 @@ pub async fn tracking_window(db: &Db, user_id: i64) -> AppResult<TrackingWindow>
     }))
 }
 
-/// Hoisted for the same reason as [`OPEN_RATES_SQL`], and dependent on the same
-/// index: the `MIN(created_at)` is taken over every entry in every feed the
-/// reader subscribes to.
+/// Hoisted like [`OPEN_RATES_SQL`]; depends on the same index.
 const TRACKING_WINDOW_SQL: &str = "SELECT us.pixel_tracking_enabled_at AS enabled_at, \
                 MIN(e.created_at) AS oldest_tracked \
          FROM user_settings us \
@@ -158,8 +126,7 @@ mod tests {
     use super::*;
     use crate::db::DbInner;
 
-    /// `EXPLAIN QUERY PLAN` yields (id, parent, notused, detail); only the last
-    /// column carries the index name.
+    /// `EXPLAIN QUERY PLAN` detail column, joined.
     async fn plan_for(db: &Db, sql: &str) -> String {
         let DbInner::Sqlite(pool) = db.inner() else {
             unreachable!("connect_in_memory is always SQLite")
@@ -173,17 +140,8 @@ mod tests {
         rows.into_iter().map(|r| r.3).collect::<Vec<_>>().join("\n")
     }
 
-    /// The open-rate section is the most expensive thing on `/statistics`, and
-    /// only for readers who turned pixel tracking on. Both of its queries bound
-    /// the raw `entry.created_at` per feed, which no index keyed before 0014:
-    /// `idx_entry_feed_sort` keys the *coalesced* timestamp, so it serves the
-    /// join and then reads `created_at` off the table, once per entry in the
-    /// feed, unnarrowed. On a 567 MB / 70k-entry database that was 147,640 and
-    /// 147,933 page misses — roughly 1.2 GB of reads for one render — against
-    /// 141 and 130 once `idx_entry_feed_created_at` covers them.
-    ///
-    /// The plan is the only observable that fails before the index and passes
-    /// after, so it is what this pins.
+    /// Without `idx_entry_feed_created_at` both queries read `created_at` off the
+    /// table per entry; the plan is the only observable that pins this.
     #[tokio::test]
     async fn test_open_rates_query_is_index_covered() {
         let db = Db::connect_in_memory().await.unwrap();
@@ -226,7 +184,7 @@ mod tests {
         assert_eq!(rate(0, 10), Some(0));
         assert_eq!(rate(5, 10), Some(50));
         assert_eq!(rate(10, 10), Some(100));
-        // 1/3 rounds up to 33, 2/3 to 67.
+        // 1/6 (16.7%) rounds up to 17, 4/6 (66.7%) to 67.
         assert_eq!(rate(1, 6), Some(17));
         assert_eq!(rate(4, 6), Some(67));
     }
@@ -235,15 +193,14 @@ mod tests {
     fn tracked_since_takes_the_later_of_opt_in_and_surviving_data() {
         let enabled = Utc::now() - chrono::Duration::days(30);
         let oldest = Utc::now() - chrono::Duration::days(7);
-        // Retention has eaten the first three weeks, so the honest baseline is
-        // the oldest entry that is still there, not the opt-in date.
+        // Retention pruned the early entries.
         let w = TrackingWindow {
             enabled_at: Some(enabled),
             oldest_tracked: Some(oldest),
         };
         assert_eq!(w.tracked_since(), Some(oldest));
 
-        // Nothing has been pruned yet: the opt-in date is the honest baseline.
+        // Nothing pruned yet.
         let w = TrackingWindow {
             enabled_at: Some(enabled),
             oldest_tracked: Some(enabled + chrono::Duration::seconds(1)),

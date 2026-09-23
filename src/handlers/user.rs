@@ -28,16 +28,13 @@ pub struct MeResponse {
     pub role: crate::models::Role,
     pub is_admin: bool,
     pub is_masquerading: bool,
-    /// The original admin's user id when masquerading (otherwise `None`).
-    /// CSR pages use this to disable destructive actions on both the
-    /// currently-impersonated user and the underlying admin.
+    /// The real admin's id while masquerading.
     pub original_user_id: Option<i64>,
     pub created_at: String,
     pub session_created_at: String,
 }
 
-/// Returns the current user augmented with session-derived flags
-/// (`is_admin`, `is_masquerading`) used by CSR pages to decide what UI to show.
+/// The current user plus session-derived `is_admin` / `is_masquerading`.
 pub async fn get_me(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -84,14 +81,10 @@ pub struct UserSettingsResponse {
     pub kagi_configured: bool,
     pub kagi_language: String,
     /// Stored credentials exist but this `RDRS_SECRET` cannot decrypt them.
-    /// Distinct from "not configured": re-entering overwrites a value a
-    /// restored secret would have brought back.
     pub credentials_unreadable: bool,
 }
 
-/// Bundled settings payload for the CSR user-settings page (theme,
-/// entries-per-page, integration status). Mutations still flow through
-/// the per-resource PUT endpoints; this is read-only.
+/// Read-only settings payload for the user-settings page.
 pub async fn get_user_settings(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -155,21 +148,14 @@ pub struct SidebarResponse {
     pub total_unread: i64,
     pub total_summarized: i64,
     pub via_forward_auth: bool,
-    /// `"name"` or `"unread"` — how the client orders the category list and
-    /// the open category's feeds. The lists themselves are always sent in name
-    /// order; re-ordering is left to the client because it is the side that
-    /// knows which row is active and must stay put.
+    /// `"name"` or `"unread"`; lists are sent in name order and the client
+    /// re-orders (it knows which row is active).
     pub sidebar_sort: &'static str,
-    /// Whether the client drops fully-read categories and feeds from the list.
-    /// Same reasoning: the server still sends them, since the category the
-    /// reader currently has open stays visible even at zero unread.
+    /// Client-side filter; the server still sends read rows.
     pub sidebar_hide_read: bool,
 }
 
-/// Raw chrome data needed for every authenticated page render: theme, sidebar
-/// categories with unread counts, and (when masquerading) the admin flag of the
-/// original session user. Bundled so all of it can be fetched in a single
-/// `read_user` closure instead of 2-3 sequential awaits.
+/// Per-page chrome data for every authenticated render.
 #[derive(Default, Clone)]
 pub struct ChromeData {
     pub theme: Option<String>,
@@ -179,18 +165,12 @@ pub struct ChromeData {
     pub sidebar_prefs: user_settings::SidebarPrefs,
     /// See [`crate::services::CachedChrome::offline_keep`].
     pub offline_keep: i64,
-    /// Only set when `original_user_id` is passed (i.e. session is
-    /// masquerading). `None` outside the masquerade path.
+    /// `Some` only while masquerading.
     pub original_user_is_admin: Option<bool>,
 }
 
-/// Fetch all per-page chrome data for `user_id`, backed by an in-memory per-user
-/// cache: hits return without a single DB call, misses fetch theme, categories
-/// and unread counts in one `read_user` closure.
-///
-/// `original_user_id` — only `Some` while masquerading — is never cached, since
-/// it depends on the *session* rather than on `user_id`, so a masquerading
-/// request adds one extra lookup.
+/// Chrome data for `user_id`, via the per-user sidebar cache. The
+/// `original_user_id` lookup is session-specific and never cached.
 pub async fn read_chrome_data(
     state: &AppState,
     user_id: i64,
@@ -204,8 +184,7 @@ pub async fn read_chrome_data(
         None => None,
     };
 
-    // Snapshot before the first DB read below, so a bust landing while we are
-    // reading is detected when we try to publish.
+    // Snapshot before any DB read so a concurrent bust blocks the publish.
     let generation = state.sidebar_cache.begin_read(user_id);
 
     if let Some(cached) = state.sidebar_cache.get(user_id) {
@@ -220,9 +199,7 @@ pub async fn read_chrome_data(
         };
     }
 
-    // One settings read for both the theme and the sidebar preferences —
-    // they live in the same row, and a `get_theme` + `get_sidebar_prefs` pair
-    // would run the same SELECT twice on every cache miss.
+    // One row read covers theme and sidebar prefs.
     let settings = user_settings::find_by_user_id(&state.db, user_id)
         .await
         .unwrap_or(None);
@@ -241,8 +218,6 @@ pub async fn read_chrome_data(
     let unread_by_cat = entry::count_unread_by_category(&state.db, user_id)
         .await
         .unwrap_or_default();
-    // Total unread is the sum of the per-category map already fetched —
-    // avoids a second full scan via count_unread_by_user.
     let total_unread: i64 = unread_by_cat.values().sum();
     let total_summarized = crate::models::entry_summary::count_completed(&state.db, user_id)
         .await
@@ -268,11 +243,7 @@ pub async fn read_chrome_data(
         offline_keep,
     };
 
-    // Skip caching the "no content yet" state — an account with no feeds and no
-    // unread. Such accounts pay a trivial extra query per page load until they
-    // add their first feed. The benefit: the empty state is the most
-    // likely-to-go-stale entry, and anything added via a path that bypasses the
-    // bust hooks would otherwise be hidden behind it for up to the 60 s TTL.
+    // Don't cache the empty state: it is the likeliest to go stale.
     if has_feeds || fresh.total_unread > 0 {
         state
             .sidebar_cache
@@ -290,9 +261,7 @@ pub async fn read_chrome_data(
     }
 }
 
-/// Build the sidebar payload for the given authenticated session. Used by
-/// both the JSON API and the shell handler (which embeds it inline so the
-/// CSR sidebar paints without a network round trip).
+/// Sidebar payload, shared by the JSON API and the inline page embed.
 pub async fn build_sidebar_response(
     state: &AppState,
     user: &crate::models::User,
@@ -330,8 +299,6 @@ pub async fn build_sidebar_response(
     })
 }
 
-/// Returns sidebar data: user identity, masquerade/admin flags, categories
-/// with unread counts, and total unread.
 pub async fn get_sidebar(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -351,10 +318,7 @@ pub struct SidebarFeedDto {
     pub id: i64,
     pub title: String,
     pub unread_count: i64,
-    /// Whether `/api/feeds/{id}/icon` has anything to serve. The sidebar draws
-    /// the favicon when it does and the initial-letter chip when it doesn't —
-    /// the same two-state treatment the entry rows use, and the reason the flag
-    /// is sent rather than letting a missing icon 404 into a broken image.
+    /// Whether `/api/feeds/{id}/icon` exists; avoids a broken-image 404.
     pub has_icon: bool,
 }
 
@@ -364,17 +328,8 @@ pub struct SidebarFeedsResponse {
     pub feeds: Vec<SidebarFeedDto>,
 }
 
-/// `GET /api/sidebar/categories/{id}/feeds` — the feeds the sidebar shows under
-/// the category the reader is currently in.
-///
-/// Deliberately *not* folded into `/api/sidebar`: that payload is embedded in
-/// every logged-in document, which is `no-store`, so carrying every feed of a
-/// several-hundred-feed account would be paid on every page load to render one
-/// category's worth. The client caches per category and revalidates on the same
-/// `rdrs:sidebar-stale` signal the badges use.
-///
-/// Ownership is enforced twice over: the category lookup is scoped to the
-/// caller, and the count query keeps `user_id` in its WHERE clause.
+/// `GET /api/sidebar/categories/{id}/feeds`. Kept out of `/api/sidebar`, which
+/// is embedded in every page. Ownership: both queries are `user_id`-scoped.
 pub async fn get_sidebar_category_feeds(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -388,8 +343,6 @@ pub async fn get_sidebar_category_feeds(
     let feeds = crate::models::feed::list_by_category(&state.db, category_id).await?;
     let unread = entry::count_unread_by_feed_in_category(&state.db, user_id, category_id).await?;
     let feed_ids: Vec<i64> = feeds.iter().map(|f| f.id).collect();
-    // One lookup for the whole category — `image::exists` per feed would be a
-    // query per row.
     let with_icon =
         crate::models::image::existing_ids(&state.db, crate::models::image::ENTITY_FEED, &feed_ids)
             .await?;
@@ -401,8 +354,6 @@ pub async fn get_sidebar_category_feeds(
             .map(|f| SidebarFeedDto {
                 unread_count: unread.get(&f.id).copied().unwrap_or(0),
                 has_icon: with_icon.contains(&f.id),
-                // Feeds with no title of their own are listed by URL, matching
-                // how /feeds renders them.
                 title: f.title.unwrap_or(f.url),
                 id: f.id,
             })
@@ -453,7 +404,6 @@ pub async fn update_theme(
 ) -> AppResult<StatusCode> {
     let user_id = auth_user.user.id;
 
-    // Validate theme value
     if let Some(ref theme) = req.theme
         && theme != "dark"
         && theme != "light"
@@ -469,10 +419,7 @@ pub async fn update_theme(
     Ok(StatusCode::OK)
 }
 
-// ============================================================================
-// Form-action handlers for the SSR /user-settings page. Each accepts a
-// urlencoded body and returns a FlashRedirect (303 + flash cookie + Location).
-// ============================================================================
+// Form-action handlers for the SSR /user-settings page; each returns a FlashRedirect.
 
 #[derive(Debug, Deserialize)]
 pub struct ChangePasswordForm {
@@ -492,14 +439,8 @@ pub async fn change_password_form(
         return FlashRedirect::error("/user-settings", "New passwords do not match.");
     }
 
-    // Reserved here rather than at the top of the handler: the check above is a
-    // pure string comparison, and a user fumbling "new passwords do not match"
-    // should not spend a credential-attempt budget. What needs guarding is
-    // everything below — the Argon2 verify, and the strength estimate, which
-    // costs ~79ms on a 128-character worst case (measured in release). The caller
-    // already holds a session, so this is no way in from outside, but leaving
-    // either unthrottled would let a hijacked session brute-force the *original*
-    // password and let any logged-in user spend server CPU at will.
+    // Rate-limit after the free mismatch check but before the costly Argon2
+    // verify and strength estimate (~79ms worst case).
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -513,20 +454,13 @@ pub async fn change_password_form(
             "password_change",
             &ip.to_string(),
         );
-        // An HTML form flow, so this reports through the flash rather than a
-        // 429 + `Retry-After`; the number is the same one that header carries.
         return FlashRedirect::error(
             "/user-settings",
             format!("Too many attempts. Please try again in {retry_after_secs} seconds."),
         );
     }
 
-    // Shown as-is rather than reworded into "New <lowercased message>": the
-    // policy answers with zxcvbn's own feedback, and lowercasing a sentence that
-    // names a pattern mangles it. Only the full stop is normalised. A rejection
-    // keeps its reservation — the estimate is the work being paid for, and
-    // refunding it would restore the free-CPU path the limiter was moved above
-    // this check to close.
+    // zxcvbn feedback shown as-is. A rejection keeps its rate-limit reservation.
     if let Err(AppError::Validation(msg)) =
         validate_password_strength(&req.new_password, &[&auth_user.user.username])
     {
@@ -542,9 +476,7 @@ pub async fn change_password_form(
         return FlashRedirect::error("/user-settings", "Current password is incorrect.");
     }
 
-    // Correct password: hand the reservation back, so a user who mistypes
-    // once and then succeeds is not left throttled — same rationale as the
-    // login endpoint.
+    // Success must not consume the rate-limit budget.
     state.login_rate_limiter.release(Bucket::PasswordChange, ip);
 
     let Ok(new_hash) = hash_password(&req.new_password) else {
@@ -554,12 +486,9 @@ pub async fn change_password_form(
 
     let result: AppResult<()> = async {
         user::update_password(&state.db, user_id, &new_hash).await?;
-        // Delete all sessions for the user to force re-login
         session::delete_user_sessions(&state.db, user_id).await?;
         audit::sessions_destroyed_bulk(user_id, "password_change", None);
-        // A password change is "I want every existing credential gone" —
-        // leaving GReader API tokens alive would mean the password change
-        // revoked nothing for a client that never touches the browser session.
+        // API tokens bypass `session`, so revoke them too.
         api_token::delete_user_tokens(&state.db, user_id).await?;
         Ok(())
     }
@@ -574,10 +503,7 @@ pub async fn change_password_form(
     }
 }
 
-/// "Sign out other sessions" deliberately does **not** touch API tokens: the
-/// button means "browser sessions on my other devices", and a user clicking it
-/// would not expect their phone's RSS app to stop syncing as a side effect.
-/// Revoking `GReader` tokens is a separate, explicit action below.
+/// Signs out other browser sessions; deliberately leaves API tokens alone.
 pub async fn revoke_other_sessions_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -614,15 +540,8 @@ pub async fn revoke_other_sessions_form(
     }
 }
 
-/// Revoke a single browser session. `delete_user_session_by_id` is
-/// `user_id`-scoped, so this cannot revoke another user's session even if `id`
-/// is guessed.
-///
-/// The caller's own session is not reachable here: the settings page renders no
-/// Revoke control for it. That is a UI affordance rather than a guarantee, so
-/// the check is repeated server-side — a hand-crafted POST naming the current
-/// session would otherwise sign the user out through a path that reports
-/// "Session revoked." and redirects to a page they can no longer load.
+/// Revoke one browser session (`user_id`-scoped). The current session is
+/// refused server-side, not just hidden in the UI.
 pub async fn revoke_session_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -653,8 +572,7 @@ pub async fn revoke_session_form(
     }
 }
 
-/// Revoke a single `GReader` API token. `delete_token` is `user_id`-scoped, so
-/// this cannot revoke another user's token even if `id` is guessed.
+/// Revoke one `GReader` API token (`user_id`-scoped).
 pub async fn revoke_api_token_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -676,9 +594,7 @@ pub async fn revoke_api_token_form(
     }
 }
 
-/// Revoke every `GReader` API token belonging to the current user. Every
-/// connected `GReader` client (`FeedMe`, Read You, etc.) must run `ClientLogin`
-/// again after this.
+/// Revoke all of the user's `GReader` API tokens.
 pub async fn revoke_all_api_tokens_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -714,18 +630,13 @@ pub struct UpdatePreferencesForm {
     pub theme: String,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
-    /// `"name"` or `"unread"`. Absent from an older client's POST, which is
-    /// read as "leave the default ordering".
+    /// `"name"` or `"unread"`; absent means the default.
     pub sidebar_sort: Option<String>,
-    /// An unchecked checkbox sends nothing at all, so presence — not value —
-    /// is what turns this on.
+    /// Checkbox: presence means on.
     pub sidebar_hide_read: Option<String>,
-    /// Entries to keep readable offline, `0` for off. Optional so a POST from a
-    /// page rendered before this field existed leaves the setting alone rather
-    /// than silently switching offline reading off.
+    /// Entries kept offline, `0` for off; absent leaves the setting unchanged.
     pub offline_keep: Option<i64>,
-    /// Open tracking. Like `sidebar_hide_read`, presence — not value — turns it
-    /// on, because an unchecked checkbox sends nothing at all.
+    /// Checkbox: presence means on.
     pub pixel_tracking: Option<String>,
 }
 
@@ -738,7 +649,6 @@ pub async fn update_preferences_form(
     let theme = match req.theme.as_str() {
         "light" => Some("light".to_string()),
         "dark" => Some("dark".to_string()),
-        // "system" or any other value -> store None
         _ => None,
     };
     let epp = req.entries_per_page;
@@ -792,9 +702,7 @@ pub async fn update_linkding_form(
     let clear = req.clear.is_some();
 
     let result: AppResult<()> = async {
-        // `or_default` rather than an error: submitting the form is how a user
-        // recovers from an unreadable value, and the settings page is where
-        // that state is explained.
+        // `or_default`: re-submitting recovers from undecryptable credentials.
         let mut config = user_settings::get_save_services_config(
             &state.db,
             user_id,
@@ -867,9 +775,7 @@ pub async fn update_kagi_form(
 
     if clear {
         let result: AppResult<()> = async {
-            // `or_default` rather than an error: submitting the form is how a user
-            // recovers from an unreadable value, and the settings page is where
-            // that state is explained.
+            // `or_default`: re-submitting recovers from undecryptable credentials.
             let mut config = user_settings::get_save_services_config(
                 &state.db,
                 user_id,
@@ -911,9 +817,7 @@ pub async fn update_kagi_form(
     let language = req.language.filter(|s| !s.is_empty());
 
     let result: AppResult<()> = async {
-        // `or_default` rather than an error: submitting the form is how a user
-        // recovers from an unreadable value, and the settings page is where
-        // that state is explained.
+        // `or_default`: re-submitting recovers from undecryptable credentials.
         let mut config = user_settings::get_save_services_config(
             &state.db,
             user_id,

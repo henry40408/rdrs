@@ -41,8 +41,7 @@ impl EventBus {
         self.0.subscribe()
     }
 
-    /// Emit best-effort. `send` errors only when there are no receivers
-    /// (no open tabs) — nothing to notify, so the error is ignored.
+    /// Emit best-effort; `send` only errors with no receivers (no open tabs).
     fn emit(&self, ev: UserEvent) {
         let _ = self.0.send(ev);
     }

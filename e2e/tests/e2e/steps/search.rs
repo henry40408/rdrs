@@ -1,4 +1,4 @@
-//! Full-text search and the highlight layout — a port of `search.steps.js`.
+//! Full-text search and the highlight layout.
 
 use anyhow::{Result, ensure};
 use cucumber::gherkin::Step;
@@ -66,18 +66,14 @@ async fn on_search_page(world: &mut RdrsWorld) -> Result<()> {
     world.goto("/search").await
 }
 
-// `Given`, despite reading like an action: the scenario reaches it as an `And`
-// following a `Given`, and cucumber resolves `And` to whatever keyword came
-// before it.
+// `Given`: reached as an `And` after a `Given`.
 #[given("I use a narrow phone viewport")]
 async fn narrow_viewport(world: &mut RdrsWorld) -> Result<()> {
     world.resize(Viewport::new(360, 720)).await
 }
 
-/// Enter submits the search form, which is a full navigation — so this waits
-/// for the current document to go away rather than letting the assertions race
-/// the results page. Without the wait they run against the *old* page, where
-/// the previous query's results (or none at all) are still on screen.
+/// Enter is a full navigation; wait for the old document to go so assertions
+/// do not run against the previous page.
 #[when(expr = "I search for {string}")]
 async fn search_for(world: &mut RdrsWorld, term: String) -> Result<()> {
     let driver = world.driver()?;
@@ -86,10 +82,8 @@ async fn search_for(world: &mut RdrsWorld, term: String) -> Result<()> {
     field.send_keys(&term).await?;
 
     let document = driver.find(By::Tag("html")).await?;
-    // Sent to the field itself rather than to whatever holds focus: a stray
-    // click or a re-render between the fill and the keystroke would otherwise
-    // send Enter somewhere that does not submit, and the wait below would then
-    // time out with nothing to explain it.
+    // Sent to the field, not the focused element, so a stray re-render cannot
+    // swallow the Enter.
     field.send_keys(Key::Enter).await?;
     document
         .wait_until()
@@ -132,12 +126,8 @@ async fn empty_results(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_visible("search-empty").await
 }
 
-/// When `.search-result-title` inherits `word-break: break-word`, a narrow
-/// viewport breaks a Latin term like "Grok" mid-word across a line wrap; the
-/// `<mark>` then spans two lines and its box grows to roughly twice the
-/// single-line height. `box-decoration-break: clone` coalesces the fragments
-/// into one client rect, so counting rects cannot tell them apart — the height
-/// can. The fix (`word-break: normal`) keeps the term whole.
+/// With `word-break: break-word` a narrow viewport splits "Grok" across lines;
+/// `box-decoration-break: clone` merges the rects, so check height instead.
 #[then(expr = "the highlighted term {string} renders on a single line")]
 async fn highlight_single_line(world: &mut RdrsWorld, term: String) -> Result<()> {
     let driver = world.driver()?;
@@ -155,12 +145,8 @@ async fn highlight_single_line(world: &mut RdrsWorld, term: String) -> Result<()
     Ok(())
 }
 
-/// The mobile tap-target rules once set `.search-result-title { display: flex }`.
-/// A flex title turns each text run and the `<mark>` into separate flex items
-/// that wrap into a broken multi-column layout around the highlight. The title
-/// must stay a block so the `<mark>` renders in normal inline flow — a
-/// single-line height alone cannot catch this, since a one-word flex item is
-/// still one line tall.
+/// A flex title (from old tap-target rules) splits text and `<mark>` into flex
+/// items; the title must stay a block. Height alone cannot catch this.
 #[then("the highlighted title flows as one inline block")]
 async fn highlight_inline_block(world: &mut RdrsWorld) -> Result<()> {
     let display = world

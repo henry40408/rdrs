@@ -1,8 +1,5 @@
-// <rdrs-flash> — accessible banner-stack for flash messages (Light DOM).
-//
-// role="status" (polite) for success/info, role="alert" (assertive) for
-// warning/error. Dismiss is a real <button> that returns focus to whatever
-// triggered the message, or to the stack region as a fallback.
+// <rdrs-flash> — accessible flash banner stack (Light DOM). role="status" for
+// success/info, role="alert" for warning/error; dismiss returns focus.
 
 const MAX_MESSAGES = 3;
 
@@ -24,10 +21,7 @@ class RdrsFlash extends HTMLElement {
         // Focusable as a fallback target when the trigger element is gone.
         if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
 
-        // Nothing to bootstrap: the server renders the page's own messages into
-        // this element (`macros::flash_mount`) — the only way a reader without
-        // JavaScript sees them — already dismissible via the delegated handler
-        // below. This element's job from here is `show()`.
+        // Server renders the page's own banners here (no-JS path); this only adds `show()`.
     }
 
     /** Show a flash message immediately on the page. */
@@ -65,8 +59,7 @@ class RdrsFlash extends HTMLElement {
         msg.textContent = message;
         body.append(srLevel, msg);
 
-        // Cookie and inline-template flashes carry no timestamp into the JS
-        // layer, so client-time is the one signal every emit path shares.
+        // Client time is the one signal every emit path shares.
         const now = new Date();
         const time = document.createElement('time');
         time.className = 'banner-time';
@@ -99,8 +92,7 @@ class RdrsFlash extends HTMLElement {
     info(message) { this.show('info', message); }
     warning(message) { this.show('warning', message); }
 
-    /** Used by navigation-like partial swaps (opening a different entry,
-     *  back/forward) so stale toasts don't follow the reader across views. */
+    /** Clears toasts on navigation-like swaps so they don't follow the reader. */
     clear() {
         for (const banner of Array.from(this.querySelectorAll('.banner'))) {
             banner.remove();
@@ -108,13 +100,8 @@ class RdrsFlash extends HTMLElement {
     }
 
     /**
-     * Navigate, leaving the banner to the server.
-     *
-     * This used to write the flash cookie itself. It cannot any more: the
-     * cookie is signed so that only this server can put words in a banner, and
-     * a key the browser holds would defeat the point. The endpoints these
-     * callers hit set the flash on their own response instead, so the banner is
-     * already waiting at `url`.
+     * Navigate; the endpoint sets the (signed) flash cookie on its response,
+     * since the browser cannot sign one itself.
      */
     redirect(url) {
         window.location.href = url;
@@ -123,23 +110,15 @@ class RdrsFlash extends HTMLElement {
 
 customElements.define('rdrs-flash', RdrsFlash);
 
-// Server-rendered banners never pass through `show()`, so their dismiss button
-// gets no listener above — and the inline `onclick` it used to carry is blocked
-// by a strict `script-src 'self'`, leaving an inert close button.
-//
-// Scoped to `[data-flash-dismiss]`, which only the macro emits: the buttons
-// `show()` builds carry their own listener, and matching on `.banner-dismiss`
-// would double-handle them.
+// Dismiss for server-rendered banners (inline onclick is blocked by CSP).
+// Scoped to `[data-flash-dismiss]` so `show()`'s own buttons aren't double-handled.
 document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-flash-dismiss]');
     if (!button) return;
     button.closest('.banner')?.remove();
 });
 
-// Those same banners print UTC, while the ones `show()` builds print local time
-// — one UI element reading two clocks, eight hours apart for a UTC+8 viewer.
-// Rewritten from the unambiguous RFC 3339 `datetime` attribute, which still
-// describes the UTC text a viewer without JS keeps.
+// Server-rendered banners print UTC; rewrite them to local time from `datetime`.
 const TIME_SELECTOR = 'time.banner-time[datetime]:not([data-localized])';
 
 function localizeTime(node) {
@@ -157,9 +136,7 @@ function localizeTimesIn(root) {
 
 localizeTimesIn(document.documentElement);
 
-// Banners also arrive mid-session through a fragment swap, which no load-time
-// pass can catch. Observing additions covers every such path without app.js
-// having to know this module exists.
+// Also catch banners added later by fragment swaps.
 new MutationObserver((records) => {
     for (const record of records) {
         for (const node of record.addedNodes) localizeTimesIn(node);

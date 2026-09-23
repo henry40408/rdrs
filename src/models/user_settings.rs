@@ -10,50 +10,34 @@ pub const DEFAULT_ENTRIES_PER_PAGE: i64 = 30;
 pub const MIN_ENTRIES_PER_PAGE: i64 = 10;
 pub const MAX_ENTRIES_PER_PAGE: i64 = 100;
 
-/// Upper bound for the per-user read-entry retention threshold, in days
-/// (~10 years). Guards against absurd inputs; values this large already mean
-/// "effectively never delete", which `0` expresses directly.
+/// Upper bound for read-entry retention, in days (~10 years); `0` means never delete.
 pub const MAX_RETENTION_READ_DAYS: i64 = 3650;
 
-/// Values offered by the settings form's `<datalist>` for `entries_per_page`,
-/// ascending. Every entry must satisfy [`upsert`]'s range check — a suggestion
-/// the form would reject is worse than no suggestion at all, because the user
-/// picked it out of the browser's own dropdown. Enforced by
-/// `entries_per_page_suggestions_are_all_accepted`.
+/// `<datalist>` values for `entries_per_page`, ascending; each must pass
+/// [`upsert`]'s range check (enforced by a test).
 pub const ENTRIES_PER_PAGE_SUGGESTIONS: &[i64] = &[10, 25, 50, 100];
 
-/// Same contract as [`ENTRIES_PER_PAGE_SUGGESTIONS`], for
-/// `retention_read_days` against [`update_retention_read_days`]. `0` leads
-/// because it is the default and means "never delete"; the form's help text
-/// carries that meaning, since a `<datalist>` on a number input renders bare
-/// values and `label` support is inconsistent across browsers.
+/// Same contract as [`ENTRIES_PER_PAGE_SUGGESTIONS`], for [`update_retention_read_days`].
+/// `0` (default) means "never delete".
 pub const RETENTION_READ_DAYS_SUGGESTIONS: &[i64] = &[0, 7, 30, 90, 365];
 
-/// Offline reading is off: the browser keeps nothing belonging to the reader.
-/// The default, and what every account did before the setting existed.
+/// Offline reading off (the default).
 pub const OFFLINE_KEEP_OFF: i64 = 0;
 
-/// Upper bound on the entries a client mirrors for offline reading. The cap
-/// exists because the reader is spending their *device's* disk, not the
-/// server's, and every kept entry drags its images along with it.
+/// Cap on entries mirrored offline; it spends the reader's device disk, images included.
 pub const MAX_OFFLINE_KEEP: i64 = 200;
 
-/// Same contract as [`ENTRIES_PER_PAGE_SUGGESTIONS`], for `offline_keep`
-/// against [`update_offline_keep`]. `0` leads because it is the default and
-/// means "off"; the form's help text carries that meaning, since a
-/// `<datalist>` on a number input renders bare values.
+/// Same contract as [`ENTRIES_PER_PAGE_SUGGESTIONS`], for [`update_offline_keep`].
+/// `0` (default) means off.
 pub const OFFLINE_KEEP_SUGGESTIONS: &[i64] = &[0, 25, 50, 100, 200];
 
-/// Sidebar ordering: categories (and the open category's feeds) A-Z by name.
-/// The order the list queries already return, so the client leaves them alone.
+/// Sidebar ordering A-Z by name (the list queries' native order).
 pub const SIDEBAR_SORT_NAME: &str = "name";
 /// Sidebar ordering: most unread first, ties keeping their A-Z order.
 pub const SIDEBAR_SORT_UNREAD: &str = "unread";
 pub const DEFAULT_SIDEBAR_SORT: &str = SIDEBAR_SORT_NAME;
 
-/// Sidebar display preferences, the pair that decides what the category and
-/// feed lists look like. Read together because both reach the client in the
-/// same `/api/sidebar` payload.
+/// Sidebar display preferences, sent together in the `/api/sidebar` payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SidebarPrefs {
     pub sort: &'static str,
@@ -69,10 +53,8 @@ impl Default for SidebarPrefs {
     }
 }
 
-/// Map a stored/submitted sort value onto one of the known orderings.
-/// Unknown values (an older client, a hand-edited row) fall back to the
-/// default rather than erroring — this is a display preference, and a
-/// mis-ordered sidebar must not be able to break a page render.
+/// Map a sort value to a known ordering; unknown values fall back to the
+/// default so a display preference can never break a page render.
 pub fn parse_sidebar_sort(value: &str) -> &'static str {
     match value {
         SIDEBAR_SORT_UNREAD => SIDEBAR_SORT_UNREAD,
@@ -92,22 +74,16 @@ pub struct UserSettings {
     pub sidebar_hide_read: bool,
     /// Newest unread entries to keep readable offline, or [`OFFLINE_KEEP_OFF`].
     pub offline_keep: i64,
-    /// When this reader opted into open tracking, or `None` for opted out.
-    /// Doubles as the baseline the open rate is measured from — see
-    /// [`update_pixel_tracking`].
+    /// When open tracking was enabled (`None` = opted out); also the open-rate
+    /// baseline — see [`update_pixel_tracking`].
     pub pixel_tracking_enabled_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// What the `save_services` column held, once the key was applied to it.
-///
-/// The third arm matters: before encryption a corrupt value could quietly
-/// become "nothing configured", and that is exactly the wrong answer for a
-/// *sealed* value. A rotated `RDRS_SECRET` would show the settings page as
-/// empty, the user would re-enter their token, and the write would overwrite a
-/// value that was only ever unreadable, not lost. So callers are made to see
-/// the difference.
+/// The decrypted `save_services` column. `Undecryptable` is distinct from
+/// empty so a rotated `RDRS_SECRET` doesn't invite the user to overwrite a
+/// credential that is unreadable, not lost.
 #[derive(Debug, Clone)]
 pub enum StoredServices {
     /// Nothing stored, or stored and read successfully.
@@ -117,11 +93,8 @@ pub enum StoredServices {
 }
 
 impl StoredServices {
-    /// The stored configuration, or the empty one when it cannot be read.
-    ///
-    /// For paths that only *use* credentials — a value that cannot be decrypted
-    /// is unusable either way. Anything that goes on to **write** must handle
-    /// [`StoredServices::Undecryptable`] itself rather than calling this.
+    /// The config, or empty when undecryptable. Read-only paths only: writers
+    /// must handle [`StoredServices::Undecryptable`] themselves.
     pub fn or_default(self) -> SaveServicesConfig {
         match self {
             StoredServices::Config(config) => config,
@@ -133,12 +106,8 @@ impl StoredServices {
         matches!(self, StoredServices::Undecryptable)
     }
 
-    /// The stored configuration, or an error naming the real reason for paths
-    /// the user triggered — saving a bookmark, asking for a summary.
-    ///
-    /// "Kagi is not configured" would be a lie when the credential is there and
-    /// merely unreadable, and it invites the user to re-enter it and overwrite
-    /// a value that a restored `RDRS_SECRET` would have brought back.
+    /// The config, or an error saying it is undecryptable (not "not
+    /// configured") for user-triggered paths.
     pub fn usable(self) -> AppResult<SaveServicesConfig> {
         match self {
             StoredServices::Config(config) => Ok(config),
@@ -152,12 +121,9 @@ impl StoredServices {
 }
 
 impl UserSettings {
-    /// Read `save_services` with `key`, if one is configured.
-    ///
-    /// Accepts both shapes on purpose: a value written before encryption is
-    /// plain JSON, and re-reading it must keep working until the next write
-    /// seals it. `key` is `None` when `RDRS_SECRET` was generated rather than
-    /// configured — see [`crate::config::Config::service_token_key`].
+    /// Read `save_services`, accepting legacy plaintext JSON until the next
+    /// write seals it. `key` is `None` when `RDRS_SECRET` was generated — see
+    /// [`crate::config::Config::service_token_key`].
     pub fn get_save_services_config(&self, key: Option<&[u8]>) -> StoredServices {
         let Some(stored) = self.save_services.as_deref() else {
             return StoredServices::Config(SaveServicesConfig::default());
@@ -194,7 +160,6 @@ pub async fn get_entries_per_page(db: &Db, user_id: i64) -> AppResult<i64> {
 }
 
 pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<UserSettings> {
-    // Validate range
     if !(MIN_ENTRIES_PER_PAGE..=MAX_ENTRIES_PER_PAGE).contains(&entries_per_page) {
         return Err(AppError::Validation(format!(
             "entries_per_page must be between {MIN_ENTRIES_PER_PAGE} and {MAX_ENTRIES_PER_PAGE}"
@@ -218,8 +183,7 @@ pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<U
         ))
 }
 
-/// Create the user's settings row with defaults if it is missing, so the
-/// UPDATE that follows always has a row to change.
+/// Insert a default settings row if missing, so a following UPDATE has a target.
 async fn ensure_row(db: &Db, user_id: i64) -> AppResult<()> {
     db_execute!(
         db,
@@ -232,9 +196,7 @@ async fn ensure_row(db: &Db, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-/// Read a user's `SaveServicesConfig`, decrypting it with `key` when the value
-/// was sealed. See [`StoredServices`] for why the unreadable case is its own
-/// arm rather than an empty config.
+/// Read a user's `SaveServicesConfig`; see [`StoredServices`].
 pub async fn get_save_services_config(
     db: &Db,
     user_id: i64,
@@ -246,14 +208,9 @@ pub async fn get_save_services_config(
     }
 }
 
-/// Update `save_services` configuration for a user
-/// Write a user's `SaveServicesConfig`, sealed with `key` when one is
-/// available.
-///
-/// `key` is `None` only when `RDRS_SECRET` was generated rather than
-/// configured, in which case the value stays plaintext: that key changes on
-/// every restart, so encrypting with it would destroy the credential at the
-/// next boot rather than protect it.
+/// Write a user's `SaveServicesConfig`, sealed with `key` if given. With no key
+/// (generated `RDRS_SECRET`, new each boot) it stays plaintext, since sealing
+/// would lose it on restart.
 pub async fn update_save_services(
     db: &Db,
     user_id: i64,
@@ -286,7 +243,6 @@ pub async fn update_save_services(
         ))
 }
 
-/// Get theme preference for a user
 pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
     match find_by_user_id(db, user_id).await? {
         Some(settings) => Ok(settings.theme),
@@ -294,7 +250,6 @@ pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
     }
 }
 
-/// Update theme preference for a user
 pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppResult<()> {
     ensure_row(db, user_id).await?;
 
@@ -310,7 +265,7 @@ pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppRe
     Ok(())
 }
 
-/// Get the per-user read-entry retention threshold in days (0 = disabled).
+/// Read-entry retention in days (0 = disabled).
 pub async fn get_retention_read_days(db: &Db, user_id: i64) -> AppResult<i64> {
     match find_by_user_id(db, user_id).await? {
         Some(settings) => Ok(settings.retention_read_days),
@@ -318,16 +273,13 @@ pub async fn get_retention_read_days(db: &Db, user_id: i64) -> AppResult<i64> {
     }
 }
 
-/// Set the per-user read-entry retention threshold in days. `0` disables
-/// retention for the user; values outside `0..=MAX_RETENTION_READ_DAYS` are
-/// rejected.
+/// Set read-entry retention in days; rejects values outside `0..=MAX_RETENTION_READ_DAYS`.
 pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> AppResult<()> {
     if !(0..=MAX_RETENTION_READ_DAYS).contains(&days) {
         return Err(AppError::Validation(format!(
             "retention_read_days must be between 0 and {MAX_RETENTION_READ_DAYS}"
         )));
     }
-    // Ensure a row exists, then update (mirrors update_theme).
     ensure_row(db, user_id).await?;
     db_execute!(
         db,
@@ -340,8 +292,7 @@ pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> App
     Ok(())
 }
 
-/// Get the sidebar display preferences for a user. Accounts with no
-/// `user_settings` row yet get the defaults.
+/// Sidebar preferences; defaults when no settings row exists.
 pub async fn get_sidebar_prefs(db: &Db, user_id: i64) -> AppResult<SidebarPrefs> {
     Ok(find_by_user_id(db, user_id)
         .await?
@@ -349,9 +300,7 @@ pub async fn get_sidebar_prefs(db: &Db, user_id: i64) -> AppResult<SidebarPrefs>
         .map_or_else(SidebarPrefs::default, sidebar_prefs_of))
 }
 
-/// Read the sidebar preferences out of an already-loaded settings row, so
-/// callers that need several fields (e.g. `read_chrome_data`, which also wants
-/// the theme) pay for one query instead of one per field.
+/// Sidebar preferences from an already-loaded row, saving a query.
 pub fn sidebar_prefs_of(settings: &UserSettings) -> SidebarPrefs {
     SidebarPrefs {
         sort: parse_sidebar_sort(&settings.sidebar_sort),
@@ -359,8 +308,7 @@ pub fn sidebar_prefs_of(settings: &UserSettings) -> SidebarPrefs {
     }
 }
 
-/// Set the sidebar display preferences. `sort` is normalised rather than
-/// rejected — see `parse_sidebar_sort`.
+/// Set sidebar preferences; `sort` is normalised via [`parse_sidebar_sort`], not rejected.
 pub async fn update_sidebar_prefs(
     db: &Db,
     user_id: i64,
@@ -368,7 +316,6 @@ pub async fn update_sidebar_prefs(
     hide_read: bool,
 ) -> AppResult<()> {
     let sort = parse_sidebar_sort(sort);
-    // Ensure a row exists, then update (mirrors update_theme).
     ensure_row(db, user_id).await?;
     db_execute!(
         db,
@@ -382,25 +329,20 @@ pub async fn update_sidebar_prefs(
     Ok(())
 }
 
-/// How many entries this user keeps readable offline. Accounts with no
-/// `user_settings` row yet get [`OFFLINE_KEEP_OFF`] — offline reading is
-/// opt-in, so "no row" must never mean "start writing articles to disk".
+/// Offline entry budget; no row means [`OFFLINE_KEEP_OFF`] (opt-in).
 pub async fn get_offline_keep(db: &Db, user_id: i64) -> AppResult<i64> {
     Ok(find_by_user_id(db, user_id)
         .await?
         .map_or(OFFLINE_KEEP_OFF, |settings| settings.offline_keep))
 }
 
-/// Set the offline-reading budget. Out-of-range values are rejected rather
-/// than clamped: this one spends the reader's disk, so a typo silently
-/// becoming 200 entries is the wrong failure.
+/// Set the offline budget; out-of-range is rejected, not clamped, since it spends the reader's disk.
 pub async fn update_offline_keep(db: &Db, user_id: i64, keep: i64) -> AppResult<()> {
     if !(OFFLINE_KEEP_OFF..=MAX_OFFLINE_KEEP).contains(&keep) {
         return Err(AppError::Validation(format!(
             "offline_keep must be between {OFFLINE_KEEP_OFF} and {MAX_OFFLINE_KEEP}"
         )));
     }
-    // Ensure a row exists, then update (mirrors update_sidebar_prefs).
     ensure_row(db, user_id).await?;
     db_execute!(
         db,
@@ -413,9 +355,7 @@ pub async fn update_offline_keep(db: &Db, user_id: i64, keep: i64) -> AppResult<
     Ok(())
 }
 
-/// When this reader opted into open tracking, or `None` for opted out.
-/// Accounts with no `user_settings` row yet are opted out — tracking is
-/// opt-in, so "no row" must never mean "start recording".
+/// When open tracking was enabled; `None` (including no row) means opted out.
 pub async fn get_pixel_tracking_enabled_at(
     db: &Db,
     user_id: i64,
@@ -427,21 +367,11 @@ pub async fn get_pixel_tracking_enabled_at(
 
 /// Turn open tracking on or off.
 ///
-/// Enabling is `COALESCE`d against the stored value, so it takes effect only on
-/// the NULL -> enabled transition: the timestamp is the baseline the open rate
-/// is measured from, and re-saving the preferences form — which every other
-/// preference change does — would otherwise reset the denominator and throw away
-/// every entry tracked so far.
-///
-/// Disabling clears the baseline but keeps the `entry_open` rows, so turning it
-/// back on resumes from the data already collected rather than starting over.
-///
-/// Written with the `datetime('now')` literal rather than a bound `Utc::now()`:
-/// the value is compared against `entry.created_at` column-to-column, and on
-/// `SQLite` a bound timestamp encodes in a different format that does not
-/// compare correctly. See `models::entry_open`.
+/// Enabling `COALESCE`s so re-saving the form doesn't reset the open-rate
+/// baseline; disabling clears it but keeps `entry_open` rows. Uses
+/// `datetime('now')`, not a bound `Utc::now()`, because `SQLite` encodes bound
+/// timestamps in a format that doesn't compare with `entry.created_at`.
 pub async fn update_pixel_tracking(db: &Db, user_id: i64, enabled: bool) -> AppResult<()> {
-    // Ensure a row exists, then update (mirrors update_theme).
     ensure_row(db, user_id).await?;
     let sql = if enabled {
         "UPDATE user_settings \
@@ -514,9 +444,7 @@ mod tests {
         );
     }
 
-    /// Rows written before encryption existed are plain JSON. They must stay
-    /// readable, and the next write must seal them — that is the whole
-    /// migration, and it costs no downtime.
+    /// Legacy plaintext rows stay readable and get sealed on the next write.
     #[tokio::test]
     async fn a_legacy_plaintext_row_is_read_then_sealed_on_the_next_write() {
         let db = setup_db().await;
@@ -539,9 +467,7 @@ mod tests {
         assert!(!stored_column(&db, user_id).await.contains("LEGACY123"));
     }
 
-    /// The failure mode encryption introduces: a rotated secret must not read
-    /// as "nothing configured", or the user re-enters a credential and
-    /// overwrites one that the old secret would still have opened.
+    /// A rotated secret must not read as "nothing configured".
     #[tokio::test]
     async fn a_wrong_key_reports_undecryptable_rather_than_empty() {
         let db = setup_db().await;
@@ -561,9 +487,7 @@ mod tests {
         assert!(!stored.or_default().has_any_service());
     }
 
-    /// An install with a generated `RDRS_SECRET` gets `None`, and must keep
-    /// storing plaintext: that key is new on every boot, so sealing with it
-    /// would destroy the credential at the next restart.
+    /// A generated `RDRS_SECRET` (no key) must keep storing plaintext.
     #[tokio::test]
     async fn without_a_key_the_value_stays_plaintext_and_readable() {
         let db = setup_db().await;
@@ -606,8 +530,7 @@ mod tests {
             .unwrap()
             .expect("enabling records a baseline");
 
-        // Every other preference change re-submits this form. Moving the
-        // baseline forward each time would silently reset the denominator.
+        // Other preference changes re-submit this form; the baseline must not move.
         update_pixel_tracking(&db, user.id, true).await.unwrap();
         assert_eq!(
             get_pixel_tracking_enabled_at(&db, user.id).await.unwrap(),
@@ -640,9 +563,7 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        // No settings row at all — the case a brand-new account is in, and the
-        // one where "on" would mean writing articles to a disk nobody asked to
-        // have them written to.
+        // No settings row at all.
         assert_eq!(
             get_offline_keep(&db, user.id).await.unwrap(),
             OFFLINE_KEEP_OFF
@@ -769,10 +690,7 @@ mod tests {
         assert_eq!(settings.theme, Some("dark".to_string()));
     }
 
-    /// The `<datalist>` promise: every value the settings form offers for
-    /// `entries_per_page` round-trips through `upsert`. A suggestion the form
-    /// rejects is worse than none — the user picked it out of the browser's own
-    /// dropdown, so a validation error there reads as a bug, not as a typo.
+    /// Every `<datalist>` suggestion for `entries_per_page` passes `upsert`.
     #[tokio::test]
     async fn entries_per_page_suggestions_are_all_accepted() {
         let db = setup_db().await;
@@ -786,13 +704,11 @@ mod tests {
             assert_eq!(settings.entries_per_page, v);
         }
 
-        // A browser renders a datalist in document order, so an unsorted list
-        // reads as arbitrary.
+        // Datalists render in document order.
         assert!(ENTRIES_PER_PAGE_SUGGESTIONS.windows(2).all(|w| w[0] < w[1]));
     }
 
-    /// Same contract for `retention_read_days`, including the leading `0`
-    /// ("never delete") the form deliberately offers.
+    /// Same contract for `retention_read_days`, including `0`.
     #[tokio::test]
     async fn retention_read_days_suggestions_are_all_accepted() {
         let db = setup_db().await;

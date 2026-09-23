@@ -39,16 +39,10 @@ pub struct SetupResponse {
     pub role: Role,
 }
 
-/// `POST /api/setup` — create the instance's first account.
+/// `POST /api/setup` — create the instance's first (admin) account.
 ///
-/// The only anonymous account-creating endpoint rdrs has, and it exists solely
-/// because a fresh install has no admin to create one. It refuses outright as
-/// soon as any account exists (`Config::can_setup`), which is what keeps it from
-/// being the self-service registration this replaced: with zero accounts there
-/// is no username to enumerate. Every later account is created by an admin and
-/// activated through `handlers::invite`.
-///
-/// The account is an admin, because someone has to be.
+/// The only anonymous account-creating endpoint; refuses once any account
+/// exists (`Config::can_setup`). Later accounts go through `handlers::invite`.
 pub async fn setup(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -57,9 +51,7 @@ pub async fn setup(
 ) -> AppResult<(StatusCode, SetFlash, Json<SetupResponse>)> {
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let user = perform_setup(&state, &headers, peer, &req, "POST /api/setup").await?;
-    // Set here rather than by the caller's JavaScript: a flash cookie is signed
-    // (see `middleware::flash`), so only the server can mint one. The client
-    // navigates to /login and the banner is waiting for it.
+    // Flash cookies are signed, so only the server can mint one.
     Ok((
         StatusCode::CREATED,
         SetFlash::success("Account created. Please sign in."),
@@ -67,9 +59,7 @@ pub async fn setup(
     ))
 }
 
-/// The first-account creation itself, shared by the JSON endpoint above and the
-/// native form POST in [`setup_form`]. `endpoint` only labels the rate-limit
-/// warnings and audit records.
+/// Shared by [`setup`] and [`setup_form`]; `endpoint` only labels logs.
 async fn perform_setup(
     state: &AppState,
     headers: &HeaderMap,
@@ -81,10 +71,8 @@ async fn perform_setup(
         return Err(AppError::Validation("Username is required".to_string()));
     }
 
-    // Reserve an attempt before any DB query, strength estimation or password
-    // hashing. Never released: scripted account creation is exactly the abuse
-    // this limiter exists to slow down, so unlike login there is no "correct
-    // credential" outcome that should hand the budget back.
+    // Reserve before any DB query or hashing. Never released: unlike login,
+    // there is no "correct credential" outcome to refund.
     let ip = state.config.client_ip(peer, headers);
     if let Some(retry_after_secs) = state
         .login_rate_limiter
@@ -96,28 +84,21 @@ async fn perform_setup(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    // Checked before the expensive work below, so a closed setup endpoint
-    // costs a single indexed count rather than an estimate plus a hash.
+    // Before the expensive work, so a closed endpoint costs one count.
     let config = state.config.clone();
     let user_count = user::count(&state.db).await?;
     if !config.can_setup(user_count) {
         return Err(AppError::RegistrationNotAllowed);
     }
 
-    // Behind the limiter, not in front of it: zxcvbn costs ~86µs on a typical
-    // password but ~79ms on a 128-character worst case (measured in release),
-    // which is Argon2 territory. Validating first would let anyone choose how
-    // much CPU each rejected attempt costs. The username is handed to the
-    // estimator so a password built out of it is scored for what it is.
+    // Behind the limiter: zxcvbn's worst case (~79ms) rivals Argon2.
     validate_password_strength(&req.password, &[&req.username])?;
 
     let password_hash = hash_password(&req.password)?;
 
     let user = user::create_user(&state.db, &req.username, &password_hash, Role::Admin).await?;
 
-    // Seed a default category so the account can add its first feed
-    // without first creating a category. Matches the "Uncategorized"
-    // convention used by OPML import and the GReader subscription API.
+    // Same default as OPML import and the GReader subscription API.
     category::create_category(&state.db, user.id, "Uncategorized").await?;
 
     audit::account_created(
@@ -134,10 +115,7 @@ async fn perform_setup(
     })
 }
 
-/// The first-run form, posted natively. Mirrors [`login_form`]: `setup.js`
-/// still intercepts the submit and uses the JSON endpoint, and this is what a
-/// browser without JavaScript falls back to. The `confirm_password` match is
-/// checked here because it is a property of the *form*, not of the API.
+/// No-JS fallback for the first-run form; `setup.js` uses the JSON endpoint.
 #[derive(Debug, Deserialize)]
 pub struct SetupForm {
     pub username: String,
@@ -212,9 +190,7 @@ pub async fn login(
     Ok((jar, Json(resp)))
 }
 
-/// The password sign-in itself, shared by the JSON endpoint above and the
-/// native form POST in [`login_form`]. `endpoint` only labels the rate-limit
-/// warnings and audit records, so each caller stays distinguishable in the log.
+/// Shared by [`login`] and [`login_form`]; `endpoint` only labels logs.
 async fn perform_login(
     state: &AppState,
     jar: CookieJar,
@@ -227,9 +203,7 @@ async fn perform_login(
         return Err(AppError::Forbidden);
     }
 
-    // Reserve an attempt before the username lookup or password verification
-    // — enforcing the limit any later would still let an attacker choose how
-    // much Argon2 work the server does per guess.
+    // Reserve before lookup/verify, so guesses can't force Argon2 work.
     let ip = state.config.client_ip(peer, headers);
     let user_agent = request_user_agent(headers);
     if let Some(retry_after_secs) = state
@@ -242,10 +216,7 @@ async fn perform_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    // Second dimension: the account being aimed at, regardless of where the
-    // attempt came from. The per-IP budget above is worthless against a spray
-    // that rotates addresses, since each one arrives with a full budget. Charged
-    // before the lookup, for the same reason as the IP check.
+    // Per-account budget too: the per-IP one is useless against rotating IPs.
     if let Some(retry_after_secs) = state
         .login_rate_limiter
         .try_acquire_account(Bucket::Login, &req.username)
@@ -257,10 +228,7 @@ async fn perform_login(
     }
 
     let Some(user) = user::find_by_username(&state.db, &req.username).await? else {
-        // Spend a verification against a hash nothing matches before
-        // answering. Returning here directly would make "no such account"
-        // measurably faster than "wrong password" — the generic error message
-        // below says nothing, but the clock would.
+        // Equalize timing with "wrong password" to avoid user enumeration.
         verify_dummy_password(&req.password);
         audit::login_failed(
             req.username.len(),
@@ -281,10 +249,8 @@ async fn perform_login(
         return Err(AppError::InvalidCredentials);
     }
 
-    // The password was correct: hand both reservations back so a legitimate
-    // user is never locked out by their own successful logins. Done before
-    // the disabled-account check below so a correct password never leaks
-    // information via a rate-limit side channel either.
+    // Correct password: refund both reservations, before the disabled check
+    // so it can't leak via a rate-limit side channel.
     state.login_rate_limiter.release(Bucket::Login, ip);
     state
         .login_rate_limiter
@@ -311,9 +277,7 @@ async fn perform_login(
         &state.config.secret,
         state.config.cookie_secure,
     );
-    // Refresh the readable CSRF cookie to match the new session token: the
-    // token the visitor was carrying was derived from their pre-login
-    // (anonymous) session and no longer verifies.
+    // The pre-login CSRF token no longer verifies against the new session.
     let csrf = crate::middleware::build_csrf_cookie(
         &new_session.session_token,
         &state.config.secret,
@@ -330,17 +294,8 @@ async fn perform_login(
     ))
 }
 
-/// `POST /login` — the same sign-in as [`login`], driven by a native form submit
-/// rather than `fetch`.
-///
-/// This is what makes `/login` work with JavaScript disabled: the form has a real
-/// `action`/`method`, so a browser that never ran `login.js` posts here instead
-/// of issuing a `GET` that would put the password in the address bar. `login.js`
-/// still calls `preventDefault()` and takes the JSON route.
-///
-/// Failures re-render the login page with the message inline (200, not the error
-/// status) — the visitor needs the form back, and the generic wording is
-/// unchanged, so this reveals nothing the JSON endpoint doesn't.
+/// `POST /login` — no-JS form variant of [`login`]; failures re-render the
+/// form (200) with the same generic message as the JSON endpoint.
 pub async fn login_form(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -349,8 +304,7 @@ pub async fn login_form(
     axum::Form(req): axum::Form<LoginRequest>,
 ) -> Response {
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    // Read before `jar` is handed over: a failed attempt re-renders the form,
-    // and the session it belongs to is the same anonymous one either way.
+    // Read before `jar` is moved; a failed attempt re-renders the form.
     let csrf_token = crate::middleware::csrf_token_from_jar(&jar, &state.config.secret);
     match perform_login(&state, jar, &headers, peer, &req, "POST /login").await {
         Ok((jar, _)) => (jar, Redirect::to("/")).into_response(),
@@ -371,9 +325,7 @@ pub async fn login_form(
     }
 }
 
-/// The one-line, deliberately uninformative rendering of a failed sign-in.
-/// Mirrors what `AppError`'s JSON body would have said, so the two paths cannot
-/// drift into telling a visitor different things about the same failure.
+/// Deliberately uninformative; must match `AppError`'s JSON wording.
 fn login_error_message(err: &AppError) -> String {
     match err {
         AppError::TooManyRequests { retry_after_secs } => {
@@ -388,28 +340,15 @@ fn login_error_message(err: &AppError) -> String {
 #[derive(Debug, Serialize)]
 pub struct LogoutResponse {
     pub redirect_to: String,
-    /// Whether the trusted forward-auth proxy identity header is present on
-    /// this request (not whether the session itself was created via forward
-    /// auth). The SPA uses it to explain that a local logout cannot end a
-    /// proxy-managed session when no `auth_proxy_logout_url` is configured.
+    /// Whether the trusted forward-auth identity header is on this request.
     pub via_forward_auth: bool,
-    /// Whether an `auth_proxy_logout_url` is configured. When true, `redirect_to`
-    /// is that URL (absolute `IdP` URL or a same-host path) and the client should
-    /// navigate to it; when false, `redirect_to` is the `/login` fallback and no
-    /// external logout endpoint exists to hand off to.
+    /// Whether `redirect_to` is the `auth_proxy_logout_url` (else `/login`).
     pub logout_url_configured: bool,
 }
 
-/// Ask the browser to discard this origin's residue on logout.
-///
-/// Deliberately **omits `"cookies"`**: logout already emits explicit removal
-/// cookies, and `Clear-Site-Data` processing is asynchronous relative to JS, so
-/// including it would race the `flash` cookie `rdrs-flash.js` writes after this
-/// response lands and swallow the logout notice. `"storage"` is the real win —
-/// it clears the sidebar mirror in `sessionStorage`, which otherwise leaks the
-/// previous user's feed titles and unread counts on a shared machine.
-/// `"executionContexts"` is omitted too: it would force a reload that fights the
-/// client's own redirect.
+/// `Clear-Site-Data` on logout. `"storage"` clears the sidebar mirror in
+/// `sessionStorage`. Omits `"cookies"` (would race the flash cookie) and
+/// `"executionContexts"` (would force a reload fighting the redirect).
 const LOGOUT_CLEAR_SITE_DATA: &str = "\"cache\", \"storage\"";
 
 #[derive(Debug, Deserialize)]
@@ -419,18 +358,12 @@ pub struct ReauthRequest {
     pub password: String,
 }
 
-/// Re-prove the current session's credentials, restarting the window
-/// [`crate::middleware::RecentlyAuthenticated`] enforces.
+/// Re-prove credentials, restarting the
+/// [`crate::middleware::RecentlyAuthenticated`] window. Only updates
+/// `last_authenticated_at`.
 ///
-/// Creates nothing and rotates nothing: the session is already valid, and only
-/// `last_authenticated_at` changes. That keeps this endpoint uninteresting to an
-/// attacker who already holds the session — it grants no new access, only
-/// re-opens a window they still have to spend on an audited operation.
-///
-/// Shares the `PasswordChange` rate-limit budget rather than taking its own, for
-/// the reason that bucket exists: an unthrottled Argon2 verify lets a hijacked
-/// session brute-force the account's real password. Sharing also stops this
-/// endpoint from being used to sidestep the limit on "change password".
+/// Shares the `PasswordChange` rate-limit budget so a hijacked session can
+/// neither brute-force the password here nor sidestep that limit.
 pub async fn reauthenticate(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -441,11 +374,7 @@ pub async fn reauthenticate(
     let user_id = auth_user.user.id;
     let token = auth_user.session.session_token.clone();
 
-    // A forward-auth session's identity is re-asserted by the proxy on every
-    // request, so there is nothing to re-check — and the account may hold no
-    // usable password at all. It never sees a `ReauthenticationRequired`; this
-    // arm exists so a client that calls here anyway gets a coherent answer
-    // rather than a password check it can never pass.
+    // The proxy re-asserts forward-auth identity per request; nothing to check.
     if auth_user.via_forward_auth {
         session::mark_authenticated(&state.db, auth_user.session.id).await?;
         audit::session_reauthenticated(&state.config.secret, &token, user_id, "forward_auth");
@@ -470,9 +399,7 @@ pub async fn reauthenticate(
     if !verify_password(&req.password, &auth_user.user.password_hash) {
         return Err(AppError::InvalidCredentials);
     }
-    // Correct password: hand the reservation back, so re-authenticating
-    // legitimately never eats into the budget — same rationale as login and
-    // change-password.
+    // Correct password: refund the reservation.
     state.login_rate_limiter.release(Bucket::PasswordChange, ip);
 
     session::mark_authenticated(&state.db, auth_user.session.id).await?;
@@ -481,18 +408,7 @@ pub async fn reauthenticate(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Clears the local session and reports where the client should go next.
-///
-/// `redirect_to` is the configured `auth_proxy_logout_url`, or `/login`.
-/// `via_forward_auth` reports whether the trusted proxy identity header is
-/// present, and `logout_url_configured` lets the client decide whether to
-/// navigate to `redirect_to` at all.
-/// `POST /logout` — the same thing as a native form submit.
-///
-/// Sign-out used to be reachable only through a `fetch` DELETE from a
-/// `href="#"` link, and a form cannot send DELETE — so with scripting off there
-/// was no way to end a session at all, which on a shared machine is not a
-/// cosmetic gap.
+/// `POST /logout` — no-JS form variant of [`logout`] (forms cannot send DELETE).
 pub async fn logout_form(
     State(state): State<AppState>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -509,6 +425,7 @@ pub async fn logout_form(
     Ok((headers, jar, flash, Redirect::to(&body.redirect_to)).into_response())
 }
 
+/// Clears the local session and reports where the client should go next.
 pub async fn logout(
     State(state): State<AppState>,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -524,18 +441,13 @@ pub async fn logout(
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let (headers, jar, body) =
         destroy_session(&state, jar, auth_user, peer, &request_headers).await?;
-    // The banner is set here rather than by the caller's JavaScript. A flash
-    // cookie is signed (see `middleware::flash`), so only the server can mint
-    // one — and the client only needs to navigate afterwards.
+    // Flash cookies are signed, so only the server can mint one.
     let flash = logged_out_flash(&body);
     Ok((headers, jar, flash, Json(body)))
 }
 
-/// The sign-out banner, shared by the scripted and scriptless endpoints.
-///
-/// Forward-auth with no logout URL configured: the proxy re-injects the
-/// identity on the next request, so bouncing to /login would silently sign the
-/// reader back in. Say so rather than pretending.
+/// Under forward-auth with no logout URL, the proxy signs the reader straight
+/// back in, so warn instead of claiming success.
 fn logged_out_flash(body: &LogoutResponse) -> SetFlash {
     if body.via_forward_auth && !body.logout_url_configured {
         SetFlash::warning(
@@ -546,16 +458,9 @@ fn logged_out_flash(body: &LogoutResponse) -> SetFlash {
     }
 }
 
-/// Shared core: destroy the session, clear every cookie it could be carried
-/// under, and work out where the caller should land. Both the JSON and the form
-/// endpoint go through this so a change to cookie removal cannot apply to only
-/// one of them.
-///
-/// A session that is already gone is not an error here. The idle timeout, a
-/// revocation, or a restart under a new `RDRS_SECRET` can end it while the tab
-/// still shows a Sign Out button; rejecting that click with a 401 reported a
-/// failure although the reader was signed out, and left the dead cookies and
-/// the sidebar mirror in `sessionStorage` behind.
+/// Destroy the session and clear every cookie it could be carried under.
+/// An already-expired session is not an error: the cookies and storage still
+/// need clearing.
 async fn destroy_session(
     state: &AppState,
     jar: CookieJar,
@@ -570,9 +475,7 @@ async fn destroy_session(
             audit::session_destroyed(&state.config.secret, &token, auth_user.user.id, "logout");
             auth_user.via_forward_auth
         }
-        // Nothing to destroy or audit. The proxy header still decides the
-        // banner: under forward-auth the next request re-mints a session, and
-        // "You have been logged out." would be a lie.
+        // Nothing to destroy; the proxy header still decides the banner.
         Err(AppError::Unauthorized) => crate::middleware::forward_auth::forward_auth_identity(
             &state.config,
             peer,
@@ -582,26 +485,15 @@ async fn destroy_session(
         Err(e) => return Err(e),
     };
 
-    // Removal must match the Path=/ the cookie was set with, or the browser keeps
-    // the now-invalid session_token cookie. The readable CSRF cookie is cleared
-    // alongside it; the next page load mints a fresh anonymous pair, so a stale
-    // token cannot linger and 403 the re-login.
-    //
-    // Four removal cookies, not two: the session may be carried under either the
-    // unprefixed or the __Host- name, and a leftover under whichever name is not
-    // in active use — from before an upgrade, or before an operator flipped
-    // `RDRS_COOKIE_SECURE` — must not survive logout.
+    // Path=/ must match the original cookie. Both the unprefixed and __Host-
+    // names are cleared, since either may hold a leftover session.
     let removal = Cookie::build((SESSION_COOKIE_NAME, "")).path("/").build();
     let csrf_removal = Cookie::build((crate::middleware::CSRF_COOKIE_NAME, ""))
         .path("/")
         .build();
 
-    // The __Host- removals carry Secure and Path=/ unconditionally, regardless of
-    // the current setting, because a browser silently discards a __Host- cookie
-    // that lacks Secure and the removal would be a no-op. They are `jar.add()`-ed
-    // rather than `jar.remove()`-d: `remove()` only emits a removal when this
-    // *request's* Cookie header already carried that exact name, which would skip
-    // the __Host- pair whenever the request authenticated via the unprefixed one.
+    // __Host- removals always need Secure or the browser ignores them, and are
+    // `add()`-ed because `remove()` only fires if the request carried that name.
     let host_removal = Cookie::build((SESSION_COOKIE_NAME_HOST, ""))
         .path("/")
         .secure(true)

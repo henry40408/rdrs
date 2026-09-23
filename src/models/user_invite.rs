@@ -1,15 +1,8 @@
-//! One-time links that let a new account set its own password.
+//! One-time links that let an admin-created account set its own password; no
+//! anonymous endpoint takes a username, so there is nothing to enumerate.
 //!
-//! rdrs has no self-service registration and no email. An admin creates the
-//! account (username and role), and the person it belongs to receives a link
-//! that is the only way to give it a password. That shape is what closes the
-//! account-enumeration hole a public sign-up form always opens: there is no
-//! anonymous endpoint that takes a username, so there is nothing to ask.
-//!
-//! The same table backs an admin-issued password *reset* for an account that
-//! already has one. The two flows are identical except that the target's
-//! current password keeps working until the link is redeemed — issuing a reset
-//! must not lock someone out on its own.
+//! Also backs admin password resets, where the current password must keep
+//! working until the link is redeemed.
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -18,12 +11,8 @@ use crate::error::{AppError, AppResult};
 use crate::secret::{DOMAIN_INVITE, tag};
 use crate::{db_execute, query_one, query_opt};
 
-/// How long a freshly issued link stays usable.
-///
-/// Long enough to survive a weekend and a time zone, short enough that a link
-/// forgotten in a chat log or a proxy access log stops being a credential
-/// fairly soon. Redemption is single-use as well, so this bounds only the
-/// window in which an *unused* link is worth stealing.
+/// How long an unused link stays usable: survives a weekend, but a link leaked
+/// into a log stops being a credential soon.
 pub const INVITE_TTL_DAYS: i64 = 7;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -39,32 +28,21 @@ pub struct UserInvite {
 }
 
 impl UserInvite {
-    /// Whether this row can still be redeemed *right now*.
-    ///
-    /// Both halves matter and both are re-checked at redemption time rather
-    /// than trusted from the lookup: a link can expire between the page load
-    /// that rendered the form and the submission that spends it.
+    /// Whether this row can be redeemed now; re-checked at redemption since a
+    /// link can expire between form render and submit.
     pub fn is_live(&self, now: DateTime<Utc>) -> bool {
         self.consumed_at.is_none() && now < self.expires_at
     }
 }
 
-/// Derive the stored form of a token.
-///
-/// Kept here rather than in the handler so there is exactly one definition of
-/// "the same token": issuing hashes it to store it, redemption hashes the URL
-/// segment to find it, and neither can drift from the other.
+/// Derive the stored form of a token; the single definition shared by issue and redeem.
 #[must_use]
 pub fn hash_token(secret: &[u8], token: &str) -> String {
     hex::encode(tag(secret, DOMAIN_INVITE, &[token.as_bytes()]))
 }
 
-/// Issue a link for `user_id`, replacing any outstanding one.
-///
-/// Returns the row; the caller keeps the raw token, which is the only copy
-/// that will ever exist — nothing here can reproduce it. Re-issuing revokes
-/// the previous link deliberately: two live links for one account would mean
-/// revoking the one you know about still leaves a way in.
+/// Issue a link for `user_id`, revoking any outstanding one so only one link is
+/// ever live. The caller holds the only copy of the raw token.
 pub async fn issue(db: &Db, secret: &[u8], user_id: i64, token: &str) -> AppResult<UserInvite> {
     revoke_for_user(db, user_id).await?;
 
@@ -86,11 +64,8 @@ pub async fn issue(db: &Db, secret: &[u8], user_id: i64, token: &str) -> AppResu
     .map_err(AppError::Database)
 }
 
-/// Look a token up by its hashed form.
-///
-/// Returns the row whether or not it is still live — the caller decides, and
-/// must answer identically in every failing case (unknown, expired, already
-/// spent) so the endpoint cannot be used to tell them apart.
+/// Look a token up by its hashed form, live or not. The caller must answer
+/// identically for unknown, expired and spent links.
 pub async fn find_by_token(db: &Db, secret: &[u8], token: &str) -> AppResult<Option<UserInvite>> {
     let token_hash = hash_token(secret, token);
 
@@ -104,14 +79,8 @@ pub async fn find_by_token(db: &Db, secret: &[u8], token: &str) -> AppResult<Opt
     .map_err(AppError::Database)
 }
 
-/// Spend the invite, returning whether this caller is the one that spent it.
-///
-/// The `consumed_at IS NULL` predicate is the whole point: two submissions
-/// racing on the same link both pass an earlier `is_live` check, and without
-/// it both would go on to set a password — the later one silently overwriting
-/// the password the first person just chose. Exactly one caller sees a row
-/// count of 1; every other caller must treat `false` as "this link is no
-/// longer valid" and change nothing.
+/// Spend the invite, returning whether this caller spent it. `consumed_at IS
+/// NULL` makes racing submissions single-winner; on `false` change nothing.
 pub async fn consume(db: &Db, invite_id: i64) -> AppResult<bool> {
     let now = Utc::now();
     let updated = db_execute!(
@@ -125,11 +94,7 @@ pub async fn consume(db: &Db, invite_id: i64) -> AppResult<bool> {
     Ok(updated == 1)
 }
 
-/// Drop any outstanding link for `user_id`.
-///
-/// Deletes rather than marking consumed: a revoked link never happened, and
-/// keeping spent rows around would only grow the table and blur "was this
-/// used?" into "was this used or cancelled?". The audit log records both.
+/// Delete (not consume) any outstanding link for `user_id`; the audit log records it.
 pub async fn revoke_for_user(db: &Db, user_id: i64) -> AppResult<u64> {
     db_execute!(db, "DELETE FROM user_invite WHERE user_id = $1", user_id)
         .map_err(AppError::Database)
@@ -149,11 +114,7 @@ pub async fn find_live_for_user(db: &Db, user_id: i64) -> AppResult<Option<UserI
     Ok(invite.filter(|i| i.is_live(Utc::now())))
 }
 
-/// Delete invites that are spent or long past their expiry.
-///
-/// Housekeeping only — an expired row is already refused by [`UserInvite::is_live`],
-/// so this exists to keep the table from accumulating dead links, not to
-/// enforce anything.
+/// Delete spent or long-expired invites. Housekeeping only; [`UserInvite::is_live`] enforces expiry.
 pub async fn delete_stale(db: &Db) -> AppResult<u64> {
     let cutoff = Utc::now();
     db_execute!(
@@ -206,8 +167,7 @@ mod tests {
         assert_ne!(issued.token_hash, "raw-token-value");
         assert!(!issued.token_hash.contains("raw-token-value"));
 
-        // ...and the hash is keyed, so another deployment's secret does not
-        // resolve the same token.
+        // Keyed: another deployment's secret must not resolve the same token.
         assert!(
             find_by_token(&db, b"a-different-secret-value-32bytes", "raw-token-value")
                 .await
@@ -218,8 +178,6 @@ mod tests {
 
     #[tokio::test]
     async fn issuing_again_revokes_the_previous_link() {
-        // Two live links for one account would mean revoking the one you know
-        // about still leaves a way in.
         let (db, user_id) = setup().await;
 
         issue(&db, SECRET, user_id, "first").await.unwrap();
@@ -292,8 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_the_account_takes_its_invite_with_it() {
-        // ON DELETE CASCADE: a deleted account must not leave a live link
-        // behind that would resurrect nothing but still resolve.
+        // ON DELETE CASCADE: a deleted account leaves no live link.
         let (db, user_id) = setup().await;
         issue(&db, SECRET, user_id, "orphan").await.unwrap();
 

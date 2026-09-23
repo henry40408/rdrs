@@ -30,9 +30,8 @@ pub struct NeighborsQuery {
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
     pub has_summary: Option<bool>,
-    /// Unread-snapshot boundary (UTC `YYYY-MM-DD HH:MM:SS`), forwarded into
-    /// `EntryFilter::read_after`. Sent by app.js from the page's
-    /// `data-snapshot-at` attribute on unread views.
+    /// Unread-snapshot boundary (UTC `YYYY-MM-DD HH:MM:SS`) for
+    /// `EntryFilter::read_after`.
     pub read_after: Option<String>,
 }
 
@@ -94,7 +93,7 @@ pub async fn fetch_full_content(
 
     let extracted = fetch_and_extract(&link, &state.config.user_agent, &state.fetcher).await?;
 
-    // Sanitize the content (use the entry link as base URL for relative images)
+    // Entry link is the base URL for relative images.
     let sanitized_content = sanitize_html(
         &extracted.content,
         &state.config.secret,
@@ -116,7 +115,6 @@ pub struct SaveToServicesResponse {
     pub all_success: bool,
 }
 
-/// Response for summary-related endpoints
 #[derive(Debug, Serialize)]
 pub struct SummaryResponse {
     pub status: SummaryStatus,
@@ -133,7 +131,6 @@ pub async fn summarize_entry(
 ) -> AppResult<Json<SummaryResponse>> {
     let user_id = auth_user.user.id;
 
-    // Check cache first for in-flight jobs
     if let Some(cached) = state.summary_cache.get(user_id, id) {
         return Ok(Json(SummaryResponse {
             status: cached.status,
@@ -143,8 +140,6 @@ pub async fn summarize_entry(
         }));
     }
 
-    // Get entry and verify ownership.
-    // Check DB for existing summary
     if let Some(db_summary) = entry_summary::find_by_user_and_entry(&state.db, user_id, id).await? {
         return Ok(Json(SummaryResponse {
             status: db_summary.status,
@@ -219,7 +214,6 @@ pub async fn get_entry_summary(
 ) -> AppResult<Json<SummaryResponse>> {
     let user_id = auth_user.user.id;
 
-    // Check cache first for in-flight status
     if let Some(cached) = state.summary_cache.get(user_id, id) {
         return Ok(Json(SummaryResponse {
             status: cached.status,
@@ -280,9 +274,8 @@ pub async fn delete_entry_summary(
 
     entry_summary::delete(&state.db, user_id, id).await?;
 
-    // Remove from cache
     state.summary_cache.remove(user_id, id);
-    // A summary was removed; the completed-summary count may have dropped — refresh the sidebar badge.
+    // The completed-summary badge may have dropped.
     state.sidebar_cache.bust(user_id);
     state.events.emit_summary(user_id, id, None);
     state.events.emit_sidebar(user_id);
@@ -334,19 +327,14 @@ pub async fn save_to_services(
         tags: vec![],
     };
 
-    // Save to all configured services in parallel
     let mut results = Vec::new();
 
-    // Linkding
     if let Some(linkding_config) = &save_config.linkding
         && linkding_config.is_configured()
     {
         let result = linkding::save_to_linkding(linkding_config, &entry_data).await?;
         results.push(result);
     }
-
-    // Future services can be added here:
-    // if let Some(pocket_config) = &save_config.pocket { ... }
 
     let all_success = results.iter().all(|r| r.success);
 
