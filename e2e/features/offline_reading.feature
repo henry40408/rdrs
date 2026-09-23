@@ -44,14 +44,9 @@ Feature: Offline reading
     And I visit "/"
     Then I see 3 entries in the entry list
 
-  # The order here is the design, not convenience. A page loaded while online
-  # has no way to learn the connection died: `navigator.onLine` reports having
-  # an interface rather than anything answering on it, and browsers disagree on
-  # whether they even fire the event — Chrome on CI does not under network
-  # emulation, where the author's did. So the first failed request is what
-  # reveals it, and that request must therefore not be the thing that goes
-  # wrong: it keeps the reader on their list and says why, and from then on
-  # everything that needs the server is out of reach.
+  # The order is the design: `navigator.onLine` and its events are unreliable
+  # (Chrome on CI fires none under emulation), so the first failed request
+  # reveals the outage and must fail gracefully.
   Scenario: The first thing to fail offline explains itself and disables the rest
     Given I have a feed "Long Feed" with 51 test entries in category "Long Category"
     When I open the inbox
@@ -61,11 +56,8 @@ Feature: Offline reading
     And I see 30 entries in the entry list
     And Load More is disabled
 
-  # A connection is a state, not an event. It used to be announced with a flash
-  # banner, which meant a message over the list every time one blinked and
-  # nothing at all once it was dismissed. The lamp is CSS reacting to
-  # `<html data-offline>`, so it is still right after the sidebar rebuilds its
-  # own markup — which it does on every mark-as-read.
+  # The lamp is CSS on `<html data-offline>`, so it survives the sidebar
+  # rebuilding its markup on every mark-as-read.
   Scenario: The sidebar lamp is what reports the connection
     When I open the inbox
     Then the sidebar shows the connection is up
@@ -99,10 +91,7 @@ Feature: Offline reading
     And my entries have been saved for offline reading
     Then nothing has been asked of the server that names no file
 
-  # A list page holds one page of rows and Load More reaches the server, so with
-  # the connection gone everything past the first page is out of reach — however
-  # much of it the browser is actually holding. The library is where all of it
-  # is, and the sidebar is the only way in.
+  # Offline, Load More cannot reach past page one; the library holds everything.
   Scenario: Everything saved is one click away when Load More cannot help
     Given I have a feed "Long Feed" with 51 test entries in category "Long Category"
     And I keep 200 entries for offline reading

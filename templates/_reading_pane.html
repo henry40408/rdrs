@@ -1,38 +1,24 @@
 {%- import "_icons.html" as icons -%}
 {%- import "macros.html" as macros -%}
-{# Reading pane content. Matches the pre-SSR `.reading-pane-content` +
-   `.reading-pane-article` + `.reading-pane-actions` DOM the existing
-   CSS rules target. `id="reading-pane"` is the swap target.
-
-   `reading-pane-active` is load-bearing on mobile (≤1024px): the
-   media query hides the bare `.reading-pane` and only reveals
-   `.reading-pane.reading-pane-active` as a full-screen overlay.
-   Empty-state placeholders MUST NOT carry the class, or mobile will
-   trap users behind a blank pane. #}
+{# `reading-pane-active` reveals the pane as a full-screen overlay on mobile
+   (≤1024px); empty states MUST NOT carry it or users get trapped behind a blank pane. #}
 <div id="reading-pane" class="reading-pane reading-pane-active" data-entry-id="{{ pane.id }}">
-    {# Pane toolbar. On mobile it also holds the Back affordance (left); the
-       prev/next nav sits at the right on every viewport. #}
+    {# Toolbar: mobile Back on the left, prev/next on the right. #}
     <div class="reading-pane-back">
         <button type="button" class="reading-pane-back-link" data-pane-back data-testid="reading-pane-back"><span class="action-icon" aria-hidden="true">{% call icons::chevron_left() %}{% endcall %}</span><span>Back</span></button>
-        {# Prev/Next navigation across the current filtered list. Rendered
-           disabled; app.js resolves neighbours via
-           `GET /api/entries/{id}/neighbors` after the pane opens and enables
-           whichever direction has an adjacent entry. "Previous" = newer
-           (up the list), "Next" = older (down the list), matching the
-           list's published-desc order. #}
+        {# Rendered disabled; app.js enables them via `/api/entries/{id}/neighbors`.
+           "Previous" = newer, "Next" = older (published-desc order). #}
         <nav class="reading-pane-nav" aria-label="Entry navigation">
             <button type="button" class="reading-pane-nav-btn" data-pane-prev data-testid="reading-pane-prev" aria-label="Previous" disabled>{% call icons::chevron_left() %}{% endcall %}<span class="nav-label">Previous</span></button>
             <button type="button" class="reading-pane-nav-btn" data-pane-next data-testid="reading-pane-next" aria-label="Next" disabled><span class="nav-label">Next</span>{% call icons::chevron_right() %}{% endcall %}</button>
         </nav>
     </div>
     <div class="reading-pane-content">
-        {# Mono uppercase eyebrow: favicon + feed name (accent) · published. #}
+        {# Eyebrow: favicon + feed name · published. #}
         <div class="dispatch-eyebrow">
             <span class="src">
                 {% if pane.feed_has_icon %}
-                {# Sync decode, same reason as the entry row's favicon: an async
-                   decode can present the pane before the icon's bitmap is
-                   ready, which reads as the favicon blinking on every swap. #}
+                {# Sync decode, or the favicon blinks on every swap. #}
                 <img class="entry-favicon" src="/api/feeds/{{ pane.feed_id }}/icon" alt="" decoding="sync" width="15" height="15">
                 {% else %}
                 <span class="entry-favicon entry-favicon-chip fav-c{{ pane.feed_color_index() }}" aria-hidden="true">{{ pane.feed_initial() }}</span>
@@ -49,26 +35,17 @@
         {% endif %}
         <div class="reading-pane-actions">
             {% call macros::pane_star_form(pane.id, pane.is_starred, csrf_token) %}{% endcall %}
-            {# Pane action is a fixed Mark-Unread: idempotent on /unread, no
-               "Mark Read" toggle. Reading an entry already auto-marks it as
-               read on open, so the only manual operation worth a button is
-               the override-back-to-unread. #}
+            {# Mark-Unread only: opening an entry already marks it read. #}
             <form method="post" action="/entries/{{ pane.id }}/unread" data-swap="#entry-row-{{ pane.id }}">
                 {% call macros::csrf_field(csrf_token) %}{% endcall %}
                 <button type="submit" class="rp-action" aria-label="Mark Unread"><span class="action-icon" aria-hidden="true">{% call icons::unread() %}{% endcall %}</span><span class="action-label">Unread</span><kbd>m</kbd></button>
             </form>
             {% if let Some(link) = pane.link.as_ref() %}
             {% if pane.is_full_content %}
-            {# `?view=original` re-renders the pane from what the feed published.
-               The parameter is needed now that the fetched article is stored:
-               without it the fragment would hand back the fetched one again. #}
+            {# `?view=original` is needed, else the stored fetched article comes back. #}
             <a href="/entries/{{ pane.id }}/fragment?view=original" data-swap="#reading-pane" class="rp-action is-on" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span><kbd>d</kbd></a>
             {% else if pane.has_stored_full_content %}
-            {# Already fetched once, currently showing the original: going back
-               is a plain link, so the reader never re-fetches someone else's
-               server just to undo a toggle. Re-fetching stays available from
-               the original view via the button below on entries with no stored
-               article — see `has_stored_full_content`. #}
+            {# A plain link back, so undoing the toggle never re-fetches the origin server. #}
             <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action" aria-label="Show Full Content"><span class="action-icon" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-label">Full content</span><kbd>d</kbd></a>
             {% else %}
             <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane" data-cancel-swap>
@@ -90,17 +67,11 @@
             {% endif %}
             {% endif %}
         </div>
-        {# Always render the wrapper so `POST /entries/{id}/summarize` can
-           swap into `#rp-summary-container` without touching the article
-           body — keeps a Fetch-Full-Content view from being reset back to
-           the feed-supplied content when the user kicks off a summary. #}
+        {# Always rendered so a summary swap never resets a Fetch-Full-Content view. #}
         <div class="rp-summary-container" id="rp-summary-container" data-summary-container>
             {% include "_summary_container_inner.html" %}
         </div>
-        {# Headline and body carry their own `lang`: the body is where the
-           mixed-font effect is most visible, since a long article is far more
-           likely to contain one of the codepoints PingFang TC lacks than a
-           one-line title is. See `utils::han`. #}
+        {# `lang` on headline and body; see `utils::han`. #}
         <article class="reading-pane-article" data-testid="reading-pane-body" data-mode="{% if pane.is_full_content %}full{% else %}original{% endif %}"{% if let Some(lang) = pane.content_lang() %} lang="{{ lang }}"{% endif %}>{{ pane.content_html|safe }}</article>
     </div>
 </div>

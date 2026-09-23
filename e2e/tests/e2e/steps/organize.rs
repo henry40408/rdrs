@@ -1,5 +1,4 @@
-//! Managing categories and feeds, OPML import/export, and the flash banner's
-//! timestamp — a port of `organize.steps.js`.
+//! Categories, feeds, OPML import/export, and the flash timestamp.
 
 use std::path::Path;
 
@@ -72,9 +71,7 @@ async fn on_categories_page(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_visible("category-name-input").await
 }
 
-/// Waits for the category dropdown to finish loading: adding a feed picks an
-/// option by label, and the placeholder is still "Loading" until the sidebar
-/// data lands.
+/// Waits for the category dropdown, which shows "Loading" until sidebar data lands.
 #[given("I am on the feeds page")]
 #[when("I am on the feeds page")]
 async fn on_feeds_page(world: &mut RdrsWorld) -> Result<()> {
@@ -130,9 +127,7 @@ async fn edit_feed_title(
     driver.submit("feed-edit-save-btn").await
 }
 
-/// The same row-scoped danger-button pattern as deleting a category; the
-/// caller must arm "I confirm the next dialog" first, since the delete form
-/// goes through `confirm()`.
+/// Arm "I confirm the next dialog" first; the form uses `confirm()`.
 #[when(expr = "I delete the feed {string}")]
 async fn delete_feed(world: &mut RdrsWorld, title: String) -> Result<()> {
     let row = feed_row(world, &title).await?;
@@ -140,9 +135,8 @@ async fn delete_feed(world: &mut RdrsWorld, title: String) -> Result<()> {
     submit_element(world.driver()?, &button).await
 }
 
-/// Option labels carry a count suffix like "Other Category (1)", so an exact
-/// label cannot be passed. The matching option's value is looked up in the DOM
-/// first. The `onchange` auto-submits, so this then waits for the filtered URL.
+/// Labels carry a count suffix, so the option value is looked up first; the
+/// select auto-submits.
 #[when(expr = "I filter feeds by category {string}")]
 async fn filter_feeds_by_category(world: &mut RdrsWorld, name: String) -> Result<()> {
     let driver = world.driver()?;
@@ -199,9 +193,8 @@ async fn create_category(world: &mut RdrsWorld, name: String) -> Result<()> {
     driver.submit("add-category-btn").await
 }
 
-/// The `<input>` `value` *attribute* reflects the server-rendered initial
-/// state, not the live `.value` property — so the row is scoped by the original
-/// name **before** filling, and save is clicked within that same row.
+/// The `value` attribute keeps the server-rendered name, so the row is scoped
+/// before filling.
 #[when(expr = "I rename category {string} to {string}")]
 async fn rename_category(world: &mut RdrsWorld, old_name: String, new_name: String) -> Result<()> {
     let row = category_row(world, &old_name).await?;
@@ -219,8 +212,7 @@ async fn delete_category(world: &mut RdrsWorld, name: String) -> Result<()> {
     submit_element(world.driver()?, &button).await
 }
 
-/// Category names live in `<input value="…">` inside the rename form, so they
-/// never appear as DOM text — the attribute is matched directly.
+/// Names live in `<input value>`, not DOM text.
 #[then(expr = "the categories table contains {string}")]
 async fn categories_table_contains(world: &mut RdrsWorld, text: String) -> Result<()> {
     let driver = world.driver()?;
@@ -256,9 +248,7 @@ async fn import_opml(world: &mut RdrsWorld, filename: String) -> Result<()> {
     let path = fixtures_dir().join(&filename);
     ensure!(path.is_file(), "no OPML fixture at {}", path.display());
     let driver = world.driver()?;
-    // WebDriver's own upload path: typing an absolute path into a file input is
-    // how `setInputFiles` is expressed, and the local-file-detector is not
-    // needed because the browser is on this machine.
+    // Typing an absolute path into the file input; the browser is local.
     driver
         .test_id("opml-file-input")
         .await?
@@ -267,8 +257,7 @@ async fn import_opml(world: &mut RdrsWorld, filename: String) -> Result<()> {
     driver.click("opml-import-btn").await
 }
 
-/// The Export OPML link is a GET download, which the browser cannot be asked
-/// for directly — the request shares the session cookie instead.
+/// Fetched with the session cookie; the browser cannot be asked for a download.
 #[then(expr = "the exported OPML contains {string}")]
 async fn exported_opml_contains(world: &mut RdrsWorld, text: String) -> Result<()> {
     let body = world
@@ -288,21 +277,14 @@ async fn success_flash(world: &mut RdrsWorld, message: String) -> Result<()> {
     world.driver()?.expect_text("flash-message", &message).await
 }
 
-/// `HH:MM:SS`, server-rendered for the SSR cookie and inline-template paths and
-/// client-rendered for `window.flash.show()` emits. Both must produce a
-/// same-shape `<time>` element so the visual is consistent.
-///
-/// Both must also read the *viewer's* clock. The server emits UTC text it
-/// cannot localise, so `rdrs-flash.js` rewrites it from `datetime`; comparing
-/// against a formatter run inside the page catches a banner left on UTC in
-/// whatever timezone the suite happens to run under.
+/// Server- and client-rendered flashes must both produce a `<time>` in the
+/// viewer's timezone; `rdrs-flash.js` rewrites the server's UTC text.
 #[then("the flash banner shows a timestamp")]
 async fn flash_shows_timestamp(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
     let time = driver.test_id("flash-time").await?;
 
-    // `data-localized` is set by the rewrite, so waiting for it is what keeps
-    // this from reading the server's UTC text mid-swap.
+    // `data-localized` marks the rewrite, so the UTC text is never read mid-swap.
     driver
         .expect_attr(r#"[data-testid="flash-time"]"#, "data-localized", Some(""))
         .await?;
@@ -338,20 +320,10 @@ async fn flash_shows_timestamp(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// The four actions on a feed row must share one horizontal axis.
-///
-/// They are a mix of `<a>` and `<button>`-inside-`<form>`, which is how the row
-/// went ragged: a form laid out as a block puts its button on a *line box*, so
-/// the button rides the line's baseline while the anchors sit at the top of
-/// their own boxes. How far apart that lands depends on the strut — the form's
-/// inherited font metrics — which is why the report came from iPadOS Safari and
-/// Chromium showed nothing wrong.
-///
-/// So the measurement is taken twice: as rendered, and again with the row's
-/// `line-height` inflated through the CSSOM. The second pass is what
-/// reproduces the bug on the browser CI actually has — with the block form it
-/// pulls `refresh` and `delete` off the axis, and with the flex form the four
-/// stay put no matter what the strut does.
+/// The four row actions (mixed `<a>` and form `<button>`) must share one axis.
+/// A block form puts its button on a line box whose strut varies by font
+/// (seen on iPadOS Safari only), so the check reruns with an inflated
+/// `line-height` to reproduce it in Chromium.
 #[then("the actions on a feed row line up on one axis")]
 async fn feed_actions_share_an_axis(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -360,7 +332,7 @@ async fn feed_actions_share_an_axis(world: &mut RdrsWorld) -> Result<()> {
             r"
             const cell = document.querySelector('.feeds-table tbody tr td.actions');
             if (!cell) return { error: 'no actions cell' };
-            // A form is a wrapper; what the reader sees is its button.
+            // Measure a form's button, not the form.
             const items = [...cell.children].map((el) =>
               el.tagName === 'FORM' ? el.querySelector('button') : el,
             );
@@ -379,9 +351,7 @@ async fn feed_actions_share_an_axis(world: &mut RdrsWorld) -> Result<()> {
             };
 
             const rendered = measure();
-            // Stands in for a browser whose strut is taller than the button's
-            // own line box. Set through the CSSOM rather than an injected
-            // <style>, which the CSP would refuse.
+            // Simulates a taller strut; via CSSOM because CSP refuses injected <style>.
             const original = cell.style.lineHeight;
             cell.style.lineHeight = '3';
             const inflated = measure();
@@ -418,8 +388,7 @@ async fn feed_row(world: &RdrsWorld, title: &str) -> Result<WebElement> {
     row_containing(world, "feeds-table", title).await
 }
 
-/// Category rows are found by the rename input's `value`, since the name is not
-/// DOM text.
+/// Found by the rename input's `value`.
 async fn category_row(world: &RdrsWorld, name: &str) -> Result<WebElement> {
     let selector = format!(r#"[data-testid="categories-table"] tr:has(input[value="{name}"])"#);
     world.driver()?.css(&selector).await

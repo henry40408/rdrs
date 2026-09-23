@@ -34,10 +34,8 @@ struct LinkdingBookmarkResponse {
     id: i64,
 }
 
-/// Never fails the request for a Linkding-side problem: an unconfigured
-/// service, a rejected token or a duplicate URL all come back as a
-/// `SaveResult` with `success: false`, so one broken integration cannot fail
-/// the user's save to the others.
+/// Never fails the request for a Linkding-side problem: errors come back as
+/// `success: false` so one integration cannot fail the others.
 pub async fn save_to_linkding(
     config: &LinkdingConfig,
     bookmark: &BookmarkData,
@@ -98,12 +96,10 @@ pub async fn save_to_linkding(
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
 
-        // Translated to something a reader can act on; the raw body is only
-        // surfaced for statuses with no specific meaning.
+        // Raw body only for statuses with no specific meaning.
         let message = match status.as_u16() {
             400 => {
-                // Linkding answers 400 for a URL already bookmarked, which is a
-                // success as far as the user is concerned, not an error.
+                // 400 means already bookmarked: a success for the user.
                 if error_text.contains("already exists") || error_text.contains("unique") {
                     "Bookmark already exists in Linkding".to_string()
                 } else {
@@ -125,10 +121,8 @@ pub async fn save_to_linkding(
     }
 }
 
-/// Accept whatever shape of URL the user pasted — instance root,
-/// `…/api`, or the full `…/api/bookmarks/` — and produce the bookmarks
-/// endpoint. Linkding needs the trailing slash; without it the API redirects
-/// and the POST body is dropped.
+/// Normalize a pasted URL (root, `…/api`, or full) to the bookmarks endpoint.
+/// The trailing slash is required: without it the redirect drops the POST body.
 fn normalize_api_url(base_url: &str) -> String {
     let mut url = base_url.trim_end_matches('/').to_string();
 
@@ -147,8 +141,7 @@ fn normalize_api_url(base_url: &str) -> String {
     url
 }
 
-/// The human-facing bookmark page, derived from the same setting as the API
-/// URL by cutting everything from `/api` onwards.
+/// The human-facing bookmark page: the setting cut at `/api`.
 fn construct_bookmark_url(base_url: &str, bookmark_id: i64) -> String {
     let base = if let Some(pos) = base_url.find("/api") {
         &base_url[..pos]

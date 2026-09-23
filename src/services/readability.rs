@@ -12,14 +12,14 @@ pub struct ExtractedContent {
     pub content: String,
 }
 
-/// Fetches HTML from URL and extracts readable content using readability crate.
+/// Fetch HTML from a URL and extract readable content.
 pub async fn fetch_and_extract(
     url: &str,
     user_agent: &str,
     fetcher: &Fetcher,
 ) -> AppResult<ExtractedContent> {
-    // Parse and validate URL (SSRF protection) before touching the network.
-    // `fetcher` re-checks every redirect hop and resolved address on its own.
+    // SSRF check before touching the network; the fetcher re-checks every hop
+    // and resolved address.
     let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
     fetcher
         .validate(&parsed_url)
@@ -28,16 +28,14 @@ pub async fn fetch_and_extract(
     fetch_and_extract_validated(url, &parsed_url, user_agent, fetcher).await
 }
 
-/// Fetch + extract for an already-validated URL. Split out from
-/// [`fetch_and_extract`] so the network/extraction path can be exercised against
-/// a local mock server (the SSRF check in the public entry rejects loopback).
+/// Fetch + extract for an already-validated URL, split out so tests can hit a
+/// loopback mock server.
 async fn fetch_and_extract_validated(
     url: &str,
     parsed_url: &Url,
     user_agent: &str,
     fetcher: &Fetcher,
 ) -> AppResult<ExtractedContent> {
-    // Fetch HTML via the guarded, connection-pooled client (User-Agent per request).
     let url_owned = url.to_string();
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
         fetcher
@@ -57,7 +55,6 @@ async fn fetch_and_extract_validated(
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    // Extract readable content
     let product = extractor::extract(&mut html.as_bytes(), parsed_url)
         .map_err(|e| AppError::FetchError(format!("Failed to extract content: {e}")))?;
 
@@ -74,9 +71,8 @@ mod tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// Every suite here drives a `wiremock` server, which binds loopback — what
-    /// the guard exists to refuse. Allowing that one address is the same opt-in
-    /// a deployment uses for a LAN feed, not a bypass of its own.
+    /// wiremock binds loopback, so allow it the same way a deployment opts in a
+    /// LAN feed.
     fn loopback_fetcher() -> Fetcher {
         Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
             .expect("the guarded client must build")
@@ -98,7 +94,7 @@ mod tests {
   </body>
 </html>";
 
-    // ---- Public entry: SSRF validation happens before any network I/O. ----
+    // ---- Public entry: SSRF validation before any network I/O. ----
 
     #[tokio::test]
     async fn rejects_malformed_blocked_and_non_http_urls() {
@@ -140,13 +136,12 @@ mod tests {
             "content should retain the article body, got: {}",
             extracted.content
         );
-        // MockServer verifies .expect(1) on drop — proves the User-Agent matched.
+        // `.expect(1)` proves the User-Agent matched.
     }
 
     #[tokio::test]
     async fn empty_extracted_title_becomes_none() {
-        // No <title> and no heading: readability yields an empty title string,
-        // which the `.filter(|t| !t.is_empty())` must collapse to None.
+        // No title or heading: the empty string must collapse to None.
         let body = r"<!DOCTYPE html><html><head></head><body><article>
             <p>Body-only content with no title anywhere in the document, long
             enough that the extractor keeps it as the main article region.</p>

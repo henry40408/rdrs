@@ -1,23 +1,12 @@
-//! Minimal HTML entity decoder for plain-text fields (entry titles, author
-//! names, OPML labels). Some feeds double-encode entities (e.g. emit
-//! `&amp;#x27;`); feed-rs / quick-xml only unescape one layer, leaving a
-//! literal `&#x27;` in the stored value. When Askama then auto-escapes the
-//! field for rendering, the `&` is escaped again and the reader sees the
-//! literal `&#x27;` instead of `'`. Decoding the residual entity before
-//! handing the string to the template fixes the display.
+//! Minimal HTML entity decoder for plain-text fields (titles, authors, OPML
+//! labels), undoing the residual layer of double-encoded feeds (`&amp;#x27;`)
+//! that Askama would otherwise re-escape and display literally.
 //!
-//! Scope is deliberately narrow: named entities common in feed text, plus
-//! decimal (`&#NN;`) and hexadecimal (`&#xNN;` / `&#XNN;`) numeric character
-//! references. Unknown or malformed sequences are left verbatim — never a
-//! panic. This MUST NOT be applied to HTML fields (content / summary) that go
-//! through `sanitize_html`, only to plain-text fields.
+//! Unknown or malformed sequences are left verbatim. MUST NOT be applied to
+//! HTML fields that go through `sanitize_html`.
 
-/// Decode the named/numeric HTML entities we care about in plain text.
-///
-/// Recognizes `&amp; &lt; &gt; &quot; &apos; &#39;`, decimal references
-/// `&#NN;`, and hex references `&#xNN;` / `&#XNN;`. Anything else (unknown
-/// name, missing terminating `;`, non-digit body, out-of-range code point)
-/// is preserved unchanged.
+/// Decode `&amp; &lt; &gt; &quot; &apos; &#39;` and decimal/hex references;
+/// anything else is preserved unchanged.
 pub fn decode_html_entities(s: &str) -> String {
     // Fast path: no entity markers at all.
     if !s.contains('&') {
@@ -29,7 +18,7 @@ pub fn decode_html_entities(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'&' {
-            // Copy the current UTF-8 char wholesale (handles multibyte).
+            // Copy the whole UTF-8 char.
             let ch_len = utf8_len(bytes[i]);
             out.push_str(&s[i..i + ch_len]);
             i += ch_len;
@@ -51,15 +40,14 @@ pub fn decode_html_entities(s: &str) -> String {
             }
         }
 
-        // Not a recognized entity — keep the '&' literal and move on.
+        // Not an entity: keep the '&' literal.
         out.push('&');
         i += 1;
     }
     out
 }
 
-/// Decode the inside of a single `&…;` (the body excludes `&` and `;`).
-/// Returns `None` when the body is not a recognized entity.
+/// Decode the body of one `&…;`, or `None` if unrecognized.
 fn decode_one(body: &str) -> Option<char> {
     match body {
         "amp" => Some('&'),

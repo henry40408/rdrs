@@ -7,13 +7,9 @@ use argon2::{
 
 use crate::error::{AppError, AppResult};
 
-/// Argon2 hasher used to derive *new* password hashes.
-///
-/// Production uses [`Argon2::default`] — OWASP-recommended, memory-hard,
-/// hundreds of ms per hash in a debug build. `RDRS_FAST_HASH`, set only in
-/// test/CI runs, swaps in minimal cost parameters. Safe because
-/// [`verify_password`] reads the parameters out of each stored hash, so hashes
-/// produced under either setting verify interchangeably.
+/// Argon2 hasher for *new* hashes: [`Argon2::default`], or minimal cost under
+/// `RDRS_FAST_HASH` (test/CI only). Safe because [`verify_password`] reads the
+/// parameters from each stored hash.
 static HASHER: LazyLock<Argon2<'static>> = LazyLock::new(|| {
     if std::env::var_os("RDRS_FAST_HASH").is_some() {
         let params = Params::new(
@@ -29,78 +25,30 @@ static HASHER: LazyLock<Argon2<'static>> = LazyLock::new(|| {
     }
 });
 
-/// A hash of a value nothing can supply, giving the "no such user" login path
-/// the same cost as a real password check.
-///
-/// Produced by [`hash_password`], so it carries whatever cost parameters this
-/// process runs with — including `RDRS_FAST_HASH`, which keeps the equalising
-/// verify exactly as cheap as the real one it mirrors. Both the input and the
-/// salt are freshly random per process: no string a caller could send verifies
-/// against it, and the digest is not a constant to fingerprint.
+/// Hash of a random per-process value, giving the "no such user" login path the
+/// same cost as a real check. Uses the process's own cost parameters.
 static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
     let filler = SaltString::generate();
     hash_password(&filler).expect("hashing with valid params cannot fail")
 });
 
-/// Shortest password rdrs will accept for a *new* credential.
-///
-/// NIST SP800-63B, which OWASP follows, calls anything under 15 characters weak
-/// when the account has no second factor. rdrs is in exactly that case: passkeys
-/// here *replace* the password rather than supplement it.
-///
-/// Only new credentials are measured. Existing passwords keep working at
-/// whatever length they were set — the same cheat sheet is explicit that
-/// verifiers should not force rotation without reason to believe a credential is
-/// compromised, and "we raised the minimum" is not one.
+/// Shortest password accepted for a *new* credential (NIST SP800-63B: 15 without
+/// a second factor; passkeys here replace passwords). Existing passwords are
+/// not forced to rotate.
 pub const PASSWORD_MIN_LENGTH: usize = 15;
 
-/// Longest password rdrs will accept.
-///
-/// The cheat sheet asks for a documented maximum of at least 64 so passphrases
-/// fit, and warns against long-password denial of service. Argon2's cost is
-/// dominated by its memory parameters rather than input length, so this is a
-/// generous bound — but better than the request-body limit deciding it.
+/// Longest password accepted (OWASP: at least 64, bounded against long-password denial of service).
 pub const PASSWORD_MAX_LENGTH: usize = 128;
 
-/// Lowest zxcvbn score a new password may have, on its 0–4 scale.
-///
-/// Three means "more than 10^10 guesses" by zxcvbn's reckoning — enough to rule
-/// out the degenerate shapes below while leaving any ordinary passphrase
-/// untouched. A non-degenerate password of [`PASSWORD_MIN_LENGTH`] characters
-/// scores 4, so this gate almost never fires; that is the property worth having,
-/// not a high bar.
+/// Lowest zxcvbn score (0–4) for a new password; only rejects degenerate shapes.
 const PASSWORD_MIN_SCORE: zxcvbn::Score = zxcvbn::Score::Three;
 
-/// Check a proposed password against the policy: length, then guessability.
+/// Check a proposed password: length (in characters, not bytes), then zxcvbn
+/// guessability. Deliberately no composition rules, per OWASP.
 ///
-/// Deliberately the *whole* policy: no composition rules, no required character
-/// classes, no rejected symbols. The cheat sheet is explicit that length and
-/// blocklists are what help, and that composition rules push users toward
-/// predictable substitutions. Unicode and whitespace are welcome.
-///
-/// Lengths are counted in characters, not bytes: a byte count would let a
-/// 5-character CJK passphrase satisfy a 15-byte minimum while a 15-character
-/// ASCII one barely passed.
-///
-/// # Why zxcvbn rather than a breached-password list
-///
-/// [`PASSWORD_MIN_LENGTH`] already does the blocklist's job: common-password
-/// corpora are overwhelmingly short — in `SecLists`' 10k list exactly one entry
-/// reaches 15 characters — so a blocklist consulted after the length check would
-/// catch almost nothing, at the cost of embedding it in the binary.
-///
-/// What *does* survive a 15-character minimum is structure: `passwordpassword`,
-/// `qwertyuiopasdfgh`, `aaaaaaaaaaaaaaaa`. None appear in a top-100k list and
-/// all are trivially guessable, and scoring exactly those patterns is what
-/// zxcvbn does.
-///
-/// `user_inputs` should carry whatever the account already reveals about its
-/// owner: zxcvbn penalises a password built out of it, which no static list
-/// could do.
-///
-/// The estimator's *score* gates, but its guess count is never shown — the cheat
-/// sheet warns against advertising a bits-of-entropy figure as a guarantee, and
-/// it would be one here too.
+/// zxcvbn rather than a breach list: the length minimum already excludes nearly
+/// all breached passwords, while structured ones (`passwordpassword`) survive
+/// it. `user_inputs` lets zxcvbn penalise passwords built from account data.
 pub fn validate_password_strength(password: &str, user_inputs: &[&str]) -> AppResult<()> {
     let length = password.chars().count();
 
@@ -110,10 +58,7 @@ pub fn validate_password_strength(password: &str, user_inputs: &[&str]) -> AppRe
         )));
     }
     if length > PASSWORD_MAX_LENGTH {
-        // Rejected, never truncated: silently cutting a password would make the
-        // stored credential differ from the one the user chose, and would quietly
-        // weaken a long passphrase. Checked *before* the estimator, which is the
-        // expensive step and has no business running on a refused input.
+        // Rejected, never truncated; checked before the expensive estimator.
         return Err(AppError::Validation(format!(
             "Password must be at most {PASSWORD_MAX_LENGTH} characters"
         )));
@@ -127,13 +72,7 @@ pub fn validate_password_strength(password: &str, user_inputs: &[&str]) -> AppRe
     Ok(())
 }
 
-/// Turn a rejected estimate into something a user can act on.
-///
-/// zxcvbn's own strings are used verbatim where it has them — "Repeats like
-/// 'aaa' are easy to guess" beats any generic message, because it names the
-/// actual problem. The fallback matters though: `warning` is frequently `None`,
-/// and a bare "Password is too weak" leaves the user guessing at what to change,
-/// so a suggestion is appended whenever one exists.
+/// Actionable rejection message: zxcvbn's warning (or a fallback) plus a suggestion.
 fn weakness_message(estimate: &zxcvbn::Entropy) -> String {
     let feedback = estimate.feedback();
 
@@ -158,21 +97,11 @@ pub fn hash_password(password: &str) -> AppResult<String> {
         .map_err(|e| AppError::Internal(format!("Password hashing failed: {e}")))
 }
 
-/// Spend one password verification against [`DUMMY_HASH`], discarding the
-/// (always negative) result.
-///
-/// Call this on the branch where the *username* did not resolve. Without it,
-/// login answers "no such user" after a single indexed `SELECT` but "wrong
-/// password" only after a deliberately slow Argon2 verify — a delta of tens of
-/// milliseconds, trivially measurable over the network, turning the generic
-/// `Invalid credentials` message into an account-existence oracle.
-///
-/// Returns nothing on purpose: the work *is* the return value, and a `bool`
-/// would invite a caller to branch on a result false by construction.
+/// Spend one verification against `DUMMY_HASH` when the username did not
+/// resolve, so login timing is not an account-existence oracle. Returns nothing
+/// so no caller can branch on it.
 pub fn verify_dummy_password(password: &str) {
-    // `black_box` stops the optimiser from observing that the result is unused
-    // and eliding the hash — which would silently restore the timing gap this
-    // function exists to close.
+    // `black_box` keeps the optimiser from eliding the unused hash.
     std::hint::black_box(verify_password(password, &DUMMY_HASH));
 }
 
@@ -213,11 +142,7 @@ mod tests {
         assert!(!verify_password("password", "invalid_hash"));
     }
 
-    /// A deterministic, pattern-free password of `len` characters.
-    ///
-    /// Built from a small LCG rather than a literal so the length-boundary tests
-    /// can ask for any length without smuggling in a pattern the estimator would
-    /// quite correctly score as weak, turning a length test into a strength test.
+    /// A deterministic, pattern-free (LCG) password of `len` characters.
     fn strong_password(len: usize) -> String {
         const ALPHABET: &[u8] =
             b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
@@ -247,10 +172,6 @@ mod tests {
 
     #[test]
     fn password_policy_has_no_composition_rules() {
-        // No required character classes: lower-case words and spaces are a
-        // fine password, and so is one made of nothing but CJK. The cheat
-        // sheet asks for exactly this — length and guessability, not a
-        // mixture of cases and symbols.
         assert!(validate_password_strength("correct horse battery staple", &[]).is_ok());
         assert!(validate_password_strength("vulture-mango-77-quilt", &[]).is_ok());
         assert!(validate_password_strength("heron lantern drift plume", &[]).is_ok());
@@ -259,10 +180,6 @@ mod tests {
 
     #[test]
     fn guessable_shapes_are_rejected_even_at_full_length() {
-        // The whole reason the estimator is here. Every one of these clears
-        // the 15-character minimum, none appears in a top-100k breach list,
-        // and all of them are trivial to guess: doubled words, keyboard
-        // walks, repeats, short cycles.
         for weak in [
             "passwordpassword",
             "qwertyuiopasdfgh",
@@ -285,10 +202,7 @@ mod tests {
 
     #[test]
     fn a_password_built_from_the_account_it_protects_is_rejected() {
-        // What no static blocklist can do. The password is a random string, so it
-        // is strong in isolation — weak only *for this account*, which the
-        // estimator can only know because the username is passed in. Both halves
-        // are asserted, so dropping the plumbing fails too.
+        // Strong in isolation, weak only given the username.
         let username = strong_password(20);
         let password = format!("{username}42");
 
@@ -304,9 +218,6 @@ mod tests {
 
     #[test]
     fn a_rejection_says_what_to_do_about_it() {
-        // "Password is too weak" leaves the user guessing at what to change.
-        // zxcvbn names the pattern it found, and the message must carry that
-        // through rather than flattening it to something generic.
         let Err(AppError::Validation(msg)) = validate_password_strength("aaaaaaaaaaaaaaaa", &[])
         else {
             panic!("a repeat must be refused");
@@ -316,16 +227,11 @@ mod tests {
             msg.to_lowercase().contains("repeat"),
             "the message should name the pattern, got {msg:?}"
         );
-        // Two sentences: what is wrong, then what to do instead.
         assert!(msg.contains(". "), "expected a suggestion too, got {msg:?}");
     }
 
     #[test]
     fn password_length_is_counted_in_characters_not_bytes() {
-        // 15 CJK characters are 45 bytes; 14 are 42 — comfortably over a
-        // byte-based minimum despite being shorter than the policy allows.
-        // Counting characters is what makes the rule mean the same thing in
-        // every script.
         let fourteen = "密碼很長也很難猜對不對真的難".to_string();
         assert_eq!(fourteen.chars().count(), PASSWORD_MIN_LENGTH - 1);
         assert!(
@@ -337,14 +243,10 @@ mod tests {
 
     #[test]
     fn an_over_long_password_is_rejected_not_truncated() {
-        // Truncating would store a credential the user never chose, and would
-        // silently discard the strength of a long passphrase.
         let long = strong_password(PASSWORD_MAX_LENGTH + 100);
         assert!(validate_password_strength(&long, &[]).is_err());
 
-        // Nothing in the hashing path truncates either: two passphrases that
-        // share their first PASSWORD_MAX_LENGTH characters must not verify
-        // against each other's hash.
+        // The hashing path must not truncate either.
         let hash = hash_password(&long).unwrap();
         assert!(verify_password(&long, &hash));
         assert!(!verify_password(&long[..long.len() - 1], &hash));
@@ -352,25 +254,19 @@ mod tests {
 
     #[test]
     fn dummy_verify_costs_the_same_as_a_real_one() {
-        // The equalising verify is only worth anything if it does the same work as
-        // the check it stands in for. If the dummy hash's cost parameters ever
-        // diverge from a freshly minted one's, the "no such user" path becomes
-        // distinguishable by timing again.
+        // Diverging cost parameters would reopen the timing oracle.
         let real = hash_password("whatever").unwrap();
         let real = PasswordHash::new(&real).unwrap();
         let dummy = PasswordHash::new(&DUMMY_HASH).unwrap();
 
         assert_eq!(dummy.algorithm, real.algorithm);
         assert_eq!(dummy.params, real.params);
-        // A per-process salt, not a constant an attacker could fingerprint.
         assert_ne!(dummy.salt, real.salt);
     }
 
     #[test]
     fn dummy_verify_accepts_any_input_and_returns_nothing() {
-        // Callers pass attacker-controlled bytes straight in, including the
-        // degenerate ones. Nothing here may panic, and there is no result to
-        // branch on — the guarantee is that it only ever burns time.
+        // Attacker-controlled input must never panic.
         verify_dummy_password("");
         verify_dummy_password("password123");
         verify_dummy_password(&"x".repeat(4096));
@@ -378,10 +274,7 @@ mod tests {
 
     #[test]
     fn test_verify_is_independent_of_configured_params() {
-        // Guards the RDRS_FAST_HASH optimisation: verification reads the cost
-        // parameters from the stored hash, so a hash produced with strong
-        // (default) params and one produced with minimal params must both
-        // verify. This is what makes weakening hash params in test/CI safe.
+        // Guards RDRS_FAST_HASH: verify reads params from the stored hash.
         let strong = Argon2::default().hash_password(b"pw").unwrap().to_string();
         let weak_params = Params::new(
             Params::MIN_M_COST,

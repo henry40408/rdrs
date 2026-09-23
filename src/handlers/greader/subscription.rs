@@ -66,19 +66,16 @@ pub async fn subscription_list(
     Ok(Json(SubscriptionListResponse { subscriptions }))
 }
 
-// --- subscription/edit ---
-
 #[derive(Debug, Deserialize)]
 pub struct SubscriptionEditForm {
     /// Action: "subscribe", "edit", "unsubscribe"
     pub ac: String,
-    /// Stream ID: "feed/<url>"
+    /// Stream ID: `feed/<url>`
     pub s: Option<String>,
-    /// Title
     pub t: Option<String>,
-    /// Add label/category: "user/-/label/<name>"
+    /// Add label/category: `user/-/label/<name>`
     pub a: Option<String>,
-    /// Remove label/category: "user/-/label/<name>"
+    /// Remove label/category: `user/-/label/<name>`
     pub r: Option<String>,
     /// POST token (optional, skipped for cookie auth)
     #[serde(rename = "T")]
@@ -120,11 +117,9 @@ pub async fn subscription_edit(
             let label = extract_label_name(form.a.as_deref());
             let user_agent = state.config.user_agent.clone();
 
-            // Discover feed metadata
             let discovered =
                 feed_discovery::discover_feed(&feed_url, &user_agent, &state.fetcher).await?;
 
-            // Find or create category
             let category_id = if let Some(label_name) = label {
                 match category::find_by_name_and_user(&state.db, &label_name, user_id).await? {
                     Some(cat) => cat.id,
@@ -146,7 +141,6 @@ pub async fn subscription_edit(
                 }
             };
 
-            // Check if feed already exists for this user (across all categories)
             if let Some(_existing) =
                 feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id).await?
             {
@@ -198,7 +192,6 @@ pub async fn subscription_edit(
                 .await?
                 .ok_or(AppError::FeedNotFound)?;
 
-            // Determine new category if label is being changed
             let new_category_id = if let Some(label_name) = add_label {
                 match category::find_by_name_and_user(&state.db, &label_name, user_id).await? {
                     Some(cat) => cat.id,
@@ -264,8 +257,6 @@ pub async fn subscription_edit(
     }
 }
 
-// --- quickadd ---
-
 #[derive(Debug, Deserialize)]
 pub struct QuickAddForm {
     /// Feed URL
@@ -301,7 +292,6 @@ pub async fn quickadd(
     let user_id = auth.user.id;
     let user_agent = state.config.user_agent.clone();
 
-    // Discover feed
     let discovered = feed_discovery::discover_feed(&url, &user_agent, &state.fetcher).await?;
     let feed_url = discovered.feed_url.clone();
 
@@ -344,8 +334,6 @@ pub async fn quickadd(
     }))
 }
 
-// --- export ---
-
 /// `GET /reader/api/0/subscription/export`
 pub async fn export(
     auth: GReaderUser,
@@ -369,11 +357,9 @@ pub async fn export(
     ))
 }
 
-// --- import ---
-
 /// `POST /reader/api/0/subscription/import`
 ///
-/// Accepts OPML content as the request body (application/xml).
+/// Body is raw OPML (application/xml).
 pub async fn import(
     auth: GReaderUser,
     State(state): State<AppState>,
@@ -385,8 +371,6 @@ pub async fn import(
         i64::try_from(summary.feeds_added).unwrap_or(i64::MAX),
     ))
 }
-
-// --- subscribed ---
 
 #[derive(Debug, Deserialize)]
 pub struct SubscribedQuery {
@@ -417,8 +401,6 @@ pub async fn subscribed(
     })
 }
 
-// --- Helpers ---
-
 /// Extract label name from a `user/-/label/<name>` string.
 fn extract_label_name(s: Option<&str>) -> Option<String> {
     s.and_then(|s| {
@@ -427,7 +409,6 @@ fn extract_label_name(s: Option<&str>) -> Option<String> {
             if let Some(rest) = s.strip_prefix("user/-/label/") {
                 return Some(rest.to_string());
             }
-            // Handle "user/<numeric>/label/<name>"
             if let Some(pos) = after_user.find("/label/") {
                 return Some(after_user[pos + 7..].to_string());
             }
@@ -443,10 +424,8 @@ fn verify_post_token_if_needed(
     token: Option<&str>,
 ) -> AppResult<()> {
     if auth.via_cookie {
-        // A cookie credential reaching here has cleared both CSRF layers —
-        // `csrf_guard` no longer exempts these paths — so it has already proven
-        // it holds the session's token. Requiring `T` on top would add nothing
-        // and would break the web UI, which sends `X-CSRF-Token` but no `T`.
+        // Cookie requests already passed `csrf_guard`; the web UI sends
+        // `X-CSRF-Token`, not `T`.
         return Ok(());
     }
 
@@ -457,7 +436,7 @@ fn verify_post_token_if_needed(
             post_token,
         )?;
     }
-    // Many clients don't send POST token, so we allow it for now
+    // Many clients omit the POST token, so it stays optional.
     Ok(())
 }
 

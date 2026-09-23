@@ -1,6 +1,5 @@
-// static/js/passkey.js — <rdrs-passkeys>, the self-contained WebAuthn UI mounted
-// by the SSR /user-settings page. WebAuthn requires JS, so the JSON
-// /api/passkey* endpoints behind it are the planned exception to SSR-first.
+// <rdrs-passkeys>: WebAuthn UI on /user-settings. WebAuthn needs JS, so its
+// JSON /api/passkey* endpoints are the planned exception to SSR-first.
 
 // `?v=` is substituted at serve time so this nested import is cache-busted.
 import { escapeHtml } from '/static/js/utils.js?v=__RDRS_ASSET_VERSION__';
@@ -21,13 +20,10 @@ function bufferToBase64url(buffer) {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
-// Adding or removing a passkey changes which credentials can open the account,
-// so the server requires a recently-proved session
-// (middleware::auth::RecentlyAuthenticated) and 403s with this exact message.
+// 403 message from middleware::auth::RecentlyAuthenticated.
 const REAUTH_MESSAGE = 'Reauthentication required';
 
-// A <dialog> rather than prompt(): prompt() shows the password in clear text
-// and cannot be styled to match the rest of the page.
+// A <dialog> rather than prompt(), which shows the password in clear text.
 function promptForPassword() {
     return new Promise((resolve) => {
         const dialog = document.createElement('dialog');
@@ -55,9 +51,8 @@ function promptForPassword() {
     });
 }
 
-// Run `send`, and on a re-authentication demand collect the password and run it
-// again — exactly once. The caller passes a thunk rather than a Response because
-// the retry re-issues the request from scratch.
+// Run `send`; on a re-auth demand prompt for the password and retry exactly once.
+// Takes a thunk because the retry re-issues the request.
 async function withReauth(send) {
     let response = await send();
     if (response.status !== 403) return response;
@@ -192,9 +187,8 @@ class RdrsPasskeys extends HTMLElement {
         try {
             btn.disabled = true;
             btn.textContent = 'Registering...';
-            // Only the start of the ceremony can ask for re-authentication, so
-            // the password prompt lands before the authenticator prompt and a
-            // retry still has its challenge.
+            // Only the ceremony start can demand re-auth, so the password
+            // prompt precedes the authenticator one and the retry keeps its challenge.
             const startR = await withReauth(() => fetch('/api/passkey/register/start', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
             }));

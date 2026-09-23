@@ -1,23 +1,14 @@
 // <rdrs-sidebar active="statistics"> — CSR sidebar with category unread counts.
 //
-// `render()` below is the *only* definition of the sidebar's markup; there is no
-// Askama counterpart. The class names it emits are what `static/css/app.css`
-// styles, so a rename here without one there silently unstyles the sidebar.
+// `render()` is the only definition of this markup (no Askama twin); its class
+// names are what app.css styles. SSR was measured and rejected: markup is ~3.5x
+// the bootstrap JSON, paid on every `no-store` load.
 //
-// Server-rendering it was measured and rejected: the bootstrap JSON is 180 B
-// brotli against 653 B for equivalent markup, and logged-in responses are
-// `no-store`, so that difference is paid on every page load rather than once.
-//
-// Anti-flicker: the shell embeds the initial /api/sidebar payload as a JSON
-// `<script id="rdrs-sidebar-bootstrap">`, read synchronously on mount for a
-// zero-round-trip paint and rewritten — along with the sessionStorage mirror —
-// after every fetch. Mounts then revalidate in the background and patch badges
-// surgically, and the open category's feed rows are reconciled by feed id so
-// they survive a full re-render: WebKit paints a fresh `<img>` a frame late even
-// from the HTTP cache, and that frame is a visible blink.
-//
-// Callers announce mutations with `rdrs:sidebar-stale` rather than reaching for
-// `.refresh()`, so the bootstrap, the mirror and the badges advance together.
+// Anti-flicker: paints synchronously from `<script id="rdrs-sidebar-bootstrap">`
+// (and a sessionStorage mirror), then revalidates and patches badges in place.
+// Feed rows are reconciled by id because WebKit paints a fresh `<img>` a frame
+// late even from cache. Callers signal `rdrs:sidebar-stale` rather than calling
+// `.refresh()`.
 
 // `?v=` is substituted at serve time so this nested import is cache-busted.
 import { escapeHtml } from '/static/js/utils.js?v=__RDRS_ASSET_VERSION__';
@@ -40,19 +31,9 @@ const ICON = {
   download: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m8 10.5 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>',
 };
 
-/// The connection lamp, as a constant rather than as state this component
-/// tracks.
-///
-/// `offline.js` owns the judgement and publishes it as `<html data-offline>`;
-/// everything below is a CSS reaction to that attribute. Which is the point:
-/// this sidebar rebuilds its own `innerHTML` on every mark-as-read, so a lamp
-/// driven by a property here would need re-applying after each render, and the
-/// one render that forgot would leave the reader looking at a green light with
-/// no connection.
-///
-/// Colour is never the only channel: offline also puts the word on screen, and
-/// online keeps it for screen readers alone — a green dot is the state the
-/// reader sees all day, and it earns no words.
+/// Connection lamp. Pure CSS reaction to `<html data-offline>` (owned by
+/// offline.js), so re-renders can never leave a stale light. Colour is never the
+/// only channel: offline shows the word; online keeps it for screen readers.
 const CONNECTION_LAMP = `
         <span class="conn-status" role="status" data-testid="connection-status">
             <span class="conn-dot" aria-hidden="true"></span>
@@ -62,14 +43,10 @@ const CONNECTION_LAMP = `
 
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
-/// Per-category feed lists, mirrored so revisiting a category paints from the
-/// last known state instead of an empty gap. Possibly one interaction stale,
-/// corrected by the revalidation that follows immediately.
+/// Per-category feed lists, mirrored so revisits paint instantly; revalidated right after.
 const FEEDS_CACHE_KEY = 'rdrs.sidebar.feeds.v1';
 
-/// Window over which repeated `rdrs:sidebar-stale` signals collapse into a
-/// single fetch. Long enough to absorb the two an entry-open produces (measured
-/// ~4 ms apart), short enough that the badges settle within a frame or two.
+/// Coalescing window for `rdrs:sidebar-stale`; absorbs the two an entry-open fires (~4 ms apart).
 const STALE_COALESCE_MS = 50;
 
 function readBootstrap() {
@@ -110,23 +87,18 @@ function writeCachedFeeds(byCategory) {
     catch { /* quota / disabled storage — fine */ }
 }
 
-/// Mirror `feed_initial()` / `feed_color_index()` in handlers/pages, so the same
-/// feed wears the same mark here and in `_entry_row.html`.
+/// Mirrors `feed_initial()` / `feed_color_index()` in handlers/pages.
 function feedInitial(feed) { return (Array.from(feed.title || '')[0] || '?').toUpperCase(); }
 
 function feedColorIndex(feed) { return ((feed.id % 6) + 6) % 6; }
 
-/// Identity of the mark a feed should be wearing. Stamped on as
-/// `data-favicon-key` so a refresh can tell "same mark, leave it alone" from
-/// "this feed's mark changed" — WebKit paints a freshly inserted `<img>` a frame
-/// late even from the HTTP cache, so recreating one blinks the icon.
+/// Stamped as `data-favicon-key` so a refresh leaves an unchanged `<img>` alone
+/// (recreating it blinks in WebKit).
 function feedFaviconKey(feed) {
     return feed.has_icon ? `img:${feed.id}` : `chip:${feedColorIndex(feed)}:${feedInitial(feed)}`;
 }
 
-/// The real icon when the server says there is one, otherwise the initial-letter
-/// chip. Built as a node rather than a markup string so rows can be reconciled in
-/// place; text goes in via `textContent`, which leaves nothing to escape.
+/// Real icon if any, else the initial-letter chip; built as a node for in-place reconciling.
 function buildFeedFavicon(feed) {
     let node;
     if (feed.has_icon) {
@@ -134,9 +106,7 @@ function buildFeedFavicon(feed) {
         node.className = 'entry-favicon';
         node.src = `/api/feeds/${feed.id}/icon`;
         node.alt = '';
-        // No lazy loading and a sync decode, matching `_entry_row.html`: WebKit
-        // drops the frame while it re-runs lazy-load bookkeeping or decodes
-        // asynchronously, which is what the icons blinking on iOS looks like.
+        // No lazy loading and sync decode, matching `_entry_row.html`: otherwise icons blink on iOS.
         node.decoding = 'sync';
         node.width = 15;
         node.height = 15;
@@ -150,8 +120,7 @@ function buildFeedFavicon(feed) {
     return node;
 }
 
-/// The reader's sidebar display preferences. Defaults match the server's, so a
-/// payload from before these settings existed behaves as it did.
+/// The reader's sidebar display preferences; defaults match the server's.
 function sidebarPrefs(data) {
     return {
         sort: data?.sidebar_sort === 'unread' ? 'unread' : 'name',
@@ -159,15 +128,9 @@ function sidebarPrefs(data) {
     };
 }
 
-/// Apply those preferences to a list of category or feed rows.
-///
-/// `keepId` is the row the reader currently has open. It stays listed even at
-/// zero unread: hiding it would make the row vanish from under the cursor the
-/// moment its last entry is marked read.
-///
-/// The server always sends these lists complete and in name order, so 'name' is
-/// a no-op and 'unread' re-sorts a copy. `sort` is stable, so equal counts keep
-/// that A-Z order.
+/// Apply those preferences to category or feed rows. `keepId` (the open row)
+/// stays listed at zero unread so it doesn't vanish under the cursor. Input is
+/// name-ordered; 'unread' does a stable re-sort of a copy.
 function arrangeSidebarRows(rows, prefs, keepId) {
     let out = rows || [];
     if (prefs.hideRead) {
@@ -179,28 +142,21 @@ function arrangeSidebarRows(rows, prefs, keepId) {
     return out;
 }
 
-/// Whether this reader keeps a library for offline reading.
-///
-/// Read off `<html data-offline-keep>`, where the server already renders it for
-/// `offline.js`, rather than added to the sidebar's own payload: that payload is
-/// revalidated in the background and mirrored in sessionStorage, while this
-/// number only ever changes across a full page load. Carrying it there would
-/// give one value two lifetimes.
+/// Whether this reader keeps an offline library, from `<html data-offline-keep>`;
+/// it only changes across full page loads, unlike the revalidated payload.
 function offlineLibraryKept() {
     const keep = Number.parseInt(document.documentElement.dataset.offlineKeep || '0', 10);
     return Number.isFinite(keep) && keep > 0;
 }
 
-/// Shared by `render()` and `_applyActive()` so the class a fresh render paints
-/// and the one an attribute change patches can't diverge. "All Entries" is the
-/// odd one out: it stays lit across the /entries family.
+/// Shared by `render()` and `_applyActive()` so they can't diverge. "All Entries"
+/// stays lit across the /entries family.
 function navIsActive(nav, active) {
     if (nav === 'entries') return ['all', 'read', 'entries'].includes(active);
     return nav === active;
 }
 
-/// True when the difference between two payloads can't be expressed by surgical
-/// badge updates alone — identity, role, or the category set changed.
+/// True when a payload change needs a full render, not just badge updates.
 function isStructuralChange(prev, next) {
     if (prev.username !== next.username) return true;
     if (!!prev.is_admin !== !!next.is_admin) return true;
@@ -210,17 +166,14 @@ function isStructuralChange(prev, next) {
     if (!!prev.sidebar_hide_read !== !!next.sidebar_hide_read) return true;
     const key = (cats) => (cats || []).map((c) => `${c.id}:${c.name}`).join('|');
     if (key(prev.categories) !== key(next.categories)) return true;
-    // With fully-read groups hidden, a badge reaching or leaving zero adds or
-    // removes a row — something `_updateBadges` has no way to express.
+    // With fully-read groups hidden, reaching/leaving zero adds or removes a row.
     if (next.sidebar_hide_read) {
         const shown = (cats) => (cats || []).filter((c) => c.unread_count > 0)
             .map((c) => c.id).join('|');
         if (shown(prev.categories) !== shown(next.categories)) return true;
     }
-    // Under the unread ordering changed counts also change the *order*, which is
-    // deliberately not structural: re-sorting on every mark-as-read would move
-    // rows out from under the pointer mid-click. It settles on the next full
-    // render.
+    // Reordering by unread is deliberately not structural: rows must not move
+    // mid-click. It settles on the next full render.
     return false;
 }
 
@@ -232,7 +185,7 @@ class RdrsSidebar extends HTMLElement {
         // Bound once so connect/disconnect add and remove the *same* reference.
         this._onDocumentClick = this._onDocumentClick.bind(this);
         this._onStale = this._onStale.bind(this);
-        // category id -> feed list, for the categories opened this session.
+        // category id -> feed list, for categories opened this session.
         this._feeds = readCachedFeeds();
     }
 
@@ -247,8 +200,7 @@ class RdrsSidebar extends HTMLElement {
         this.fetchData();
         this.fetchFeeds();
 
-        // The scrim is a CSS pseudo-element with no clickable node of its own,
-        // so tap-outside-to-close has to listen on the document.
+        // The scrim is a pseudo-element, so tap-outside listens on the document.
         document.addEventListener('click', this._onDocumentClick);
         document.addEventListener('rdrs:sidebar-stale', this._onStale);
     }
@@ -263,20 +215,16 @@ class RdrsSidebar extends HTMLElement {
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
-        // The observed attributes only decide which item carries `.active`, so
-        // patch those classes instead of re-rendering: `render()` rebuilds
-        // `innerHTML`, and a rebuilt `.sidebar-nav` loses the scroll position the
-        // in-place list swap exists to preserve.
+        // Patch `.active` instead of re-rendering, which would reset `.sidebar-nav`'s scroll.
         this._applyActive();
-        // A new active category needs its feed list, which is loaded on demand.
+        // A new active category needs its feed list (loaded on demand).
         if (name === 'active-category-id' && oldValue !== newValue) {
             this._renderFeeds();
             this.fetchFeeds();
         }
     }
 
-    /// Repaint `.active` from the current attributes. No-op before the first
-    /// render; `render()` reads the same attributes itself.
+    /// Repaint `.active` from the current attributes; no-op before first render.
     _applyActive() {
         const active = this.getAttribute('active') || '';
         const activeCatId = this.activeCategoryId;
@@ -298,18 +246,14 @@ class RdrsSidebar extends HTMLElement {
 
     get activeFeedId() { return parseInt(this.getAttribute('active-feed-id') || '0', 10); }
 
-    /// Latest category list from /api/sidebar — in render order, without the rows
-    /// the reader's preferences hide — or [] before the first payload. Read by
-    /// app.js's `[` / `]` navigation, which must step through exactly what is on
-    /// screen without reaching into the private `_data`.
+    /// Categories in render order (minus hidden rows), or []. Used by app.js's
+    /// `[` / `]` navigation to step through exactly what is on screen.
     get categories() {
         return arrangeSidebarRows(this._data?.categories, sidebarPrefs(this._data),
             this.activeCategoryId);
     }
 
-    /// Feeds of the active category, in render order, or [] when none is active.
-    /// Read by the same `[` / `]` navigation, which walks categories and the open
-    /// category's feeds as one flat list.
+    /// Feeds of the active category in render order, or []. Also for `[` / `]`.
     get activeFeeds() {
         const catId = this.activeCategoryId;
         if (!catId) return [];
@@ -317,8 +261,7 @@ class RdrsSidebar extends HTMLElement {
             this.activeFeedId);
     }
 
-    /// Which category a feed belongs to, if any list loaded this session names it.
-    /// `null` means "unknown", not "no category".
+    /// A feed's category if known this session; `null` means unknown.
     categoryIdOfFeed(feedId) {
         const wanted = parseInt(feedId, 10);
         for (const [catId, feeds] of Object.entries(this._feeds)) {
@@ -327,15 +270,13 @@ class RdrsSidebar extends HTMLElement {
         return null;
     }
 
-    /// Only the open category is ever shown, so only it is fetched: a
-    /// several-hundred-feed account would otherwise pay for its whole
-    /// subscription list on every page load (see `get_sidebar_category_feeds`).
+    /// Only the open category's feeds are fetched, so large accounts don't pay
+    /// for every subscription on each load.
     async fetchFeeds(options = {}) {
         const catId = this.activeCategoryId;
         if (!catId) return;
-        // First mount asks twice — from the upgrade-time attributeChangedCallback
-        // and from connectedCallback — and the second would abort the first for
-        // the same answer. A revalidation (`force`) still supersedes.
+        // First mount asks twice (attributeChanged + connected); don't abort for
+        // the same answer. A `force` revalidation still supersedes.
         if (this._feedsInFlightFor === catId && !options.force) return;
         this._feedsInFlightFor = catId;
         this._feedsAbort?.abort();
@@ -348,8 +289,7 @@ class RdrsSidebar extends HTMLElement {
             });
             if (!resp.ok) return;
             const data = await resp.json();
-            // The reader may have moved on; the response describes the category
-            // it was asked about.
+            // The reader may have moved on; this response is for `categoryId`.
             if (data.category_id !== this.activeCategoryId) return;
             this._feeds[data.category_id] = data.feeds || [];
             writeCachedFeeds(this._feeds);
@@ -363,31 +303,23 @@ class RdrsSidebar extends HTMLElement {
         }
     }
 
-    /// Imperative escape hatch for a caller that already holds the element and
-    /// wants to await the refetch. `rdrs:sidebar-stale` is the normal path.
+    /// Imperative escape hatch to await a refetch; `rdrs:sidebar-stale` is the normal path.
     refresh() { return this.fetchData(); }
 
-    /// Coalesced: one interaction routinely raises `rdrs:sidebar-stale` more than
-    /// once — opening an entry fires it from app.js's `rdrs:swap-complete` hook
-    /// and again from the server's SSE `sidebar` event after auto-mark-as-read.
-    ///
-    /// Trailing edge, so the fetch reads state with every write in the burst
-    /// applied. The delay is invisible: the row and pane have already swapped and
-    /// this only revalidates the counts beside them.
+    /// Coalesced trailing-edge refresh: one interaction often raises
+    /// `rdrs:sidebar-stale` twice (swap-complete, then SSE).
     _onStale() {
         clearTimeout(this._staleTimer);
         this._staleTimer = setTimeout(() => {
             this._staleTimer = null;
             this.fetchData();
-            // Feed badges move for the same reasons category badges do, and come
-            // from a different endpoint.
+            // Feed badges come from a different endpoint.
             this.fetchFeeds({ force: true });
         }, STALE_COALESCE_MS);
     }
 
     async fetchData() {
-        // Without this, two overlapping /api/sidebar responses can land out of
-        // order and the staler payload wins.
+        // Otherwise overlapping responses can land out of order.
         this._abort?.abort();
         const controller = new AbortController();
         this._abort = controller;
@@ -412,8 +344,7 @@ class RdrsSidebar extends HTMLElement {
         }
     }
 
-    /// Mobile drawer open/close. The hamburger hides while the drawer is open so
-    /// it doesn't sit on top of the panel.
+    /// Mobile drawer open/close; the hamburger hides while open.
     toggleDrawer() {
         const sidebar = this.querySelector('#sidebar');
         if (!sidebar) return;
@@ -433,14 +364,12 @@ class RdrsSidebar extends HTMLElement {
         const sidebar = this.querySelector('#sidebar');
         if (!sidebar || !sidebar.classList.contains('open')) return;
         if (!(e.target instanceof Element)) return;
-        // `closest()` rather than `sidebar.contains()`: render() rebuilds the
-        // whole subtree, so a click can land on an already-detached node.
+        // `closest()`: render() may have detached the clicked node.
         if (e.target.closest('#sidebar') || e.target.closest('.sidebar-toggle')) return;
         this.closeDrawer();
     }
 
-    /// Text is written with `textContent`, so unlike the template strings in
-    /// `render()` there is nothing to escape.
+    /// Uses `textContent`, so nothing to escape.
     _buildFeedRow(feed) {
         const row = document.createElement('a');
         row.className = 'sidebar-feed';
@@ -454,9 +383,7 @@ class RdrsSidebar extends HTMLElement {
         return row;
     }
 
-    /// Touch only what differs, so everything left alone keeps its painted pixels
-    /// — the `<img>` favicon above all, which is why it is compared by
-    /// `data-favicon-key` rather than rebuilt unconditionally.
+    /// Touch only what differs; favicons compared by `data-favicon-key` to avoid blinking.
     _patchFeedRow(row, feed) {
         const title = feed.title || '';
         if (row.title !== title) row.title = title;
@@ -485,15 +412,9 @@ class RdrsSidebar extends HTMLElement {
         row.classList.toggle('active', feed.id === this.activeFeedId);
     }
 
-    /// Mount (or refresh) the feed list under the open category, dropping any list
-    /// left by the category before it. Written into the existing DOM rather than
-    /// folded into `render()` because a full rebuild resets `.sidebar-nav`'s
-    /// scroll offset, and this runs on every category switch.
-    ///
-    /// Rows are reconciled by feed id rather than rewritten as one `innerHTML`
-    /// blob: every `rdrs:sidebar-stale` signal lands here, and a rewritten row
-    /// means a rebuilt `<img>`, which WebKit paints a frame late even from cache
-    /// — the feed icons blinked on essentially every interaction.
+    /// Mount or refresh the open category's feed list in the existing DOM (a full
+    /// render resets `.sidebar-nav` scroll). Rows reconciled by feed id so WebKit
+    /// doesn't blink their `<img>` on every `rdrs:sidebar-stale`.
     _renderFeeds() {
         const container = this.querySelector('#sidebar-categories');
         if (!container) return;
@@ -506,12 +427,10 @@ class RdrsSidebar extends HTMLElement {
         if (!catId) return;
         const link = container.querySelector(`a[data-category-id="${catId}"]`);
         const feeds = this._feeds[catId];
-        // No link or no feed list yet: leave the gap rather than flash an empty
-        // group — fetchFeeds() calls back here.
+        // Leave the gap rather than flash an empty group; fetchFeeds() calls back.
         if (!link || !feeds) return;
         let list = container.querySelector(`.sidebar-feeds[data-category-id="${catId}"]`);
-        // A full render() set the previous list aside; re-adopting it keeps those
-        // rows and their loaded icons.
+        // Re-adopt the list render() set aside, keeping loaded icons.
         if (!list && detached
             && parseInt(detached.dataset.categoryId || '0', 10) === catId) {
             list = detached;
@@ -540,8 +459,7 @@ class RdrsSidebar extends HTMLElement {
             } else {
                 row = this._buildFeedRow(feed);
             }
-            // Only when the row isn't already where it belongs, so a reordering
-            // doesn't detach and reattach every node after it.
+            // Only move misplaced rows, so reordering doesn't reattach everything after.
             const at = cursor ? cursor.nextSibling : list.firstChild;
             if (at !== row) list.insertBefore(row, at);
             cursor = row;
@@ -549,8 +467,7 @@ class RdrsSidebar extends HTMLElement {
         for (const row of rows.values()) row.remove();
     }
 
-    /// Surgical badge update, so frequent mark-as-read clicks don't flash the
-    /// whole sidebar.
+    /// Surgical badge update, so mark-as-read doesn't flash the whole sidebar.
     _updateBadges(data) {
         const totalEl = this.querySelector('#unread-count');
         if (totalEl) {
@@ -614,21 +531,15 @@ class RdrsSidebar extends HTMLElement {
                 Viewing as another user &middot; <a href="#" data-rdrs-stop-masq>Stop</a>
             </div>` : '';
 
-        // /settings and /admin are admin-only server-side; hide the links so the
-        // nav matches what a regular account can actually open.
+        // Admin-only server-side; hide for regular accounts.
         const appSettingsLink = isAdmin ? `
             <a href="/settings" class="sidebar-item${isActive('settings')}" data-nav="settings" data-testid="nav-app-settings">
                 <span class="sidebar-item-icon">${ICON.cog}</span>
                 <span>App</span>
             </a>` : '';
 
-        // The only route into the saved-article library, and the reason it
-        // needs one: everything else on a list reaches the server, Load More
-        // included, so a reader whose connection dropped partway down a page is
-        // left with whatever happened to be rendered and no way to the rest of
-        // what their own browser is holding. Offered only above
-        // `offline_keep = 0`, where nothing is stored and the destination would
-        // be a permanently empty page.
+        // The only route to the offline library (everything else needs the server).
+        // Hidden at `offline_keep = 0`, where it would always be empty.
         const offlineLink = offlineLibraryKept() ? `
             <a href="/entries/offline" class="sidebar-item${isActive('offline')}" data-nav="offline" data-testid="nav-offline">
                 <span class="sidebar-item-icon">${ICON.download}</span>
@@ -641,21 +552,16 @@ class RdrsSidebar extends HTMLElement {
                 <span>Admin</span>
             </a>` : '';
 
-        // The rebuild below discards #sidebar-categories and with it the open
-        // category's feed list. Detached first so `_renderFeeds()` can re-adopt
-        // the same rows: with `sidebar_hide_read` on, an ordinary mark-as-read
-        // counts as structural, so a rebuilt list reads as the icons blinking.
+        // Detach the open category's feed list so `_renderFeeds()` can re-adopt
+        // it; otherwise icons blink when hide-read makes mark-as-read structural.
         const openFeeds = activeCatId
             ? this.querySelector(`.sidebar-feeds[data-category-id="${activeCatId}"]`)
             : null;
         openFeeds?.remove();
         this._detachedFeeds = openFeeds;
 
-        // `.sidebar-nav` is its own scroller and the rebuild replaces it, so its
-        // offset has to be carried across too. With `sidebar_hide_read` on this
-        // is not a navigation-only path: emptying a group is a structural change,
-        // so "Mark Above as Read" — a button at the *bottom* of the entry list —
-        // re-rendered the sidebar and sent the reader back to the top.
+        // Carry `.sidebar-nav` scroll across the rebuild (e.g. "Mark Above as Read"
+        // with hide-read on used to jump to the top).
         const navOffset = this.querySelector('.sidebar-nav')?.scrollTop ?? 0;
 
         this.innerHTML = `
@@ -730,13 +636,10 @@ class RdrsSidebar extends HTMLElement {
     </div>
 </aside>`;
 
-        // The rebuild above also discards the open category's feed list, which
-        // lives inside #sidebar-categories and is not part of this template.
+        // The rebuild also discarded the open category's feed list.
         this._renderFeeds();
 
-        // After `_renderFeeds()`, which settles the scroll extent: restored
-        // before those rows exist, a bottom-anchored offset would be clamped to a
-        // list still missing them.
+        // After `_renderFeeds()`, or the offset is clamped to a shorter list.
         if (navOffset > 0) {
             const nav = this.querySelector('.sidebar-nav');
             if (nav) nav.scrollTop = navOffset;
@@ -748,22 +651,18 @@ class RdrsSidebar extends HTMLElement {
 
         this.querySelector('[data-rdrs-logout]')?.addEventListener('click', async (e) => {
             e.preventDefault();
-            // The local session is already gone once a forward-auth user has been
-            // told to log out at their proxy; a second click would 401 and flash a
-            // misleading "Logout failed".
+            // Forward-auth session already ended locally; a second click would 401.
             if (this._proxyLogoutNotified) return;
             try {
                 const r = await fetch('/api/session', { method: 'DELETE' });
                 if (r.ok) {
                     const d = await r.json();
                     if (d.logout_url_configured) {
-                        // A proxy/SSO logout URL is configured: hand off so the
-                        // upstream session actually ends.
+                        // Hand off to the proxy/SSO so the upstream session ends.
                         window.location.href = d.redirect_to;
                     } else if (d.via_forward_auth) {
-                        // No logout URL configured: a local logout is a no-op because the
-                        // proxy re-injects the identity header on the next request. Be honest
-                        // rather than bounce to /login and silently re-authenticate.
+                        // No logout URL: the proxy would re-inject identity, so say
+                        // so rather than silently re-authenticate via /login.
                         this._proxyLogoutNotified = true;
                         window.flash.warning('You are signed in via your reverse proxy. To end your session, log out at your proxy or SSO provider, then reload this page to keep using the app.');
                     } else {

@@ -20,29 +20,13 @@ use crate::services::audit;
 
 pub const SESSION_COOKIE_NAME: &str = "session_token";
 
-/// `__Host-`-prefixed session cookie name, used only when `Secure` is in effect
-/// (see [`session_cookie_name`]).
-///
-/// OWASP's Session Management Cheat Sheet recommends the prefix wherever
-/// possible: a browser enforces that a cookie under this name is `Secure`,
-/// carries `Path=/`, has no `Domain`, and was set by this exact host — closing
-/// the channel by which a sibling subdomain could otherwise *write* a cookie
-/// that shadows ours.
-///
-/// Defence in depth, not a fix for a real gap: every cookie value carries an
-/// HMAC signature that [`session_token_from_jar`] verifies before any database
-/// lookup, so a malicious subdomain cannot mint a value that verifies, prefix or
-/// no prefix.
-///
-/// A `__Host-` cookie without `Secure` is silently *discarded* by the browser,
-/// so this name must never be written while `Secure` is off — that would make
-/// login impossible on a plain-HTTP deployment, rdrs's own default. Hence it is
-/// only ever selected via [`session_cookie_name`].
+/// `__Host-`-prefixed session cookie name (OWASP): stops a sibling subdomain
+/// from shadowing our cookie. Defence in depth only, since values are HMAC-signed.
+/// Must never be written without `Secure` (the browser discards it, breaking
+/// plain-HTTP login), so select it only via [`session_cookie_name`].
 pub const SESSION_COOKIE_NAME_HOST: &str = "__Host-session_token";
 
-/// Which cookie name to *write* for the session cookie, given whether
-/// `Secure` is in effect. See [`SESSION_COOKIE_NAME_HOST`] for why the
-/// `__Host-` prefix cannot be used unconditionally.
+/// Session cookie name to *write*: prefixed only when `Secure` is in effect.
 pub fn session_cookie_name(secure: bool) -> &'static str {
     if secure {
         SESSION_COOKIE_NAME_HOST
@@ -51,15 +35,9 @@ pub fn session_cookie_name(secure: bool) -> &'static str {
     }
 }
 
-/// Build the session cookie carrying `token`.
-///
-/// Every login path goes through here so the attributes cannot drift apart. The
-/// cookie *value* is the token plus an HMAC signature, so a forged cookie is
-/// rejected before any database lookup and a leaked `session.session_token` is
-/// unusable without the root key. `secure` comes from
-/// [`crate::config::Config::cookie_secure`] and also picks the cookie *name* via
-/// [`session_cookie_name`]; `Path=/` and no `Domain` are already true below, so
-/// whenever `secure` is on this cookie is fully prefix-compliant.
+/// Build the session cookie for `token`; every login path must use this. The
+/// value is HMAC-signed, so forgeries fail before any DB lookup and a leaked
+/// `session.session_token` is useless without the root key.
 pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<'static> {
     Cookie::build((
         session_cookie_name(secure),
@@ -73,19 +51,12 @@ pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<
     .build()
 }
 
-/// Read the signed session cookie from `jar` and return the database token it
-/// carries, or `None` when the cookie is absent or its signature does not
-/// verify. Every extractor and the forward-auth middleware funnel through here.
+/// Return the verified session token from `jar`, or `None`.
 ///
-/// Tries [`SESSION_COOKIE_NAME_HOST`] first, then falls back to the unprefixed
-/// [`SESSION_COOKIE_NAME`] — not only when the prefixed cookie is absent, but
-/// also when it is present and fails to verify. Accepting the unprefixed name
-/// weakens nothing (forgery resistance comes entirely from the HMAC), and it is
-/// necessary: an upgrade, or an operator flipping `RDRS_COOKIE_SECURE`, must not
-/// log out every existing session. Falling through past a present-but-invalid
-/// prefixed cookie matters too — a browser can carry a stale, empty `__Host-`
-/// cookie from a logout's removal `Set-Cookie` alongside a valid unprefixed one,
-/// and that must not shadow it.
+/// Tries [`SESSION_COOKIE_NAME_HOST`], then [`SESSION_COOKIE_NAME`] even if the
+/// prefixed one is present but invalid: flipping `RDRS_COOKIE_SECURE` must not log
+/// everyone out, and a stale empty `__Host-` cookie must not shadow a valid one.
+/// Safe because forgery resistance comes from the HMAC alone.
 pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> {
     if let Some(token) = jar
         .get(SESSION_COOKIE_NAME_HOST)
@@ -97,24 +68,15 @@ pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> 
     crate::secret::verify_session(secret, &value)
 }
 
-/// The channel by which an extractor asks [`slide_session_cookie`] to rotate the
-/// session token.
-///
-/// The decision is made deep inside the request, where the sliding refresh
-/// already computes "this session is due", but the rotation itself must not
-/// happen there: an extractor sees only request parts, so it cannot know whether
-/// the response is one a cookie may ride on, and a rotation whose new token
-/// never reaches the client would sign that client out once the grace interval
-/// lapsed. So the extractor raises the flag and the middleware rotates once it
-/// holds the finished response and has ruled out the publicly cacheable ones.
+/// Lets an extractor ask [`slide_session_cookie`] to rotate the session token.
+/// Rotation is deferred to the middleware because only it knows the response can
+/// carry the new cookie; an undelivered rotation would sign the client out.
 #[derive(Clone, Default)]
 pub struct RotationSlot(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
 impl RotationSlot {
-    /// Ask for the session token to be rotated on the way out. A no-op when the
-    /// request carries no slot — i.e. on a route mounted outside this
-    /// middleware, such as the SSE stream at `/events`, where nothing could
-    /// deliver the new token anyway.
+    /// Request rotation on the way out; no-op on routes outside the middleware
+    /// (e.g. `/events`).
     pub fn request(parts: &Parts) {
         if let Some(slot) = parts.extensions.get::<Self>() {
             slot.0.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -126,39 +88,18 @@ impl RotationSlot {
     }
 }
 
-/// Path prefixes skipped entirely: static assets, favicons and the health check
-/// must stay cacheable, and a `Set-Cookie` on any of them would poison a shared
-/// cache. Deliberately narrower than `ANON_SKIP_PREFIXES` in `csrf.rs` — `/api`
-/// and `/reader` are *not* skipped, since a pure-API client must still get its
-/// cookie's `Max-Age` renewed.
-///
-/// Not the whole defence: the image proxy and the feed icon are deliberately
-/// publicly cacheable and are not listed here, since `/api` at large must still
-/// be slid. Those are caught on the way out — see
-/// [`response_is_publicly_cacheable`].
+/// Cacheable paths that must never get a `Set-Cookie`. Narrower than
+/// `ANON_SKIP_PREFIXES` in `csrf.rs` so API clients still get `Max-Age` renewed;
+/// other public responses are caught by [`response_is_publicly_cacheable`].
 const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health", "/sw.js", "/offline"];
 
-/// Reissue the session and CSRF cookies on every authenticated request so their
-/// `Max-Age` — aligned with the sliding session TTL rather than the old 90-day
-/// absolute cap — tracks "last used" the way the row's own `expires_at` does,
-/// instead of logging out a browser still in active use.
+/// Reissue the session and CSRF cookies on every request with a verified session
+/// cookie so `Max-Age` slides with use, and perform any rotation requested via
+/// [`RotationSlot`].
 ///
-/// Sliding the row's `expires_at` remains `session::refresh_if_needed`'s job.
-/// The one database write this layer performs is the token rotation the
-/// extractors ask for (see [`RotationSlot`]), which has to happen here because
-/// only here is it known whether a new cookie can be delivered at all. An absent
-/// or HMAC-invalid session cookie is passed through untouched. A verified but
-/// row-less *anonymous* cookie is slid the same way, which is harmless and
-/// intentional: it expires on its own schedule and has no row to out-live.
-///
-/// Layered outside `anonymous_session` and inside `forward_auth`, so it observes
-/// — and must never clobber — the `Set-Cookie`s those emit. For each cookie
-/// *purpose* (session, CSRF), either of whose two names may be in play, a
-/// `Set-Cookie` already present under *either* name is left alone; only the
-/// absence of both appends a fresh one. Checking both names matters most for
-/// `logout`, which emits removal cookies under all four: recognising only the
-/// name this layer would itself write would append a *live* cookie next to a
-/// removal and silently undo the logout.
+/// Must never clobber inner layers' `Set-Cookie`s: if either name of a cookie
+/// purpose is already set, it is left alone — otherwise logout's removal cookies
+/// would be undone by a live one.
 pub async fn slide_session_cookie(
     State(state): State<AppState>,
     mut req: Request,
@@ -179,31 +120,19 @@ pub async fn slide_session_cookie(
     let secret = &state.config.secret;
     let secure = state.config.cookie_secure;
 
-    // Offer the extractors below a way to ask for a rotation, and keep our own
-    // handle on the answer — see [`RotationSlot`].
     let slot = RotationSlot::default();
     req.extensions_mut().insert(slot.clone());
 
     let mut resp = next.run(req).await;
 
-    // A live session cookie must never ride on a response a shared cache may
-    // store — that cache would hand this user's session to the next visitor.
-    // `proxy_image` and `get_feed_icon` deliberately mark their responses
-    // `public, max-age=...`, so skip the reissue for those rather than trying to
-    // enumerate their paths.
-    //
-    // Checked *before* the rotation below: a rotation this response cannot carry
-    // would rename the session behind the client's back and sign it out once the
-    // grace interval lapsed.
+    // A session cookie on a shared-cacheable response would leak the session to
+    // the next visitor. Checked before rotating, since this response can't carry it.
     if response_is_publicly_cacheable(&resp) {
         return resp;
     }
 
-    // The rotation happens here rather than in the extractor that asked for it,
-    // because only here is it known the new token can reach the client.
-    // `rotate_token` matches on the old token, so if a concurrent request beat us
-    // we get `None` and keep the token we have — still valid, because the winner
-    // left it behind as the grace token.
+    // `None` means a concurrent request rotated first; our token stays valid as
+    // the grace token.
     let token = if slot.requested() {
         match session::rotate_token(&state.db, &token).await {
             Ok(Some(rotated)) => {
@@ -243,12 +172,7 @@ pub async fn slide_session_cookie(
     resp
 }
 
-/// Whether `resp` already carries a `Set-Cookie` header for cookie `name`.
-///
-/// Every `Set-Cookie` value is split at its *first* `=` and the trimmed
-/// substring before it compared for an exact match. Deliberately not a substring
-/// search: a different cookie whose value happens to contain `name` must not
-/// count.
+/// Whether `resp` sets cookie `name` (exact name match, not a substring search).
 fn response_has_set_cookie_for(resp: &Response, name: &str) -> bool {
     resp.headers()
         .get_all(header::SET_COOKIE)
@@ -257,25 +181,15 @@ fn response_has_set_cookie_for(resp: &Response, name: &str) -> bool {
         .any(|v| v.split_once('=').is_some_and(|(n, _)| n.trim() == name))
 }
 
-/// Whether `resp` already carries a `Set-Cookie` for *any* of `names` — i.e.
-/// whether this cookie purpose is already covered, where the purpose may be
-/// represented by either its unprefixed or `__Host-`-prefixed name. See
-/// [`slide_session_cookie`].
+/// Whether `resp` sets any of `names` (a purpose's prefixed and unprefixed names).
 fn response_has_set_cookie_for_any(resp: &Response, names: &[&str]) -> bool {
     names
         .iter()
         .any(|name| response_has_set_cookie_for(resp, name))
 }
 
-/// Whether `resp` declares itself storable by a *shared* cache, in which case a
-/// `Set-Cookie` must not be stapled to it. `no_store_for_authenticated` is
-/// layered inside this middleware and has already run, so an ordinary
-/// authenticated response carries `no-store` from it, while the deliberate
-/// public-caching call sites carry their own `public, max-age=...` untouched.
-///
-/// "Shared-cacheable" here means a `Cache-Control` whose directives include
-/// neither `no-store` nor `private`; an absent or non-UTF-8 header is treated as
-/// not cacheable, so the default is to still slide the cookie.
+/// Whether `resp` is shared-cacheable (`Cache-Control` without `no-store` or
+/// `private`), so no `Set-Cookie` may be attached. Missing header counts as not.
 fn response_is_publicly_cacheable(resp: &Response) -> bool {
     let Some(value) = resp.headers().get(header::CACHE_CONTROL) else {
         return false;
@@ -290,7 +204,6 @@ fn response_is_publicly_cacheable(resp: &Response) -> bool {
     })
 }
 
-/// Append `cookie` as a `Set-Cookie` header on `resp`.
 fn append_set_cookie(resp: &mut Response, cookie: &Cookie<'static>) {
     if let Ok(value) = HeaderValue::from_str(&cookie.to_string()) {
         resp.headers_mut().append(header::SET_COOKIE, value);
@@ -304,24 +217,13 @@ pub struct AuthUser {
     pub via_forward_auth: bool,
 }
 
-/// An [`AuthUser`] whose session proved its credentials within
-/// [`session::REAUTH_WINDOW_MINUTES`] — OWASP's "Reauthentication After Risk
-/// Events", applied to the operations that change which credentials can open the
-/// account.
+/// An [`AuthUser`] authenticated within [`session::REAUTH_WINDOW_MINUTES`]
+/// (OWASP reauthentication), guarding passkey add/remove so a hijacked session
+/// can't mint a credential that survives a password change.
 ///
-/// It guards passkey registration and removal. Registering a passkey adds an
-/// independently usable credential a later password change will *not* revoke, so
-/// a session someone else picked up — an unlocked laptop, a borrowed browser —
-/// must not be able to mint one silently.
-///
-/// Forward-auth sessions are exempt, and the exemption is not a gap: their
-/// identity is asserted by the proxy on every request, so rdrs has no credential
-/// of its own to re-check, and the account may hold no usable password at all.
-/// Requiring one there would lock those users out of passkey registration
-/// permanently rather than protect them.
-///
-/// Rejects with [`AppError::ReauthenticationRequired`], which the browser turns
-/// into a password prompt and a retry.
+/// Forward-auth sessions are exempt: the proxy asserts identity per request and
+/// the account may have no password. Rejects with
+/// [`AppError::ReauthenticationRequired`].
 #[derive(Debug, Clone)]
 pub struct RecentlyAuthenticated {
     pub user: User,
@@ -376,9 +278,7 @@ impl FromRequestParts<AppState> for AuthUser {
                     new_expires_at,
                 );
                 session.expires_at = new_expires_at;
-                // Same trigger, second effect: the session is due for a new
-                // token as well. `slide_session_cookie` performs it on the way
-                // out, where the response is known to be able to carry it.
+                // Also due for token rotation, done by `slide_session_cookie`.
                 RotationSlot::request(parts);
             }
             let _ = session::touch_last_seen(&state.db, &session).await;
@@ -423,11 +323,8 @@ pub struct PageAuthUser {
     pub user: User,
     pub session: Session,
     pub via_forward_auth: bool,
-    /// The synchronizer token to render into this page's forms, so a POST
-    /// submitted without JavaScript still satisfies `csrf_guard`. Derived from
-    /// the *cookie* token rather than `session.session_token`: the guard
-    /// re-derives from the cookie the browser sends back, and during a rotation's
-    /// grace interval those two differ.
+    /// CSRF token for no-JS forms. Derived from the *cookie* token, not
+    /// `session.session_token`, which differs during a rotation's grace interval.
     pub csrf_token: String,
 }
 
@@ -517,11 +414,8 @@ impl OptionalFromRequestParts<AppState> for PageAuthUser {
 pub struct AdminUser {
     pub user: User,
     pub session: Session,
-    /// Whether the trusted forward-auth proxy asserted this request's identity.
-    /// Carried through from [`AuthUser`] so handlers asking for a recent password
-    /// confirmation can exempt these sessions the way [`RecentlyAuthenticated`]
-    /// does — the account may hold no usable password, so demanding one would
-    /// lock the admin out of the very controls this protects.
+    /// Lets handlers exempt forward-auth sessions from password reconfirmation,
+    /// as [`RecentlyAuthenticated`] does.
     pub via_forward_auth: bool,
 }
 
@@ -625,8 +519,6 @@ mod tests {
 
     #[test]
     fn response_has_set_cookie_for_is_not_fooled_by_value_containing_name() {
-        // A different cookie whose *value* happens to contain the target
-        // name must not count as a match.
         let resp = resp_with_set_cookies(&["other=session_token_lookalike; Path=/"]);
         assert!(!response_has_set_cookie_for(&resp, "session_token"));
     }
@@ -642,9 +534,6 @@ mod tests {
 
     #[test]
     fn response_has_set_cookie_for_checks_each_header_independently() {
-        // `anonymous_session` can emit only the CSRF cookie while the session
-        // cookie was already present; the session-cookie check must not be
-        // fooled by the CSRF header being present, or vice versa.
         let resp = resp_with_set_cookies(&["csrf_token=abc; Path=/"]);
         assert!(response_has_set_cookie_for(&resp, "csrf_token"));
         assert!(!response_has_set_cookie_for(&resp, "session_token"));
@@ -656,9 +545,7 @@ mod tests {
 
     #[test]
     fn response_has_set_cookie_for_any_matches_either_name() {
-        // The exact scenario slide_session_cookie relies on: logout's removal
-        // cookie under the __Host- name must count as "already covered" even
-        // though it isn't the unprefixed name.
+        // Logout's __Host- removal cookie must count as covered.
         let resp = resp_with_set_cookies(&["__Host-session_token=; Path=/; Secure"]);
         assert!(response_has_set_cookie_for_any(
             &resp,
@@ -688,12 +575,9 @@ mod tests {
         for (directive, cacheable) in [
             ("no-store", false),
             ("private, max-age=0", false),
-            // Directive names match case-insensitively.
             ("No-Store", false),
-            // The proxy's and feed icon's actual directive.
             ("public, max-age=86400", true),
-            // No `public` either — the rule only excludes no-store/private, it
-            // does not require an explicit `public`.
+            // `public` is not required.
             ("max-age=600", true),
         ] {
             assert_eq!(
@@ -716,8 +600,7 @@ mod tests {
         assert_eq!(cookie.name(), SESSION_COOKIE_NAME_HOST);
         assert_eq!(cookie.secure(), Some(true));
         assert_eq!(cookie.path(), Some("/"));
-        // A __Host- cookie must never carry a Domain attribute — the browser
-        // rejects it outright if it does.
+        // The browser rejects a __Host- cookie with a Domain.
         assert_eq!(cookie.domain(), None);
     }
 

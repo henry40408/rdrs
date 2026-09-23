@@ -6,10 +6,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// Maximum wall-clock time for a single Kagi summarization request. A hung
-/// request would otherwise occupy the single worker indefinitely and block
-/// every user's queued summaries. NEVER lower this in production without
-/// confirming Kagi's worst-case latency.
+/// Hard timeout per Kagi request so a hung call cannot block the single worker.
+/// NEVER lower without confirming Kagi's worst-case latency.
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Result of racing a summarization future against cancellation + timeout.
@@ -19,11 +17,8 @@ pub(crate) enum SummaryOutcome {
     Cancelled,
 }
 
-/// Race a summarization future against an external cancellation token and a
-/// hard timeout. `biased` makes cancellation win deterministically when the
-/// token is already cancelled. On timeout the future is dropped (the in-flight
-/// HTTP request is aborted) and a `Failed("Summarization timed out")` is
-/// returned.
+/// Race a summarization against cancellation and a hard timeout. `biased`
+/// makes an already-cancelled token win; on timeout the request is dropped.
 pub(crate) async fn run_summary<F>(
     token: &CancellationToken,
     timeout: Duration,
@@ -50,7 +45,6 @@ use crate::db::Db;
 use crate::models::{entry_summary, user_settings};
 use crate::services::{EventBus, SummaryStatus};
 
-/// A job to summarize an entry
 #[derive(Debug, Clone)]
 pub struct SummaryJob {
     pub user_id: i64,
@@ -58,26 +52,23 @@ pub struct SummaryJob {
     pub entry_link: String,
 }
 
-/// Per-entry cancellation tokens for in-flight / queued summary jobs, keyed by
-/// `(user_id, entry_id)`. The cancel handler cancels + removes the token; the
-/// worker creates one on dequeue (if absent) and removes it when the job ends.
+/// Per-entry cancellation tokens keyed by `(user_id, entry_id)`: the cancel
+/// handler cancels and removes; the worker creates on dequeue and removes on end.
 pub type CancelRegistry = Arc<Mutex<HashMap<(i64, i64), CancellationToken>>>;
 
-/// The process-wide handles every summary job needs, bundled so the worker's
-/// signature stays readable as it grows.
+/// Process-wide handles every summary job needs.
 #[derive(Clone)]
 pub struct SummaryWorkerContext {
     pub cache: Arc<SummaryCache>,
     pub sidebar_cache: Arc<SidebarCache>,
     pub cancels: CancelRegistry,
     pub events: EventBus,
-    /// Opens the stored Kagi credential; `None` on an install with a generated
-    /// `RDRS_SECRET`, where credentials are stored in the clear.
+    /// Opens the stored Kagi credential; `None` when `RDRS_SECRET` is generated and
+    /// credentials are stored in the clear.
     pub service_token_key: Option<Vec<u8>>,
 }
 
-/// Drains the queue one job at a time — Kagi is rate-limited per key, so
-/// concurrency here would buy nothing but 429s.
+/// Drains the queue one job at a time: Kagi is rate-limited per key.
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     db: Db,
@@ -93,7 +84,6 @@ pub fn start_summary_worker(
             let job = tokio::select! {
                 () = cancel_token.cancelled() => {
                     tracing::info!(event = "summary.worker_stopping", "summary worker stopping, draining remaining jobs");
-                    // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
                         process_summary_job(&job, &db, &ctx).await;
                     }
@@ -118,15 +108,13 @@ async fn process_summary_job(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerConte
     let cancels = &ctx.cancels;
     let key = (job.user_id, job.entry_id);
 
-    // Get-or-create this job's cancellation token. Covers startup-recovered
-    // jobs too (they never pass through the enqueue handler).
+    // Get-or-create the token; startup-recovered jobs skip the enqueue handler.
     let token = {
         let mut map = cancels.lock().unwrap();
         map.entry(key).or_default().clone()
     };
 
-    // Cancelled while still queued — the cancel handler already deleted the
-    // record. Drop the token and skip.
+    // Cancelled while queued; the handler already deleted the record.
     if token.is_cancelled() {
         cancels.lock().unwrap().remove(&key);
         return;
@@ -156,10 +144,8 @@ async fn run_summary_job_body(
         "processing summary job"
     );
 
-    // Mark as processing in the DB first. If the row no longer exists, the job
-    // was cancelled (its record deleted) while it sat in the queue — abort
-    // without repopulating the cache, or the cancelled summary would be
-    // resurrected from the cache on the next render.
+    // A missing row means the job was cancelled while queued: abort without
+    // repopulating the cache, or the summary would be resurrected.
     {
         let user_id = job.user_id;
         let entry_id = job.entry_id;
@@ -202,7 +188,6 @@ async fn run_summary_job_body(
         }
     };
 
-    // Race the Kagi call against cancellation + timeout.
     match run_summary(
         token,
         SUMMARY_TIMEOUT,
@@ -227,7 +212,7 @@ async fn run_summary_job_body(
                 cache.remove(job.user_id, job.entry_id);
             } else {
                 cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
-                // A summary just completed — the sidebar "Summarized" badge must tick up.
+                // Tick the sidebar "Summarized" badge.
                 sidebar_cache.bust(job.user_id);
                 events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Completed));
                 events.emit_sidebar(job.user_id);
@@ -254,8 +239,7 @@ async fn run_summary_job_body(
             }
         }
         SummaryOutcome::Cancelled => {
-            // The cancel handler owns cleanup (delete + cache remove + sidebar
-            // bust). Write nothing back.
+            // The cancel handler owns cleanup; write nothing back.
             tracing::debug!(
                 event = "summary.cancelled",
                 user_id = job.user_id,
@@ -266,7 +250,6 @@ async fn run_summary_job_body(
     }
 }
 
-/// Call Kagi API to get a summary
 async fn summarize_with_kagi(config: &KagiConfig, url: &str) -> Result<String, String> {
     match kagi::summarize_url(config, url).await {
         Ok(result) => {
@@ -282,23 +265,20 @@ async fn summarize_with_kagi(config: &KagiConfig, url: &str) -> Result<String, S
     }
 }
 
-/// `buffer_size` bounds the queue: a full channel makes the enqueue fail fast
-/// rather than growing without limit, and the caller falls back to the pending
-/// record already written to the database.
+/// `buffer_size` bounds the queue: a full channel fails the enqueue fast, and
+/// the caller relies on the pending DB record.
 pub fn create_summary_channel(
     buffer_size: usize,
 ) -> (mpsc::Sender<SummaryJob>, mpsc::Receiver<SummaryJob>) {
     mpsc::channel(buffer_size)
 }
 
-/// Recover incomplete summary jobs on startup
-/// Returns the number of jobs re-queued
+/// Re-queue incomplete summary jobs on startup; returns the count.
 pub async fn recover_incomplete_jobs(
     db: Db,
     tx: mpsc::Sender<SummaryJob>,
     cache: Arc<SummaryCache>,
 ) -> usize {
-    // Startup recovery is background work; yield to interactive requests.
     let db = db.background();
     let incomplete = match entry_summary::find_incomplete(&db).await {
         Ok(jobs) => jobs,
@@ -429,7 +409,6 @@ mod tests {
             },
         );
 
-        // Send a job (it won't be processed properly without Kagi config, but that's OK)
         let _ = tx
             .send(SummaryJob {
                 user_id: 1,
@@ -438,10 +417,8 @@ mod tests {
             })
             .await;
 
-        // Cancel the worker
         cancel_token.cancel();
 
-        // Worker should stop
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(result.is_ok(), "Worker should stop after cancellation");
     }
@@ -468,7 +445,6 @@ mod tests {
 
         drop(tx);
 
-        // Worker should stop
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(result.is_ok(), "Worker should stop when channel closes");
     }
@@ -479,7 +455,6 @@ mod tests {
         let (tx, _rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
 
-        // No incomplete jobs to recover
         let count = recover_incomplete_jobs(db, tx, cache).await;
         assert_eq!(count, 0);
     }
@@ -664,17 +639,14 @@ mod tests {
         )
         .await
         .unwrap();
-        // Intentionally do NOT create an entry_summary row — this
-        // simulates the cancel handler having already deleted it while
-        // the job was still sitting in the queue.
+        // No entry_summary row: the cancel handler already deleted it.
         let (user_id, entry_id) = (u, entry_obj.id);
 
         let cache = Arc::new(SummaryCache::new(100, 24));
         let sidebar = Arc::new(SidebarCache::default());
         let cancels = registry();
 
-        // Pre-seed the cache as if enqueue set it to pending, to prove the
-        // worker removes the stale cache entry rather than promoting it.
+        // Pre-seeded pending cache must be removed, not promoted.
         cache.set_pending(user_id, entry_id);
 
         let job = SummaryJob {
@@ -696,15 +668,12 @@ mod tests {
         )
         .await;
 
-        // The set_processing UPDATE hits 0 rows (no summary row exists) ->
-        // AppError::NotFound -> worker removes the stale cache entry instead
-        // of repopulating it.
+        // set_processing hits 0 rows -> NotFound -> cache entry removed.
         assert!(
             cache.get(user_id, entry_id).is_none(),
             "cache must not be repopulated for a cancelled (row-deleted) job"
         );
 
-        // Confirm no row was resurrected in the DB either.
         let row = entry_summary::find_by_user_and_entry(&db, user_id, entry_id)
             .await
             .unwrap();
@@ -748,10 +717,8 @@ mod tests {
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        // Cancel the worker
         cancel_token.cancel();
 
-        // Worker should stop after draining
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(result.is_ok(), "Worker should stop after draining jobs");
     }
@@ -765,7 +732,6 @@ mod tests {
         let bus = EventBus::new(32);
         let mut sub = bus.subscribe();
 
-        // Seed a user + entry + pending summary so set_processing finds a row.
         let u = seed_user(&db, "emit", Role::User).await.id;
         let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
         let feed_id = feed::create_feed(
@@ -816,9 +782,7 @@ mod tests {
         .await
         .unwrap();
 
-        // First event must be Summary{Processing} for this entry. (Kagi is not
-        // configured in tests, so the job then fails — we assert only the
-        // processing emission, which is deterministic.)
+        // First event must be Summary{Processing}; the job then fails (no Kagi).
         let ev = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
             .await
             .expect("an event should be emitted")

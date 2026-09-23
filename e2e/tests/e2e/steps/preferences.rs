@@ -1,4 +1,4 @@
-//! Theme, password and retention settings — a port of `preferences.steps.js`.
+//! Theme, password and retention settings.
 
 use anyhow::Result;
 use cucumber::{given, then, when};
@@ -6,8 +6,7 @@ use rdrs_e2e::dom::Dom;
 use rdrs_e2e::wait::eventually_eq;
 use rdrs_e2e::world::RdrsWorld;
 
-/// The preferences form, which shares its test ids with the password form on
-/// the same page — hence the `form[action=…]` prefixes below.
+/// Shares test ids with the password form, hence the `form[action=…]` prefix.
 const PREFERENCES_FORM: &str = r#"form[action="/user-settings/preferences"]"#;
 const PASSWORD_FORM: &str = r#"form[action="/user-settings/password"]"#;
 
@@ -27,8 +26,7 @@ async fn switch_theme(world: &mut RdrsWorld, theme: String) -> Result<()> {
     world.expect_path("/user-settings").await
 }
 
-// Also an `And` after a `When` in one scenario, where it acts as a barrier
-// before the next interaction.
+// Also used as an `And` barrier after a `When`.
 #[then(expr = "the html element has data-theme {string}")]
 #[when(expr = "the html element has data-theme {string}")]
 async fn html_has_theme(world: &mut RdrsWorld, value: String) -> Result<()> {
@@ -46,11 +44,8 @@ async fn html_has_no_theme(world: &mut RdrsWorld) -> Result<()> {
         .await
 }
 
-/// Light mode drops the global `-webkit-font-smoothing: antialiased` (which
-/// renders dark ink on light paper thin on macOS) back to the heavier `auto`;
-/// dark mode keeps `antialiased`. The computed value is deterministic across
-/// platforms even though the visual effect is macOS-only, so this guards the
-/// per-theme rule without depending on screenshot rendering.
+/// Light mode uses `auto` smoothing, dark keeps `antialiased`; the computed
+/// value is checkable on any platform though the effect is macOS-only.
 #[then(expr = "the body uses {string} font smoothing")]
 async fn body_font_smoothing(world: &mut RdrsWorld, value: String) -> Result<()> {
     let driver = world.driver()?;
@@ -97,8 +92,7 @@ async fn change_password(world: &mut RdrsWorld, new_password: String) -> Result<
     Ok(())
 }
 
-/// After a password change the session is already destroyed and the browser is
-/// sitting on `/login`.
+/// The password change already destroyed the session and landed on `/login`.
 #[then(expr = "I can sign in with {string}")]
 async fn can_sign_in_with(world: &mut RdrsWorld, password: String) -> Result<()> {
     let username = world.user.username.clone();

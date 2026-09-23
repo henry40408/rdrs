@@ -1,14 +1,7 @@
-// static/js/statistics.js — keep the Daily Read chart's tooltip inside the chart
-// box. A tooltip centred over a bar near the edge is otherwise clipped by
-// `overflow-x: clip`, the no-JS safety net that stops the page scrolling.
-//
-// Progressive enhancement: without this the tooltips still appear, the outermost
-// ones simply clip, and the full value stays in each bar's `aria-label`.
+// Keeps Daily Read tooltips inside the chart, where `overflow-x: clip` would
+// otherwise cut edge ones. Without JS they just clip; `aria-label` has the value.
 
-/**
- * Shift `col`'s tooltip horizontally so it stays within the chart, starting from
- * its CSS baseline (`left: 50%` + `translateX(-50%)`).
- */
+/** Shift `col`'s tooltip horizontally so it stays within the chart. */
 function placeTooltip(chart, col) {
     const tip = col.querySelector('.stats-bar-tip');
     if (!tip) return;

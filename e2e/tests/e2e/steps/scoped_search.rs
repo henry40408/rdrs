@@ -1,4 +1,4 @@
-//! The entry list's own search drawer — a port of `scoped_search.steps.js`.
+//! The entry list's own search drawer.
 
 use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
@@ -68,9 +68,7 @@ async fn scoped_search_open(world: &mut RdrsWorld) -> Result<()> {
         .await
 }
 
-/// The drawer collapses to a zero-height grid row, so the input stays in the
-/// DOM but is not visible — which is exactly what "hidden behind the toggle"
-/// means here.
+/// The collapsed drawer keeps the input in the DOM, just not visible.
 #[then("the scoped search box is closed")]
 async fn scoped_search_closed(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -84,30 +82,21 @@ async fn scoped_search_closed(world: &mut RdrsWorld) -> Result<()> {
         .await
 }
 
-/// The scoped-search form auto-submits on a 250 ms debounce and swaps
-/// `[data-entries-list]` — no Enter key or explicit wait is needed, because the
-/// assertions that follow retry for longer than the debounce plus the fetch.
+/// Auto-submits on a 250 ms debounce; later assertions retry long enough.
 #[when(expr = "I type {string} into the scoped search box")]
 async fn type_into_scoped_search(world: &mut RdrsWorld, term: String) -> Result<()> {
     world.driver()?.fill("scoped-search-input", &term).await
 }
 
-/// Clearing goes through the same debounced path: it fires an `input` event,
-/// swaps the now-unfiltered list, and `syncScopedSearchParam` drops `?q=` from
-/// the address bar.
-///
-/// Emptied by pressing backspace rather than through `WebElement::clear`:
-/// `WebDriver`'s Element Clear resets the value without dispatching `input`, so
-/// the debounced listener never runs and the list stays filtered. Playwright's
-/// `fill("")` does dispatch one, which is why the original step worked.
+/// Uses backspace: `WebDriver`'s Element Clear dispatches no `input`, so the
+/// debounced listener would never run.
 #[when("I clear the scoped search box")]
 async fn clear_scoped_search(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
     let field = driver.test_id("scoped-search-input").await?;
     let value = field.prop("value").await?.unwrap_or_default();
     field.click().await?;
-    // The click puts the caret wherever it landed; End moves it past the last
-    // character so the backspaces delete the whole value.
+    // Move the caret to the end so backspaces delete everything.
     field.send_keys(Key::End).await?;
     for _ in 0..value.chars().count() {
         field.send_keys(Key::Backspace).await?;
@@ -117,10 +106,7 @@ async fn clear_scoped_search(world: &mut RdrsWorld) -> Result<()> {
 
 // ── Height parity ────────────────────────────────────────────────────────────
 
-/// Height parity is what makes the filter bar read as one control strip and the
-/// drawer as one field. Both chips take their height from a sibling
-/// (`align-self: stretch`), which is exactly the kind of rule a later layout
-/// change breaks silently — so it is measured.
+/// Both chips stretch to a sibling's height, which layout changes break silently.
 #[then("the search toggle is as tall as the status filter")]
 async fn toggle_matches_filter_height(world: &mut RdrsWorld) -> Result<()> {
     expect_same_height(
@@ -141,11 +127,8 @@ async fn close_matches_input_height(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// Polled for the same reason the midline assertion below is: the drawer
-/// expands over a 0.16s `grid-template-rows` transition, so measuring once
-/// catches the input still growing — its final height next to a close button
-/// that already has its own. A single measurement passes or fails on how fast
-/// the machine is, which is not what the rule is about.
+/// Polled: the drawer grows over a 0.16s transition, so one measurement
+/// depends on machine speed.
 async fn expect_same_height(world: &RdrsWorld, one: &str, other: &str) -> Result<()> {
     let driver = world.driver()?;
     let matched = eventually(
@@ -160,10 +143,7 @@ async fn expect_same_height(world: &RdrsWorld, one: &str, other: &str) -> Result
     if matched.is_err() {
         let (_, _, _, first) = driver.bounding_box(one).await?;
         let (_, _, _, second) = driver.bounding_box(other).await?;
-        // Reports what the browser actually resolved, because the height alone
-        // cannot say *why* they differ — a min-height from the touch branch, a
-        // padding difference, or an `align-self` that stopped stretching all
-        // look identical from outside.
+        // Report resolved styles, since height alone cannot say why they differ.
         let why = driver
             .execute(
                 r"
@@ -201,14 +181,8 @@ async fn expect_same_height(world: &RdrsWorld, one: &str, other: &str) -> Result
     Ok(())
 }
 
-/// On mobile the drawer opens under the fixed hamburger and its row is indented
-/// past the button, putting the two side by side — so their midlines have to
-/// agree. The drawer row's block padding is the only thing holding that, and it
-/// is invisible to any per-element size assertion.
-///
-/// Polled rather than measured once: the drawer expands over a 0.16s
-/// `grid-template-rows` transition, and while its clip is still short the
-/// centred input reports a box straddling the pane's top edge.
+/// On mobile the drawer sits beside the hamburger, and only its row padding
+/// keeps their midlines aligned. Polled through the 0.16s expand transition.
 #[then("the scoped search box shares its midline with the hamburger")]
 async fn drawer_shares_hamburger_midline(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -236,10 +210,8 @@ async fn mark_above_shown(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_visible("mark-above-btn").await
 }
 
-/// The "Mark N matching as Read" form submits through an `onsubmit`
-/// `window.confirm`. The override is armed and the click fired in the same step
-/// so the accept is in place before the prompt — a separate pre-arming step
-/// races the native form submit here.
+/// Arms the `confirm` override and clicks in one step; a separate step races
+/// the native submit.
 #[when("I mark matching entries as read")]
 async fn mark_matching_read(world: &mut RdrsWorld) -> Result<()> {
     super::keyboard::accept_next_dialog(world).await?;
@@ -268,9 +240,7 @@ async fn list_does_not_show(world: &mut RdrsWorld, title: String) -> Result<()> 
     .await
 }
 
-/// "Mark matching as Read" POSTs and redirects back to the same scoped (`q=…`)
-/// unread-tab URL — the now-read entry drops out of the default unread filter,
-/// so absence from the list is the correct signal here.
+/// Redirects to the same unread `q=` URL, where read entries drop out.
 #[then(expr = "{string} is no longer in the unread list")]
 async fn no_longer_unread(world: &mut RdrsWorld, title: String) -> Result<()> {
     list_does_not_show(world, title).await
@@ -278,10 +248,8 @@ async fn no_longer_unread(world: &mut RdrsWorld, title: String) -> Result<()> {
 
 // ── The address bar ──────────────────────────────────────────────────────────
 
-/// Polled: the URL is `replaceState`d only after the debounced swap resolves.
-///
-/// Also reached as an `And` after a `When`, where it sequences the next step
-/// after the swap rather than asserting the scenario's outcome.
+/// Polled: `replaceState` runs after the debounced swap. Also used as an `And`
+/// barrier after a `When`.
 #[then(expr = "the URL has the {string} query parameter set to {string}")]
 #[when(expr = "the URL has the {string} query parameter set to {string}")]
 async fn url_param_is(world: &mut RdrsWorld, key: String, value: String) -> Result<()> {

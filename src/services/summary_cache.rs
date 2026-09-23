@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 
-// Re-export SummaryStatus from models for backward compatibility
+// Re-exported for backward compatibility.
 pub use crate::models::entry_summary::SummaryStatus;
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,7 +116,6 @@ mod tests {
     fn test_cache_basic_operations() {
         let cache = SummaryCache::new(100, 24);
 
-        // Initially empty
         assert!(cache.get(1, 100).is_none());
 
         cache.set_pending(1, 100);
@@ -132,7 +131,6 @@ mod tests {
         assert_eq!(entry.status, SummaryStatus::Completed);
         assert_eq!(entry.summary_text.as_deref(), Some("Test summary"));
 
-        // Remove
         cache.remove(1, 100);
         assert!(cache.get(1, 100).is_none());
     }

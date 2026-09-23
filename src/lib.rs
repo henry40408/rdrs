@@ -33,17 +33,10 @@ pub use version::GIT_VERSION;
 
 use services::{SidebarCache, SummaryCache, SummaryJob};
 
-/// Force the allocator to return freed pages to the OS.
-///
-/// Bulk operations allocate large transient buffers that mimalloc would
-/// otherwise hold for up to its purge delay. Calling this right after the bulk
-/// work collapses the resident spike immediately, which matters on
-/// memory-constrained hosts.
+/// Force mimalloc to return freed pages to the OS; call after bulk work to
+/// collapse the resident spike on memory-constrained hosts.
 pub fn reclaim_memory() {
-    // SAFETY: `mi_collect` is a thread-safe collection call with no
-    // side-effects beyond reclaiming memory; `true` forces it to also return
-    // memory to the OS.
-    // Legitimate FFI call into mimalloc; no safe alternative exists.
+    // SAFETY: `mi_collect` is thread-safe and only reclaims memory.
     #[allow(unsafe_code)]
     unsafe {
         libmimalloc_sys::mi_collect(true);
@@ -54,39 +47,30 @@ pub fn reclaim_memory() {
 pub struct AppState {
     pub db: Db,
     pub config: Arc<Config>,
-    /// The one way out to a URL the app did not choose — a feed, a page one
-    /// links to, an image inside an entry. Holds the pooled clients along with
-    /// the policy that vets every redirect hop and DNS answer, so a handler
-    /// cannot reach the network past the guard by accident. See
-    /// [`services::fetch`].
+    /// The only path to URLs the app did not choose; vets every redirect hop
+    /// and DNS answer. See [`services::fetch`].
     pub fetcher: services::Fetcher,
     pub webauthn: Arc<Webauthn>,
     pub summary_cache: Arc<SummaryCache>,
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
-    /// Site-wide database figures for the `/statistics` admin block. Global and
-    /// period-independent, and expensive enough to dominate that page without
-    /// memoization — see [`services::page_cache::AdminDbStatsCache`].
+    /// Memoized site-wide DB figures for `/statistics`; see
+    /// [`services::page_cache::AdminDbStatsCache`].
     pub admin_db_stats_cache: services::AdminDbStatsCache,
     pub summary_cancels: services::CancelRegistry,
     pub summarizer_inflight: handlers::summarizer::InFlightRegistry,
     pub events: services::EventBus,
     pub shutdown: tokio_util::sync::CancellationToken,
-    /// Per-client-IP throttle shared by every credential-accepting endpoint
-    /// (login, register, passkey authentication, `GReader` `ClientLogin`).
-    /// See [`middleware::RateLimiter`] for why the check-and-count is a
-    /// single locked operation rather than a separate check/record pair.
+    /// Per-client-IP throttle shared by every credential-accepting endpoint.
+    /// See [`middleware::RateLimiter`].
     pub login_rate_limiter: Arc<crate::middleware::RateLimiter>,
 }
 
 pub fn create_router(state: AppState) -> Router {
-    // `core` holds every existing route. The ETag/Date/Compression/Timeout
-    // layers below buffer the response body or abort after SERVER_REQUEST_TIMEOUT
-    // — both fatal to a long-lived SSE stream — so they wrap `core` only.
+    // The ETag/Date/Compression/Timeout layers would break SSE, so they wrap
+    // `core` only.
     let core = Router::new()
-        // Health check
         .route("/health", get(handlers::health::health_check))
-        // Favicon routes
         .route("/favicon.ico", get(handlers::favicon::favicon_ico))
         .route("/favicon.svg", get(handlers::favicon::favicon_svg))
         .route("/favicon-16x16.png", get(handlers::favicon::favicon_16))
@@ -104,12 +88,9 @@ pub fn create_router(state: AppState) -> Router {
             "/setup",
             get(handlers::pages::setup_page).post(handlers::auth::setup_form),
         )
-        // Sign-out as a form POST. `DELETE /api/session` is unreachable without
-        // scripting — a form cannot send DELETE — which left a scriptless
-        // reader unable to end their session at all.
+        // Form POST sign-out for no-JS clients (forms cannot send DELETE).
         .route("/logout", post(handlers::auth::logout_form))
-        // The one-time link an admin hands out. Anonymous by design: the token
-        // in the path is the only authority, so nothing here reads a session.
+        // Anonymous: the path token is the only authority.
         .route(
             "/invite/{token}",
             get(handlers::invite::invite_page).post(handlers::invite::redeem_form),
@@ -124,8 +105,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
-        // The sync ledger for offline reading: which entries the browser
-        // should be holding, and under what cache name.
         .route("/api/offline/manifest", get(handlers::offline::manifest))
         .route(
             "/api/sidebar/categories/{id}/feeds",
@@ -137,7 +116,6 @@ pub fn create_router(state: AppState) -> Router {
             "/api/user/settings/theme",
             put(handlers::user::update_theme),
         )
-        // Form-action POST endpoints for the SSR /user-settings page (PR-4 T1).
         .route(
             "/user-settings/password",
             post(handlers::user::change_password_form),
@@ -174,10 +152,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )
-        // Form-action POST endpoints for the SSR /admin page (PR-5 T1).
-        // `/admin/reauth` re-opens the confirmation window the four
-        // account-changing routes below require; it is the form-encoded twin
-        // of `POST /api/session/reauth`, which only `passkey.js` can drive.
+        // Form-encoded twin of `POST /api/session/reauth` for the routes below.
         .route("/admin/reauth", post(handlers::admin::reauth_form))
         .route("/admin/users", post(handlers::admin::create_user_form))
         .route(
@@ -204,7 +179,6 @@ pub fn create_router(state: AppState) -> Router {
             "/admin/users/{id}/delete",
             post(handlers::admin::delete_user_form),
         )
-        // Page routes
         .route(
             "/categories",
             get(handlers::pages::categories_page).post(handlers::categories::create_category_form),
@@ -251,34 +225,19 @@ pub fn create_router(state: AppState) -> Router {
             "/entries/summarized",
             get(handlers::pages::summarized_entries_page),
         )
-        // The reader's offline library, and the page the service worker falls
-        // back to for a navigation it cannot reach the network for. A literal
-        // segment, so axum's trie resolves it ahead of the `{id}` route below
-        // regardless of registration order.
         .route(
             "/entries/offline",
             get(handlers::pages::offline_entries_page),
         )
         .route("/entries/{id}", get(handlers::pages::entry_page))
-        // Fragment endpoint for the reading pane. Registered after /entries/{id} so
-        // Axum's trie router resolves the literal `/fragment` segment before the
-        // bare `{id}` parameter catch-all.
         .route(
             "/entries/{id}/fragment",
             get(handlers::entries::entry_fragment),
         )
-        // Summary container fragment endpoint — re-renders only #rp-summary-container
-        // for the SSE client. Registered before other /entries/{id}/... routes so
-        // the literal `summary/fragment` segments resolve before the bare `{id}`
-        // parameter route in axum's trie router.
         .route(
             "/entries/{id}/summary/fragment",
             get(handlers::entries::summary_fragment),
         )
-        // Star / read toggle action endpoints. Return multi-target HTML
-        // (`_entry_actions_multi.html`) swapping the row + sidebar-unread.
-        // Registered after /entries/{id}/fragment so literal path segments
-        // (`star`, `read`) resolve before any future `{action}` wildcard.
         .route(
             "/entries/{id}/star",
             post(handlers::entries::star_entry_form),
@@ -334,11 +293,7 @@ pub fn create_router(state: AppState) -> Router {
             "/feeds/{id}/entries/mark-read",
             post(handlers::pages::feed_mark_read_form),
         )
-        // RDRS-specific feed endpoints (not replaced by GReader API).
-        // Icon URL is referenced from `<img src="…">` in the SSR /feeds page;
-        // mutation goes through the form-action endpoints under /feeds/*.
         .route("/api/feeds/{id}/icon", get(handlers::feed::get_feed_icon))
-        // RDRS-specific entry endpoints (not replaced by GReader API)
         .route(
             "/api/entries/{id}/fetch-full-content",
             post(handlers::entry::fetch_full_content),
@@ -363,17 +318,10 @@ pub fn create_router(state: AppState) -> Router {
             "/api/entries/{id}/neighbors",
             get(handlers::entry::get_entry_neighbors),
         )
-        // Proxy routes
         .route("/api/proxy/image", get(handlers::proxy::proxy_image))
-        // Open-tracking pixel. Authorised by the HMAC in its own path, like the
-        // image proxy above and unlike everything that takes an `AuthUser`
-        // extractor: the clients that fetch it — external `GReader` readers
-        // rendering synced content — have no session cookie to send. It sits at
-        // the root rather than under `/api` so the URL a client caches is short
-        // and ends in `.gif`; the middleware skip lists name `/p/` for
-        // that reason (CSRF needs no entry: `csrf_guard` exempts GET already).
+        // Open-tracking pixel, authorised only by the HMAC in its path (fetchers
+        // have no session). In the middleware skip lists as `/p/`.
         .route("/p/{token}", get(handlers::pixel::tracking_pixel))
-        // Passkey routes
         .route(
             "/api/passkey/register/start",
             post(handlers::passkey::start_registration),
@@ -396,24 +344,17 @@ pub fn create_router(state: AppState) -> Router {
             "/api/passkeys/{id}",
             delete(handlers::passkey::delete_passkey),
         )
-        // Google Reader API (standard paths + FreshRSS-compatible /api/greader.php prefix)
+        // Google Reader API, also under the FreshRSS-compatible prefix.
         .merge(handlers::greader::greader_routes())
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
-        // PWA. `/sw.js` sits at the root because a worker's scope is the
-        // directory it was served from, and `/offline` beside it because the
-        // worker precaches it as the fallback for a navigation that never
-        // reaches us. Both are in the session, CSRF and forward-auth skip lists
-        // so they stay cookie-free and publicly cacheable.
+        // PWA: `/sw.js` at the root for worker scope. Both routes are in the
+        // session, CSRF and forward-auth skip lists to stay cookie-free.
         .route("/sw.js", get(handlers::static_assets::service_worker))
         .route("/offline", get(handlers::pages::offline_page))
         .fallback(handlers::pages::not_found_page)
-        // Mark session-bearing responses `no-store` (OWASP: Web Content Caching)
-        // so a browser disk cache or shared proxy cannot replay a logged-in page.
-        // Layered inside `ETagLayer` so it observes the handler's own
-        // `Cache-Control` — the deliberate public-caching call sites — before
-        // ETag processing runs; see cache_control.rs for why `no-store` also
-        // makes ETag a no-op for the responses it does touch.
+        // `no-store` on session-bearing responses (OWASP). Inside `ETagLayer` so
+        // it sees the handler's own `Cache-Control` first.
         .layer(axum::middleware::from_fn(
             middleware::cache_control::no_store_for_authenticated,
         ));
@@ -426,31 +367,22 @@ pub fn create_router(state: AppState) -> Router {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
         ))
-        // Synchronizer-token CSRF guard (second line): runs just before the
-        // handler so it sees the session cookie `anonymous_session` may have
-        // injected on this same request.
+        // Synchronizer-token CSRF guard; innermost so it sees the cookie
+        // `anonymous_session` may inject.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::csrf::csrf_guard,
         ))
-        // Mint a signed (row-less) session + readable CSRF cookie for a
-        // logged-out visitor, so every form — login and register included —
-        // carries a token. Layered outside `csrf_guard` so the guard sees the
-        // cookie, and inside `forward_auth` so a real forward-auth session wins.
+        // Row-less session + CSRF cookie for logged-out visitors. Outside
+        // `csrf_guard`, inside `forward_auth` so a real session wins.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::csrf::anonymous_session,
         ))
-        // Reissue the session + CSRF cookies' Max-Age on every authenticated
-        // request, so a still-in-use browser session tracks the sliding
-        // server-side TTL instead of expiring on a fixed schedule. Their *value*
-        // changes only when this layer also performs the periodic token rotation.
-        //
-        // Layered outside `anonymous_session` so it sees — and can correctly skip
-        // re-setting — the Set-Cookies that layer and the handlers beneath emit,
-        // most importantly `logout`'s removals; and inside `forward_auth`, which
-        // short-circuits without calling `next` on every path that mints a
-        // cookie, so this layer never doubles up with it.
+        // Slide the cookies' Max-Age with the server-side TTL (and rotate
+        // periodically). Outside `anonymous_session` so it sees inner
+        // Set-Cookies (notably logout's removals); inside `forward_auth` so it
+        // never doubles up with it.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth::slide_session_cookie,
@@ -459,47 +391,29 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             middleware::forward_auth::forward_auth,
         ))
-        // Sign the flash cookie on the way out, verify it on the way in.
-        // Outside the handlers (which write the cookie) and outside the
-        // extractor (which reads it), so both keep seeing plain JSON while the
-        // browser only ever holds a signed value.
+        // Sign/verify the flash cookie so handlers see plain JSON while the
+        // browser holds only a signed value.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::flash::sign_flash_cookies,
         ))
-        // First-line CSRF defence: reject provably cross-site state-changing
-        // requests (see `middleware::csrf`). Header-only and stateless, so its
-        // position in the stack is immaterial; the synchronizer-token guard is
-        // layered on separately.
+        // First-line CSRF defence (header-only, position immaterial).
         .layer(CsrfLayer::new())
-        // Directly outside the guard: it reads the `ProtectionError` the guard
-        // attaches to its 403, which is the only way to log a rejection with the
-        // request it rejected.
+        // Directly outside the guard to read the `ProtectionError` on its 403.
         .layer(axum::middleware::from_fn(
             middleware::csrf::log_cross_site_rejection,
         ));
 
     let router = Router::new()
-        // SSE lives outside the layers above. It still gets `state` via the
-        // shared `.with_state` below.
+        // SSE lives outside the layers above.
         .route("/events", get(handlers::events::events_stream))
         .merge(core);
 
-    // The fixed security headers (CSP, nosniff, Referrer-Policy,
-    // Permissions-Policy, X-Frame-Options, COOP). Unconditional, and outermost
-    // for the same reason HSTS is below — see middleware::security_headers for
-    // what each directive is doing and what is deliberately absent.
+    // Fixed security headers; outermost for the same reason as HSTS below.
     let router = router.layer(axum::middleware::from_fn(middleware::set_security_headers));
 
-    // Strict-Transport-Security: only added when `Config` says the deployment is
-    // HTTPS. The header value is built once here, where `config` is in scope,
-    // rather than per response — and when it's `None` (the default) no layer is
-    // added at all, so a plain-HTTP deployment pays nothing.
-    //
-    // Applied last, i.e. outermost over both `core` and `/events`, because
-    // `forward_auth` and the CSRF guards short-circuit without calling `next` on
-    // several paths, so a layer nested inside them would never see those
-    // responses; `/events` sits outside `core` entirely.
+    // HSTS, only for HTTPS deployments. Outermost over `core` and `/events`
+    // because `forward_auth` and the CSRF guards short-circuit without `next`.
     let router = if let Some(header_value) = state.config.hsts_header_value() {
         let value = axum::http::HeaderValue::from_str(&header_value)
             .expect("hsts_header_value only ever produces a valid header value");
@@ -511,10 +425,7 @@ pub fn create_router(state: AppState) -> Router {
         router
     };
 
-    // Per-request timing. Outermost — over the security headers, both CSRF guards
-    // and `forward_auth`, all of which answer some requests without calling
-    // `next`, and over `/events` — so every response is timed exactly once. See
-    // middleware::request_log for what the duration does and does not include.
+    // Per-request timing, outermost so every response is timed exactly once.
     let router = router.layer(axum::middleware::from_fn(
         middleware::request_log::log_request_duration,
     ));

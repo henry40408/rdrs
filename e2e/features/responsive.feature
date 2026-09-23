@@ -247,10 +247,8 @@ Feature: Responsive layout
     When I hover the last daily-read bar
     Then the visible daily-read tooltip is within the viewport
 
-  # `label:has(> input[type=checkbox])` is `inline-flex` on touch so the row
-  # reaches the 44px tap minimum, which made the label an inline box — and left
-  # the hint that follows it flowing along the label's last line instead of
-  # starting underneath.
+  # The touch `inline-flex` checkbox label made the following hint flow inline
+  # instead of starting underneath.
   @mobile
   Scenario: A checkbox's hint sits under it rather than trailing off its end
     Given I am viewing on a mobile screen

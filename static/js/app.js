@@ -1,26 +1,15 @@
-// static/js/app.js — shared module for the logged-in surface: partial swaps,
-// sidebar polling, theme, entries keyboard shortcuts, mark-as-read menus.
+// Shared module for the logged-in surface: swaps, theme, shortcuts, mark-as-read.
 
-// The `?v=` cache-buster is substituted at serve time (handlers/static_assets.rs).
-// Without it this nested import resolves to an unversioned URL that goes stale
+// `?v=` is substituted at serve time; unversioned, this import would go stale
 // forever under the `immutable` cache header.
 import { debounce } from './utils.js?v=__RDRS_ASSET_VERSION__';
 
 /**
- * Intercept form / link interactions tagged with `data-swap="<selector>"`
- * and replace the matching element with HTML returned by the request.
- *
- * Response format:
- *   - HTML fragment: replaces the target element via outerHTML.
- *   - `<template data-swap-target="<selector>">…</template>` blocks: each
- *     template's content replaces its own target.
- *   - `<template data-class-target="<selector>"
- *     data-class-add|data-class-remove="a b">`: toggles classes on an element
- *     that is *not* being replaced, so a response can update a container's
- *     state class while swapping only its sub-elements.
- *
- * On a non-2xx response the helper falls back to native form submit / link
- * navigation so the user always sees a real page.
+ * Intercept forms/links tagged `data-swap="<selector>"` and swap in the response:
+ * a bare fragment replaces the target; `<template data-swap-target>` blocks each
+ * replace their own target; `<template data-class-target data-class-add|remove>`
+ * toggles classes on an element that is not replaced. Non-2xx falls back to a
+ * native submit / navigation.
  */
 function installSwap() {
     document.addEventListener('click', async (event) => {
@@ -37,8 +26,7 @@ function installSwap() {
         const form = event.target.closest('form[data-swap]');
         if (!form) return;
         event.preventDefault();
-        // Only the action-bar Summarize form is tagged `data-summary-toggle`;
-        // the error-state Retry form is not, so Retry still regenerates.
+        // Only the action-bar Summarize form carries this; Retry still regenerates.
         if (form.hasAttribute('data-summary-toggle')) {
             if (summaryInFlight()) return; // Cancel lives in the summary box.
             if (dismissVisibleSummary()) return;
@@ -57,8 +45,7 @@ function installSwap() {
         }
         let url = form.action;
         if (method === 'GET') {
-            // Without this, hidden inputs like `after=…` on the Load-More form
-            // silently drop and the server falls through to a full-page render.
+            // Otherwise hidden inputs (e.g. Load More's `after=`) are dropped.
             const params = new URLSearchParams(new FormData(form));
             const sep = url.includes('?') ? '&' : '?';
             url = url + sep + params.toString();
@@ -68,16 +55,13 @@ function installSwap() {
         setFormBusy(form, { cancellable: !!controller });
         try {
             await performSwap(url, init, target);
-            // Mirror the search box into the address bar so a refresh / share
-            // reproduces the filtered list, and so clearing the box removes the
-            // stale `?q=`. The form lives outside the swapped container, so it
-            // is still mounted here.
+            // Mirror the search into the address bar so refresh/share reproduce it
+            // and clearing removes a stale `?q=`.
             if (form.matches('[data-entries-search]')) {
                 syncScopedSearchParam(form);
             }
         } finally {
-            // No-op on success (the swap detached the form); on a POST error
-            // the original form is still mounted and gets its button back.
+            // On a POST error the form is still mounted and gets its button back.
             formSwapAborts.delete(form);
             clearFormBusy(form);
         }
@@ -86,8 +70,7 @@ function installSwap() {
 
 const formSwapAborts = new WeakMap();
 
-// Entry ids with a keyboard-driven read/unread toggle ('m') POST in flight.
-// Guards against rapid double-press double-POSTing stale state on the same row.
+// Entry ids with an 'm' toggle POST in flight; stops double-press double-POSTs.
 const pendingRowToggles = new Set();
 
 function abortFormSwap(form) {
@@ -96,8 +79,7 @@ function abortFormSwap(form) {
     controller.abort();
 }
 
-// Map slow form-swap actions to their busy-state button label. Anything not
-// listed keeps its existing label and just gets `disabled` while in-flight.
+// Busy-state labels for slow form-swap actions; others just get `disabled`.
 const BUSY_LABELS = {
     save: 'Saving…',
     'fetch-full-content': 'Fetching…',
@@ -130,9 +112,7 @@ function setFormBusy(form, options = {}) {
         btn.disabled = true;
     }
     if (label) {
-        // Write to `.action-label` so the sibling `.action-icon` SVG survives:
-        // `btn.textContent` would wipe the icon, and a button whose swap target
-        // is a *sibling* is not re-rendered, so the icon never comes back.
+        // Write `.action-label`, not `textContent`, or the icon is lost for good.
         const labelEl = btn.querySelector('.action-label') || btn;
         btn.dataset.busyOriginalLabel = labelEl.textContent;
         labelEl.textContent = label;
@@ -166,15 +146,9 @@ function clearFormBusy(form) {
     }
 }
 
-// Abort in-flight image downloads in the outgoing reading pane. Browsers do NOT
-// reliably cancel an `<img>`'s request when the element is detached, and slow
-// image-proxy downloads then hold the ~6 HTTP/1.1 per-origin connection slots,
-// stalling the next entry's fragment fetch behind them (measured: hundreds of
-// ms to >1s of connection-queue wait).
-//
-// Scoped to the image-proxied `.reading-pane-article` content images. The
-// meta-row favicon is small, local and cached, so cancelling it only blanks a
-// still-visible pane — a favicon flash on every entry switch.
+// Abort image downloads in the outgoing pane: detached `<img>`s aren't reliably
+// cancelled and slow proxy downloads starve the HTTP/1.1 connection slots.
+// Content images only; cancelling the favicon would make it flash.
 function cancelPaneImages(pane) {
     if (!pane) return;
     for (const img of pane.querySelectorAll('.reading-pane-article img[src]')) {
@@ -192,7 +166,7 @@ function markBrokenImage(img) {
     const cap = document.createElement('span');
     cap.className = 'rp-broken-cap';
     const alt = (img.getAttribute('alt') || '').trim();
-    // textContent — never innerHTML — so alt text can't inject markup.
+    // textContent, never innerHTML, so alt text can't inject markup.
     cap.textContent = alt ? `Image unavailable — ${alt}` : 'Image unavailable';
     box.appendChild(cap);
     const w = img.getAttribute('width');
@@ -213,49 +187,28 @@ function initPaneImages() {
         }
         img.addEventListener('load', () => img.setAttribute('data-img-state', 'loaded'), { once: true });
         img.addEventListener('error', () => {
-            // A dropped `src` means cancelPaneImages() aborted the download,
-            // not a load failure — no broken-box flash on an outgoing pane.
+            // Dropped `src` = aborted by cancelPaneImages(), not a failure.
             if (!img.getAttribute('src')) return;
             markBrokenImage(img);
         }, { once: true });
     }
 }
 
-// Monotonic token + abort handle for reading-pane *navigation* fetches (entry
-// clicks, Show Original, popstate restores, prev/next fallbacks). Without it,
-// clicking entry A then quickly B leaves both in flight and whichever lands
-// last wins the pane — a slow A can overwrite the just-opened B and
-// replaceState the URL back to ?entry=A. Action swaps (Save, Fetch Full
-// Content) re-target the same entry and stay outside the guard. Same discipline
-// as applyNeighborButtons().
+// Token + abort handle for reading-pane navigation fetches, so a slow earlier
+// entry can't overwrite the one just opened. Action swaps stay outside the guard.
 let paneNavSeq = 0;
 let paneNavAbort = null;
 
-// Swap targets that live inside the reading pane, i.e. that only make sense
-// for the entry currently open. See the staleness check in performSwap().
+// Swap targets inside the reading pane; see the staleness check in performSwap().
 const PANE_REGION_TARGETS = new Set(['#reading-pane', '#rp-summary-container']);
 
-/// The markup the server last delivered for each swap target: a byte-identical
-/// next response means the DOM already shows it, so replacing the node is pure
-/// churn — a layout and a repaint, which on WebKit is where images blink.
-/// Clicking the sidebar feed that is *already* open hits this constantly.
-///
-/// Compared against the server's own previous answer, never against the DOM:
-/// the live DOM carries what the server never sent (`.selected` from `j`/`k`,
-/// `data-…-bound` listener markers, `title` on a localized `<time>`), all of
-/// which made a DOM-to-response comparison differ.
-///
-/// Morph targets are exempt: their DOM is edited by swaps answering for *other*
-/// targets, so two equal answers no longer imply the DOM still matches them.
-/// Marking two feeds read in a row broke on exactly that — both answers are the
-/// same empty list, so the second swap was skipped and the rows stayed on
-/// screen unread. Morphing an identical tree writes nothing anyway.
-///
-/// A target is only known after the first swap that fills it.
+/// The server's last markup per swap target: an identical response means the
+/// DOM already shows it, so skip the swap (WebKit blinks images on repaint).
+/// Compared to the previous response, not the DOM, which carries client-only
+/// state. Morph targets are exempt: other swaps edit their DOM.
 const lastServerMarkup = new Map();
 
-/// The single element a swap template carries, or null when it carries anything
-/// else (Load More returns N rows plus a form). Indentation whitespace ignored.
+/// The single element a swap template carries, or null (e.g. Load More's N rows).
 function soleSwapElement(tpl) {
     const nodes = Array.from(tpl.content.childNodes)
         .filter((n) => n.nodeType !== Node.TEXT_NODE || n.textContent.trim() !== '');
@@ -263,27 +216,17 @@ function soleSwapElement(tpl) {
     return nodes[0];
 }
 
-/// Swap targets whose subtree is morphed into shape rather than replaced. Both
-/// are pure entry-row markup: re-rendering `[data-entries-list]` for "Mark Above
-/// as Read" only adds `entry-read` to rows that survive, yet replacing the
-/// container rebuilt every row and favicon inside (measured: none of six images
-/// preserved).
-///
-/// The rest stay on replacement deliberately — `[data-list-pane]` carries
-/// filter-bar values the markup does not describe and a scroller meant to reset
-/// on a view switch, `#reading-pane` resets scroll on purpose, and a category
-/// switch replaces the rows wholesale anyway.
+/// Targets morphed rather than replaced, so surviving rows keep their nodes and
+/// favicons. Others replace on purpose (e.g. `#reading-pane` resets scroll).
 function isMorphTarget(selector) {
     return selector === '[data-entries-list]' || selector.startsWith('#entry-row-');
 }
 
-/// Attributes the client writes onto server-rendered markup, which a morph must
-/// leave alone. `data-…-bound` is the load-bearing one: it marks a control whose
-/// listeners are installed, so stripping it from a surviving element invites a
-/// second copy bound to the same node — one click, two POSTs.
+/// Client-written attributes a morph must keep. Losing `data-…-bound` would
+/// bind a second listener: one click, two POSTs.
 const CLIENT_OWNED_ATTR = /^(data-.+-bound|data-img-.+|data-localized|data-tooltip-at|title)$/;
 
-/// `.selected` is the `j`/`k` cursor, which the server has never heard of.
+/// `.selected` is the `j`/`k` cursor, which the server never renders.
 const CLIENT_OWNED_CLASSES = ['selected'];
 
 function morphAttributes(from, to) {
@@ -306,9 +249,8 @@ function morphCompatible(from, to) {
     return (from.id || '') === (to.id || '');
 }
 
-/// Reshape `from`'s children into `to`'s, reusing the nodes already there.
-/// Elements carrying an `id` are matched by it, so a list that lost a row in the
-/// middle keeps every surviving row's node; everything else matches positionally.
+/// Reshape `from`'s children into `to`'s, reusing nodes: matched by `id` when
+/// present, otherwise positionally.
 function morphChildren(from, to) {
     const keyed = new Map();
     for (const el of from.children) if (el.id) keyed.set(el.id, el);
@@ -324,8 +266,7 @@ function morphChildren(from, to) {
             morphNode(existing, next);
             continue;
         }
-        // Never consume a keyed node positionally: it may be the match for an
-        // incoming node further down the list.
+        // Never consume a keyed node positionally; it may match a later one.
         const reusable = cursor && !(cursor.nodeType === Node.ELEMENT_NODE && cursor.id)
             && morphCompatible(cursor, next) ? cursor : null;
         if (reusable) {
@@ -352,18 +293,16 @@ function morphNode(from, to) {
     morphChildren(from, to);
 }
 
-/// Morph the live `dst` into the shape of `incoming`, leaving surviving nodes
-/// where they are. A re-inserted `<img>` sends WebKit back through load and
-/// decode, so the icons blink; a morphed one is never touched at all.
+/// Morph `dst` into `incoming`'s shape. Re-inserted `<img>`s blink in WebKit;
+/// morphed ones are untouched.
 function morphSwap(dst, incoming) {
     if (!morphCompatible(dst, incoming)) return false;
     morphNode(dst, incoming);
     return true;
 }
 
-/// Attributes the server re-stamps on every render that change nothing visible.
-/// `data-snapshot-at` moves every second, so leaving it in the comparison would
-/// make two responses for the same view never equal and the skip never fire.
+/// Attributes re-stamped every render with no visible effect, ignored when
+/// comparing (`data-snapshot-at` changes every second).
 const VOLATILE_SERVER_ATTRS = ['data-snapshot-at'];
 
 function comparableServerMarkup(el) {
@@ -375,10 +314,8 @@ function comparableServerMarkup(el) {
     return clone.outerHTML;
 }
 
-/// Copy those attributes from the response onto the DOM being kept: a skipped
-/// swap must not freeze the snapshot boundary at whatever the reader first
-/// loaded, or `j`/`k` treats a widening set of entries as unread. The two trees
-/// are identical apart from these attributes, so they line up one for one.
+/// Copy those attributes onto the kept DOM, or a skipped swap freezes the
+/// snapshot boundary and `j`/`k` mistreats entries as unread.
 function syncVolatileAttrs(incoming, live) {
     for (const name of VOLATILE_SERVER_ATTRS) {
         const from = incoming.querySelectorAll(`[${name}]`);
@@ -392,19 +329,14 @@ function syncVolatileAttrs(incoming, live) {
     }
 }
 
-/// Fetch `url` and apply the response to `defaultTarget` (or to whatever
-/// `<template data-swap-target>` blocks it carries). Resolves `false` when the
-/// call bailed out — superseded, aborted, or handed off to a full navigation —
-/// so callers must not run follow-up side effects (history, sidebar state).
-///
-/// `options.fallbackUrl` is where the error path navigates instead of `url`:
-/// `?pane=1` returns bare `<template>` markup, so hard-navigating to the fetched
-/// URL would leave the user on a blank page.
+/// Fetch `url` and apply the response. Resolves `false` when superseded, aborted
+/// or handed to a full navigation; callers must then skip follow-ups.
+/// `options.fallbackUrl` is the error-path destination (`?pane=1` is bare
+/// templates, which would render blank).
 async function performSwap(url, init, defaultTarget, options) {
     const method = (init.method || 'GET').toUpperCase();
     const fallbackUrl = options?.fallbackUrl || url;
-    // popstate restores pass `skipHistory: true`: the browser already moved the
-    // address bar, so writing on top of that slot would corrupt it.
+    // popstate passes `skipHistory`: the browser already moved the address bar.
     const skipHistory = options?.skipHistory === true;
     const isPaneNav = method === 'GET' && defaultTarget === '#reading-pane';
     let navSeq = null;
@@ -414,8 +346,7 @@ async function performSwap(url, init, defaultTarget, options) {
         paneNavAbort = new AbortController();
         init.signal = paneNavAbort.signal;
     }
-    // Only when navigating to a *different* entry: an action swap re-targets
-    // the same entry and would just reload the same images.
+    // Only for a different entry; action swaps keep the same images.
     if (defaultTarget === '#reading-pane') {
         const incoming = entryIdFromSwapUrl(url);
         if (incoming && incoming !== currentPaneEntryId()) {
@@ -427,44 +358,28 @@ async function performSwap(url, init, defaultTarget, options) {
         response = await fetch(url, init);
     } catch {
         if (init.signal?.aborted) return false;
-        // Falling through to `location.href` would hard-navigate to a fragment
-        // URL the user has already moved past.
+        // Don't hard-navigate to a fragment the user has moved past.
         if (isPaneNav && navSeq !== paneNavSeq) return false;
-        // This is the first thing to notice a connection dropping mid-session,
-        // and it is what tells `offline.js` — which then disables the controls
-        // that cannot work and starts probing for the connection's return.
-        // Nothing else would have noticed yet: `navigator.onLine` is a flag the
-        // browser is free to get wrong (and does), while a request that threw is
-        // evidence.
+        // A thrown request is the first real evidence of a dropped connection
+        // (`navigator.onLine` is unreliable); tell offline.js.
         const offline = window.rdrsOffline?.networkFailed?.() === true;
-        // A reading pane the reader saved for offline reading is still on this
-        // device, and reaching for it here rather than in the service worker is
-        // what keeps this fetch an ordinary page request. `offline.js` publishes
-        // the lookup, exactly like `window.flash` above; without that module —
-        // a scriptless reader, or the feature switched off — there is nothing
-        // to fall back to and the branches below take over.
+        // Saved offline pane, looked up here (not in the SW) so this stays a
+        // page request. Absent without offline.js.
         response = method === 'GET' ? await savedFragment(url) : null;
         if (!response) {
-            // A hard navigation here would answer a dead Load More by throwing
-            // the reader off the list they were reading — the offline page, or
-            // whatever the worker has, in place of the page they still had. So
-            // once we know the connection is gone, stay put and say so. Without
-            // `offline.js` the old fallback stands: something is wrong with the
-            // server and a real navigation is the honest way to surface it.
+            // Once offline, stay on the list and say so rather than navigating
+            // away. Without offline.js, a real navigation surfaces the error.
             if (window.flash && (method !== 'GET' || offline)) {
-                // Deliberately not phrased as "you are offline": from here a
-                // dead connection and a dead server are indistinguishable.
+                // Not "you are offline": a dead server looks the same from here.
                 window.flash.error('Could not reach the server — that will have to wait for the connection.');
             } else {
                 window.location.href = fallbackUrl;
             }
             return false;
         }
-        // A saved pane falls through to the response handling below, so it is
-        // swapped in by exactly the same code that swaps a fetched one.
+        // A saved pane goes through the same response handling below.
     }
-    // Superseded while the headers were in flight — abort loses this race when
-    // the reply was already buffered.
+    // Superseded while headers were in flight (abort misses buffered replies).
     if (isPaneNav && navSeq !== paneNavSeq) return false;
     if (!response.ok) {
         if (method !== 'GET' && window.flash) {
@@ -486,25 +401,20 @@ async function performSwap(url, init, defaultTarget, options) {
     if (isPaneNav && navSeq !== paneNavSeq) return false;
     const parsed = new DOMParser().parseFromString(text, 'text/html');
 
-    // Decided BEFORE the DOM mutates: opening from the empty placeholder pushes
-    // a slot (so back / edge-swipe closes the pane), switching entries replaces.
+    // Decided before mutating: opening from empty pushes (so back closes the
+    // pane), switching entries replaces.
     const paneBefore = document.getElementById('reading-pane');
     const paneWasEmpty = !!paneBefore?.classList.contains('reading-pane-empty');
-    // Pre-mutation, so the checks below compare against what was in the pane
-    // rather than what was just swapped in. A different entry id means
-    // navigation and clears stale flashes; an action swap keeps its own toast.
+    // Pre-mutation snapshot: a different entry id means navigation and clears
+    // stale flashes; an action swap keeps its toast.
     const paneEntryIdBefore = currentPaneEntryId();
     const incomingEntryId = entryIdFromSwapUrl(url);
 
-    // An action response belongs to the entry it was fired on: applying it after
-    // the reader moved on paints one entry's summary into another's pane. The
-    // window is small but real — an SSE `summary` event can pass its
-    // `currentPaneEntryId()` pre-check and still land after the switch — so
-    // re-check against the DOM as it is now, not as it was at fetch time.
-    // Navigation is exempt (`paneNavSeq` covers it), as are row-scoped targets.
+    // Don't apply an action response to a different entry than it was fired on
+    // (e.g. a late SSE summary). Navigation and row targets are exempt.
     if (!isPaneNav && PANE_REGION_TARGETS.has(defaultTarget) &&
         incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
-        // The action did happen server-side; only the markup is stale.
+        // The action still happened server-side; only the markup is stale.
         applyFlashTemplates(parsed);
         return false;
     }
@@ -517,8 +427,7 @@ async function performSwap(url, init, defaultTarget, options) {
             if (sel === '#reading-pane') swappedReadingPane = true;
             const dst = document.querySelector(sel);
             if (!dst) continue;
-            // The reading pane is exempt from both paths below: replacing it
-            // resets the scroll offset, which re-opening an entry relies on.
+            // Never replace the reading pane here: that resets its scroll.
             const sole = sel === '#reading-pane' ? null : soleSwapElement(tpl);
             if (sole && isMorphTarget(sel)) {
                 if (morphSwap(dst, sole)) continue;
@@ -531,8 +440,7 @@ async function performSwap(url, init, defaultTarget, options) {
                 lastServerMarkup.set(sel, markup);
             }
             const parent = dst.parentNode;
-            // Child-by-child rather than outerHTML, for the multi-element
-            // payloads (Load More returns N rows plus a new form).
+            // Child-by-child for multi-element payloads (Load More).
             const nodes = Array.from(tpl.content.childNodes);
             for (const node of nodes) {
                 parent.insertBefore(node, dst);
@@ -565,10 +473,8 @@ async function performSwap(url, init, defaultTarget, options) {
 }
 
 /**
- * The reading pane `offline.js` saved for `url`, or `null` when there is none —
- * the feature is off, the module never loaded, or this entry was outside the
- * budget. Errors are swallowed for the same reason: every one of them means the
- * same thing here, which is that there is nothing to show but the fallback.
+ * The pane offline.js saved for `url`, or `null`. Any error means the same
+ * thing: no saved copy.
  */
 async function savedFragment(url) {
     try {
@@ -583,8 +489,7 @@ function entryIdFromSwapUrl(url) {
     return m ? m[1] : null;
 }
 
-// Mirror the entry id into `?entry={id}` so a refresh / share / back reproduces
-// the pane (the SSR list handlers consume it via `maybe_build_reading_pane`).
+// Mirror the entry into `?entry={id}` so refresh/share/back reproduce the pane.
 function syncEntryParamFromSwapUrl(swapUrl, options) {
     const id = entryIdFromSwapUrl(swapUrl);
     if (!id) return;
@@ -602,14 +507,9 @@ function writeEntryParam(entryId, push) {
 let pendingEntryParam;
 let entryParamFrame = 0;
 
-/// Mirror the open entry into `?entry=`.
-///
-/// Replace-mode writes are coalesced to one per frame: `history.replaceState` is
-/// among the most expensive things on the swap's synchronous path, and holding
-/// `j` down issues one per keypress for only the last to matter.
-///
-/// Pushes are not deferred — a push must land in the same task as the
-/// navigation that caused it or the history slot lands out of order.
+/// Mirror the open entry into `?entry=`. Replaces are coalesced per frame
+/// (`replaceState` is costly while holding `j`); pushes stay synchronous to keep
+/// history in order.
 function setEntryParam(entryId, options) {
     if (options?.push) {
         if (entryParamFrame) {
@@ -630,7 +530,7 @@ function setEntryParam(entryId, options) {
     });
 }
 
-// replaceState, never push — typing is a filter refinement, not a history entry.
+// replaceState, never push: typing refines a filter, not history.
 function syncScopedSearchParam(form) {
     const input = form.querySelector('input[name="q"]');
     if (!input) return;
@@ -645,10 +545,8 @@ function syncScopedSearchParam(form) {
 function currentPaneEntryId() {
     const pane = document.getElementById('reading-pane');
     if (!pane || pane.classList.contains('reading-pane-empty')) return null;
-    // `_reading_pane.html` stamps the id on the pane. The form scan below is a
-    // substring-match selector over the whole article subtree and this runs
-    // several times per swap, so it is only a fallback for panes rendered by
-    // another template (error states, fragments predating the attribute).
+    // The pane's stamped id is the fast path; the form scan is a fallback for
+    // other templates.
     const stamped = pane.getAttribute('data-entry-id');
     if (stamped) return stamped;
     const form = pane.querySelector('form[action*="/entries/"]');
@@ -656,18 +554,13 @@ function currentPaneEntryId() {
     return m ? m[1] : null;
 }
 
-// Sync the reading pane to the URL on back/forward. Exactly one history slot is
-// pushed per list visit (the first open from an empty pane): back from it lands
-// without `?entry=` and closes the pane, forward re-mounts it. Cross-document
-// navigation reloads instead and SSR consumes `?entry=` server-side.
+// Sync the pane to the URL on back/forward. One slot is pushed per list visit,
+// so back closes the pane and forward re-opens it.
 window.addEventListener('popstate', () => {
-    // Upfront rather than leaving it to performSwap's entry-mismatch clear,
-    // which does not cover the close-pane branch.
+    // Up front: performSwap's mismatch clear misses the close-pane branch.
     window.flash?.clear?.();
-    // Sidebar navigation swaps in place and pushes its own slot, so back/forward
-    // can land on a different *path* in the same document. Anything outside the
-    // entries family can't be swapped and must reload, or the user gets a stale
-    // list under a new URL.
+    // Sidebar swaps push their own slots; paths outside the entries family must
+    // reload or a stale list sits under the new URL.
     if (window.location.pathname !== renderedListPath) {
         const href = window.location.pathname + window.location.search;
         const swappable = categoryIdFromHref(href) || feedIdFromHref(href);
@@ -688,10 +581,8 @@ window.addEventListener('popstate', () => {
     performSwap(`/entries/${entryId}/fragment`, { method: 'GET' }, '#reading-pane', { skipHistory: true });
 });
 
-// Reset `#reading-pane` to the SSR empty state in `_entries_layout.html`, so
-// the mobile overlay dismisses: `.reading-pane-active` is what reveals the pane
-// at ≤1024px, and leaving it over empty content traps the reader on a blank
-// screen. False if the pane was already empty.
+// Reset `#reading-pane` to empty and drop `.reading-pane-active`, or mobile
+// traps the reader on a blank overlay. False if already empty.
 function closeReadingPane() {
     const pane = document.getElementById('reading-pane');
     if (!pane || pane.classList.contains('reading-pane-empty')) return false;
@@ -703,13 +594,8 @@ function closeReadingPane() {
 }
 
 // ── Sidebar navigation (in-place list-pane swap) ─────────────────────
-//
-// Sidebar links, `[` / `]` / `{` / `}` and `g c` / `g f` swap rather than
-// navigate. The `?pane=1` response carries the left column plus an emptied
-// reading pane, so one swap leaves the sidebar untouched — a document reload
-// resets `.sidebar-nav`'s internal scroll (and the document scroll on mobile),
-// which is the jump this exists to avoid. Anything unswappable falls back to a
-// normal navigation.
+// `?pane=1` swaps the left column and empties the pane without reloading, which
+// would reset `.sidebar-nav` scroll. Unswappable links navigate normally.
 const CATEGORY_PATH_RE = /^\/categories\/(\d+)\/entries\/?$/;
 const FEED_PATH_RE = /^\/feeds\/(\d+)\/entries\/?$/;
 
@@ -728,8 +614,7 @@ function feedIdFromHref(href) {
 // popstate compares against this to tell a `?entry=` toggle from a real change.
 let renderedListPath = window.location.pathname;
 
-/// Swap the list pane over to `href`. `restoreEntry` re-opens the `?entry=` the
-/// URL names, since the fragment always ships an empty pane.
+/// Swap the list pane to `href`; `restoreEntry` re-opens its `?entry=`.
 async function swapListPane(href, options = {}) {
     const catId = categoryIdFromHref(href);
     const feedId = feedIdFromHref(href);
@@ -754,13 +639,11 @@ async function swapListPane(href, options = {}) {
     if (!options.skipHistory) window.history.pushState({}, '', target);
     renderedListPath = target.pathname;
     const sb = document.querySelector('rdrs-sidebar');
-    // Mirrors what category and feed pages server-render, so no top-level nav
-    // item stays lit next to the highlighted row.
+    // Match server-rendered category/feed pages: no top-level item stays lit.
     sb?.setAttribute('active', '');
     if (feedId) {
         sb?.setAttribute('active-feed-id', feedId);
-        // The caller's hint (an entry row carries its own category), else the
-        // loaded feed lists — which cover a feed clicked in the sidebar.
+        // The caller's hint, else the loaded feed lists.
         const parent = options.categoryId || sb?.categoryIdOfFeed?.(feedId);
         if (parent) sb.setAttribute('active-category-id', String(parent));
     } else {
@@ -768,8 +651,7 @@ async function swapListPane(href, options = {}) {
         sb?.removeAttribute('active-feed-id');
     }
     sb?.closeDrawer?.();
-    // On mobile the document is the scroller and would otherwise keep the
-    // previous category's offset.
+    // On mobile the document scrolls and would keep the old offset.
     window.scrollTo({ top: 0 });
     const entryId = options.restoreEntry ? target.searchParams.get('entry') : null;
     if (entryId) {
@@ -778,10 +660,7 @@ async function swapListPane(href, options = {}) {
     }
 }
 
-/// Every in-page anchor that lands on a category or feed list — one handler
-/// rather than one per surface, since the surfaces kept being discovered one bug
-/// report at a time. The breadcrumb's outer crumbs (`/categories`, `/feeds`) are
-/// ordinary pages and fail the swappable-href test below.
+/// One handler for every in-page link to a category or feed list.
 const LIST_NAV_LINKS = [
     '#sidebar-categories a[data-category-id]',
     '#sidebar-categories a[data-feed-id]',
@@ -800,18 +679,15 @@ function installListNav() {
         if (!categoryIdFromHref(href) && !feedIdFromHref(href)) return;
         if (!document.querySelector('[data-list-pane]')) return;
         event.preventDefault();
-        // An entry row knows its own category, which keeps the sidebar expanded
-        // on the right group; absent it, swapListPane resolves it itself.
+        // An entry row knows its category; otherwise swapListPane resolves it.
         const row = link.closest('[data-entry-row]');
         swapListPane(href, { categoryId: row?.dataset.categoryId });
     });
 }
 installListNav();
 
-/// The sidebar rows `[` / `]` / `{` / `}` walk, in on-screen order: every
-/// category, with the open category's feeds spliced in after it. The list grows
-/// and shrinks as the reader moves, so the shortcuts step through exactly what
-/// is visible.
+/// Rows `[` / `]` / `{` / `}` walk, in on-screen order: categories with the open
+/// category's feeds spliced in.
 function sidebarNavTargets() {
     const sb = document.querySelector('rdrs-sidebar');
     const cats = sb?.categories || [];
@@ -840,8 +716,7 @@ function sidebarNavTargets() {
     return targets;
 }
 
-// Mobile back button. Rendered in `_reading_pane.html` on every viewport;
-// `.reading-pane-back` is `display: none` until the ≤1024px media block.
+// Mobile back button; `.reading-pane-back` is hidden above 1024px.
 document.addEventListener('click', (event) => {
     if (event.button !== 0) return;
     if (!event.target.closest('[data-pane-back]')) return;
@@ -850,18 +725,11 @@ document.addEventListener('click', (event) => {
 });
 
 // ── Reading-pane prev/next ("neighbors") navigation ──────────────────
-//
-// The pane renders both buttons disabled; once it opens, the adjacent ids are
-// resolved from `GET /api/entries/{id}/neighbors` under the current list filter
-// and cached, so a click is an instant swap. The endpoint resolves order from
-// the DB, so prev/next crosses pagination boundaries the DOM hasn't loaded.
-//
-// "Previous" = newer (up the published-desc list), "Next" = older — the same
-// axis as the list's `k`/`j`.
+// Buttons render disabled; `GET /api/entries/{id}/neighbors` resolves them
+// (crossing unloaded pages). "Previous" = newer, "Next" = older, as `k`/`j`.
 let neighborState = { entryId: null, prevId: null, nextId: null };
 
-// The current page's list filter as `NeighborsQuery` params, mirroring the
-// server-side filter each route builds (handlers/pages.rs).
+// The page's filter as `NeighborsQuery` params, mirroring handlers/pages.rs.
 function currentEntryFilterParams() {
     const { pathname, search } = window.location;
     const out = new URLSearchParams();
@@ -882,10 +750,8 @@ function currentEntryFilterParams() {
     else if (pathname === '/entries/summarized') out.set('has_summary', 'true');
     else if (feed) { out.set('feed_id', feed[1]); applyStatus(status); }
     else if (cat) { out.set('category_id', cat[1]); applyStatus(status); }
-    // Snapshot semantics: echoing the render-time `data-snapshot-at` back as
-    // `read_after` keeps entries read *during* this page view navigable, so j/k
-    // can return to the entry just finished. Entries read before the page
-    // loaded stay skipped, matching what the list rendered.
+    // Echo `data-snapshot-at` as `read_after` so entries read during this view
+    // stay navigable.
     if (out.get('unread_only') === 'true') {
         const snapshotAt = document
             .querySelector('[data-entries-list]')
@@ -895,12 +761,9 @@ function currentEntryFilterParams() {
     return out.toString();
 }
 
-// Applied only while the ids still describe the entry in the pane, so a stale
-// fetch landing after the reader moved on leaves both buttons disabled.
+// Applied only if still for the open entry; stale results leave buttons disabled.
 function applyNeighborButtons() {
-    // Scoped to the pane: `#reading-pane` sits after the list in document order,
-    // so a document-wide selector walks every entry row to reach these two
-    // buttons — on every swap and every neighbor resolve.
+    // Scoped to the pane to avoid walking every entry row.
     const pane = document.getElementById('reading-pane');
     const prevBtn = pane?.querySelector('[data-pane-prev]');
     const nextBtn = pane?.querySelector('[data-pane-next]');
@@ -910,21 +773,9 @@ function applyNeighborButtons() {
     if (nextBtn) nextBtn.disabled = !(valid && neighborState.nextId != null);
 }
 
-// Answer prev/next from the DOM, saving the ~7-query round trip per entry
-// opened. Null when it can't, and the caller falls back to the server.
-//
-// The rows are flat siblings in the same order and filter `find_neighbors`
-// resolves server-side, and nothing removes one once rendered — marking an
-// entry read only restyles its row, and the `read_after` snapshot keeps the
-// server counting it. So an interior row's DOM neighbours are its real ones.
-//
-// Interior rows only: the first row is the head of the list *as rendered* and
-// the last is never the end of the set (Load More may have pages left), so
-// neither end can prove a `null`.
-//
-// Skipped under a scoped search — `currentEntryFilterParams` does not forward
-// `q`, so the server resolves across the *unsearched* set and answering from a
-// searched DOM would change which entry j/k lands on.
+// Resolve prev/next from the DOM to skip a round trip, or null to use the
+// server. Interior rows only (ends can't prove `null`), and not under a scoped
+// search, since the server ignores `q` here.
 function neighborsFromLoadedList(entryId) {
     if (document.querySelector('[data-entries-search] input[name="q"]')?.value) return null;
     const rows = document.querySelectorAll('[data-entries-list] [data-entry-row]');
@@ -957,15 +808,13 @@ async function resolveNeighbors(entryId) {
     } catch {}
 }
 
-// Buttons are disabled up-front so a slow fetch never leaves a stale direction.
+// Disabled up front so a slow fetch never leaves a stale direction.
 let lastResolvedPaneId = null;
 function maybeResolveNeighbors() {
     const id = currentPaneEntryId();
     if (id === lastResolvedPaneId) {
-        // An action swap re-targeting the same entry re-renders the buttons back
-        // to their default `disabled`. neighborState is still valid, so re-apply
-        // it — otherwise they stay disabled, and since a disabled button swallows
-        // taps, mobile prev/next dies for good (j/k bypasses them).
+        // An action swap re-renders the buttons disabled; re-apply, or mobile
+        // prev/next dies (disabled buttons swallow taps).
         applyNeighborButtons();
         return;
     }
@@ -979,19 +828,9 @@ function maybeResolveNeighbors() {
     resolveNeighbors(id);
 }
 
-// Submit the Load-More form once for its current cursor, so the list catches up
-// with a pane that navigated past the loaded page.
-//
-// Guarding on the cursor *value* rather than an in-flight flag is what makes
-// repeat calls safe: an append replaces the form with one carrying the next
-// cursor, so holding `j` re-enters with the same cursor and no-ops. A flag
-// cleared on `rdrs:swap-complete` would be cleared too early by the pane swap
-// firing alongside.
-//
-// One page per call: stepping through entries lands exactly one past the loaded
-// page, so a far-away `?entry=` deep-link stays out of reach rather than firing
-// a burst. The key includes the form action, so another list whose next page
-// starts at the same cursor still auto-loads.
+// Submit Load More once per cursor so the list catches up with the pane.
+// Keyed on the cursor value (plus action), not an in-flight flag, so holding `j`
+// no-ops; one page per call.
 let requestedLoadMoreKey = null;
 function loadMoreOnce() {
     const form = document.getElementById('load-more');
@@ -1003,9 +842,8 @@ function loadMoreOnce() {
     form.requestSubmit();
 }
 
-// Open the neighbor in `direction`. Clicking the loaded list row's link is
-// preferred because it keeps the keyboard selection in sync; entries beyond the
-// loaded page fall back to a direct fragment swap.
+// Open the neighbor: click the loaded row (keeps selection in sync), else swap
+// the fragment directly.
 function navigateNeighbor(direction) {
     const open = currentPaneEntryId();
     if (open == null) return;
@@ -1024,8 +862,7 @@ function doNavigateNeighbor(direction) {
     );
     if (link) { link.click(); return; }
     performSwap(`/entries/${id}/fragment`, { method: 'GET' }, '#reading-pane');
-    // Safe to fire behind the pane swap: they target different nodes and only
-    // `#reading-pane` GETs go through the pane-nav abort guard.
+    // Safe alongside the pane swap: different nodes, and only pane GETs are guarded.
     loadMoreOnce();
 }
 
@@ -1046,9 +883,7 @@ function installNeighborNav() {
 }
 installNeighborNav();
 
-// Turn `<template data-flash data-level="…">` blocks in a swap response into
-// toasts on the page-level `<rdrs-flash>`, for post-action feedback with no
-// corresponding DOM state change (Save, Fetch Full Content).
+// Turn `<template data-flash>` blocks into toasts, for actions with no DOM change.
 function applyFlashTemplates(parsed) {
     const flashes = parsed.querySelectorAll('template[data-flash]');
     for (const tpl of flashes) {
@@ -1062,12 +897,8 @@ function applyFlashTemplates(parsed) {
     }
 }
 
-// Lets an action response update a *container's* state class without shipping
-// the container back: a row action re-renders only the marker form, but the row
-// still has to gain or lose `entry-read`.
-//
-// add/remove rather than setting `class` wholesale — the same element carries
-// client-only classes (`.selected` from j/k) a full overwrite would drop.
+// Class directives from swap responses (e.g. row `entry-read`). add/remove, not
+// overwrite, to keep client-only classes like `.selected`.
 function applyClassTemplates(parsed) {
     for (const tpl of parsed.querySelectorAll('template[data-class-target]')) {
         const dst = document.querySelector(tpl.getAttribute('data-class-target'));
@@ -1079,14 +910,12 @@ function applyClassTemplates(parsed) {
     }
 }
 
-// The mobile drawer lives entirely inside <rdrs-sidebar>: it owns the markup,
-// so it owns the behaviour and the listener lifecycle.
+// The mobile drawer is owned entirely by <rdrs-sidebar>.
 
 installSwap();
 
-// Live updates over one SSE stream, replacing the old 20s sidebar poll:
-// `sidebar` refetches /api/sidebar, `summary` updates the row badge and the open
-// pane. EventSource reconnects natively; each reconnect resyncs the sidebar.
+// Live updates over SSE: `sidebar` refetches /api/sidebar, `summary` updates the
+// badge and pane. Each reconnect resyncs the sidebar.
 const SUMMARY_ICON_FILLED =
     '<svg class="ico is-filled" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></svg>';
 const SUMMARY_ICON_OUTLINE =
@@ -1112,7 +941,7 @@ function renderSummaryBadge(row, status) {
         existing.innerHTML = svg;
         return;
     }
-    // Insert before the <time> element so badge ordering matches the SSR row.
+    // Before <time>, matching the SSR badge order.
     const span = document.createElement('span');
     span.className = cls;
     span.title = title;
@@ -1124,9 +953,7 @@ function renderSummaryBadge(row, status) {
     else statusCluster?.appendChild(span);
 }
 
-// Announce that sidebar-backed state (unread counts, categories) may have
-// moved. <rdrs-sidebar> subscribes while connected and refetches /api/sidebar;
-// pages without a sidebar simply have no listener.
+// Announce that sidebar state may have changed; <rdrs-sidebar> refetches.
 function refreshSidebar() {
     document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
 }
@@ -1149,9 +976,7 @@ function installSse() {
     } catch {
         return; // EventSource unavailable — no live updates, page still works.
     }
-    // `open` also fires on the first connect, where <rdrs-sidebar> has already
-    // fetched from connectedCallback. Only later ones are reconnects that need a
-    // resync for whatever changed while the stream was down.
+    // Skip the first `open`: the sidebar already fetched. Later ones are reconnects.
     let sseHasConnected = false;
     es.addEventListener('open', () => {
         if (sseHasConnected) refreshSidebar();
@@ -1165,31 +990,20 @@ function installSse() {
 }
 installSse();
 
-// Refetching on *every* swap over-fetches slightly — star/save/fetch-full-content
-// don't change sidebar state — but a hit on the server-side per-user sidebar
-// cache costs roughly nothing, and one broad hook beats a fragile per-action
-// allowlist.
+// Refetch on every swap: slightly over-fetches, but cheap and simpler than an allowlist.
 document.addEventListener('rdrs:swap-complete', () => {
     refreshSidebar();
 });
 
-// Decorate every `<time datetime>` with a `title` in the browser's locale and
-// timezone: the server emits UTC and only the client knows the user's TZ.
-//
-// `data-local-text` elements display absolute rather than relative times, so
-// their textContent is replaced too; the server-rendered UTC string stays as the
-// no-JS fallback.
+// Add a local-time `title` to every `<time datetime>` (server emits UTC).
+// `data-local-text` also replaces the text; UTC stays as the no-JS fallback.
 function applyTimeTooltips(root) {
     const scope = root || document;
     for (const el of scope.querySelectorAll('time[datetime]')) {
         const iso = el.getAttribute('datetime');
         if (!iso) continue;
-        // This runs after *every* swap over the whole document, so a list paged
-        // to 500 rows would re-format 500 instants per keypress. The server owns
-        // `datetime`, so a timestamp that really changed still re-formats.
-        //
-        // Deliberately *not* `data-localized`: that name belongs to
-        // rdrs-flash.js as a valueless "already rewritten" marker.
+        // Skip already-formatted timestamps, since this runs after every swap.
+        // Not `data-localized`: rdrs-flash.js owns that marker.
         if (el.getAttribute('data-tooltip-at') === iso) continue;
         const d = new Date(iso);
         if (isNaN(d.getTime())) continue;
@@ -1206,8 +1020,7 @@ initPaneImages();
 document.addEventListener('rdrs:swap-complete', () => applyTimeTooltips());
 document.addEventListener('rdrs:swap-complete', () => initPaneImages());
 
-// Single source of truth for the in-app shortcut help: pages register nothing
-// extra, so every shortcut the keyboard handler recognizes is listed here.
+// Single source of truth for the shortcut help overlay.
 const KB_SHORTCUTS = [
     { group: 'Navigation', key: 'j / k', desc: 'Next / previous entry (switches the open entry when the reading pane is open)' },
     { group: 'Navigation', key: 'o / Enter', desc: 'Open selected entry' },
@@ -1234,11 +1047,8 @@ const KB_SHORTCUTS = [
     { group: 'Other', key: '?', desc: 'Toggle this help' },
 ];
 
-// ── "g" go-to sequences (miniflux-style two-key namespace) ───────────
-// A first `g` arms the namespace, the second key picks the target; entry-relative
-// jumps (g f / g c) need a selected row. The pending state times out so a stray
-// `g` doesn't swallow the next keystroke forever, and the listener captures and
-// stops propagation so `g s` can never double as the single-key Save.
+// ── "g" go-to sequences ──────────────────────────────────────────────
+// `g` arms the namespace and times out; captured so `g s` never triggers Save.
 const GO_PAGES = {
     u: '/',
     a: '/entries',
@@ -1250,9 +1060,7 @@ const GO_TIMEOUT_MS = 2000;
 let goPending = false;
 let goTimer = null;
 
-// Which-key style hint shown at the bottom-right while the `g` namespace
-// is pending. Lifecycle is tied to goPending: shown when `g` arms it,
-// removed when the sequence completes, is cancelled, or times out.
+// Which-key hint shown while the `g` namespace is pending.
 const GO_HINT_ITEMS = [
     ['u', 'Unread'], ['a', 'All'], ['r', 'Read'], ['s', 'Starred'],
     ['m', 'Summarized'], ['f', 'Feed'], ['c', 'Category'],
@@ -1287,8 +1095,7 @@ function goToEntryRelative(key) {
         if (link) swapListPane(link.getAttribute('href'), { categoryId: row?.dataset.categoryId });
         return;
     }
-    // key === 'c' — the selected entry's own category, else the page-parent
-    // category on /feeds/{id}/entries.
+    // 'c': the selected entry's category, else the page's parent category.
     const rowCatId = row?.dataset.categoryId;
     if (rowCatId) { swapListPane(`/categories/${rowCatId}/entries`); return; }
     if (!window.location.pathname.startsWith('/feeds/')) return;
@@ -1304,8 +1111,7 @@ function installGoNavigation() {
         if (goPending) {
             const key = e.key;
             clearGoPending();
-            // Consumed unconditionally: a mistyped sequence must not fire that
-            // key's unrelated single-key binding.
+            // Always consumed so a mistyped sequence can't fire a single-key binding.
             e.preventDefault();
             e.stopPropagation();
             const url = GO_PAGES[key];
@@ -1341,13 +1147,9 @@ installHelpKeyboard();
 // Gated on `[data-entries-list]` so other pages don't bind these keys.
 function installEntriesKeyboard() {
     if (!document.querySelector('[data-entries-list]')) return;
-    // By id, not by node: a multi-target swap can replace the row element, and
-    // `indexOf` on the orphan returns -1, sending `j`/`k` back to the top.
+    // By id: a swap can replace the row node, and an orphan's indexOf is -1.
     let activeId = null;
-    // Cached node behind `activeId`. Rows are usually morphed rather than
-    // replaced, so re-resolving by attribute selector several times per keypress
-    // against a list hundreds of rows long is repeat work. Validated on every
-    // read, so a row that *was* replaced falls back to the query.
+    // Cached row node for `activeId`, validated on each read.
     let activeNode = null;
     const rows = () => Array.from(document.querySelectorAll('[data-entry-row]'));
     const activeRow = () => {
@@ -1375,35 +1177,26 @@ function installEntriesKeyboard() {
         const next = Math.max(0, Math.min(all.length - 1, idx + delta));
         focusRow(all[next]);
     };
-    // A server-rendered replacement row cannot carry the client-side
-    // `.selected`, so it is re-applied after every swap.
-    //
-    // The open pane is the authority on *which* entry that is: a neighbor past
-    // the loaded page swaps only `#reading-pane`, so no row is clicked and
-    // `activeId` would otherwise stay on the last loaded row — keeping
-    // `.selected` there and sending `j`/`k` back to it when the pane closes. A
-    // missing row is fine: Load More appends it and re-runs this handler.
+    // Re-apply `.selected` after each swap, following the open pane (which may
+    // be past the loaded rows); Load More re-runs this once the row arrives.
     document.addEventListener('rdrs:swap-complete', () => {
         const paneId = currentPaneEntryId();
         if (paneId != null && paneId !== activeId) {
-            // Before reassigning, or the orphaned `.selected` shows two
-            // highlights.
+            // Clear first, or two rows are highlighted.
             activeRow()?.classList.remove('selected');
             activeId = paneId;
         }
         const row = activeRow();
         if (row) row.classList.add('selected');
     });
-    // Sync `activeId` on a title click so `j`/`k` continue from the clicked row
-    // rather than the last keyboard selection.
+    // Sync `activeId` on click so `j`/`k` continue from the clicked row.
     document.addEventListener('click', (e) => {
         const link = e.target.closest('[data-entry-row] a[data-swap="#reading-pane"]');
         if (!link) return;
         const row = link.closest('[data-entry-row]');
         if (row) focusRow(row);
     });
-    // Null when no entry is loaded, or when the form's submit button is
-    // disabled (Summarize while a request is in flight).
+    // Null when no entry is loaded or the submit button is disabled.
     const paneForm = (actionSuffix) => {
         const pane = document.getElementById('reading-pane');
         if (!pane || pane.classList.contains('reading-pane-empty')) return null;
@@ -1419,8 +1212,7 @@ function installEntriesKeyboard() {
         switch (e.key) {
             case 'j':
                 e.preventDefault();
-                // With the pane open, j/k navigate across the whole filter
-                // rather than only the loaded rows; the selection follows.
+                // With the pane open, j/k navigate the whole filter.
                 if (currentPaneEntryId() != null) navigateNeighbor('next');
                 else move(1);
                 break;
@@ -1447,10 +1239,8 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'm': {
-                // The row has no read form since the Wire Room redesign, so
-                // drive the swap machinery directly rather than appending a
-                // throwaway one. The in-flight guard keeps a rapid double-press
-                // from reading stale state and double-POSTing.
+                // No read form in the row; drive the swap directly. The in-flight
+                // guard prevents double-POSTs.
                 const current = activeRow();
                 if (!current) return;
                 const id = current.getAttribute('data-entry-id');
@@ -1468,8 +1258,7 @@ function installEntriesKeyboard() {
             case '2':
             case '3':
             case '4': {
-                // The `[data-status-filter] <select>` options, in order:
-                // All / Unread / Read / Starred.
+                // `[data-status-filter]` options: All / Unread / Read / Starred.
                 const options = document.querySelectorAll('[data-status-filter] option');
                 if (options.length === 0) return;
                 const idx = parseInt(e.key, 10) - 1;
@@ -1479,9 +1268,7 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'A': {
-                // The button is hidden while a scoped search is active, since
-                // "Mark N matching as Read" owns that case visually — but the
-                // shortcut still works there, hence the search-box check.
+                // Works under scoped search too, where the button is hidden.
                 const btn = document.getElementById('mark-above-read');
                 const searching = !!document.querySelector('[data-entries-search] input[name="q"]')?.value;
                 if (!btn && !searching) return;
@@ -1490,14 +1277,12 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'v': {
-                // The URL rides on `data-entry-link`, absent when the entry has
-                // no link.
+                // Absent when the entry has no link.
                 const current = activeRow();
                 const url = current?.getAttribute('data-entry-link');
                 if (!url) return;
                 e.preventDefault();
-                // `window.open(url, '_blank', <features>)` drops noreferrer, and
-                // a non-empty features string forces a popup instead of a tab.
+                // A features string would drop noreferrer and force a popup.
                 const a = document.createElement('a');
                 a.href = url;
                 a.target = '_blank';
@@ -1506,8 +1291,7 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'd': {
-                // Once the pane shows full content the Fetch button is replaced
-                // by a "Show Original" link, so fall through to that.
+                // After fetching, the button becomes a "Show Original" link.
                 const form = paneForm('/fetch-full-content');
                 if (form) { e.preventDefault(); form.requestSubmit(); break; }
                 const pane = document.getElementById('reading-pane');
@@ -1528,8 +1312,7 @@ function installEntriesKeyboard() {
                 // Same toggle the action-bar Summarize button performs.
                 const pane = document.getElementById('reading-pane');
                 if (!pane || pane.classList.contains('reading-pane-empty')) return;
-                // Swallowed while in flight, so requestSubmit() can't bypass the
-                // disabled button; Cancel lives in the summary box.
+                // Ignored while in flight; Cancel lives in the summary box.
                 if (summaryInFlight()) { e.preventDefault(); break; }
                 if (dismissVisibleSummary()) { e.preventDefault(); break; }
                 const form = paneForm('/summarize');
@@ -1542,9 +1325,8 @@ function installEntriesKeyboard() {
             case ']':
             case '{':
             case '}': {
-                // Starts from the current feed or category; every other list
-                // page enters at the first row going forward, the last going
-                // back. Wrapping stays inside this list, never out to Unread/All.
+                // Start from the current feed/category, else the list's first
+                // (or last) row; wraps within this list.
                 const targets = sidebarNavTargets();
                 if (targets.length === 0) return;
                 const path = window.location.pathname;
@@ -1559,8 +1341,7 @@ function installEntriesKeyboard() {
                 const forward = e.key === ']' || e.key === '}';
                 const step = forward ? 1 : -1;
                 const unreadOnly = e.key === '{' || e.key === '}';
-                // Virtual start index when nothing is current, so the first
-                // probe lands on targets[0] / the last one.
+                // Virtual start so the first probe lands on the first/last target.
                 let idx = targets.findIndex(isCurrent);
                 if (idx === -1) idx = forward ? -1 : len;
                 let target = null;
@@ -1584,8 +1365,7 @@ function installEntriesKeyboard() {
                 break;
             }
             case ' ': {
-                // One key, one meaning: no fallback action when the pane is
-                // empty.
+                // No fallback action when the pane is empty.
                 const pane = document.getElementById('reading-pane');
                 if (!pane || pane.classList.contains('reading-pane-empty')) return;
                 e.preventDefault();
@@ -1598,10 +1378,8 @@ function installEntriesKeyboard() {
 }
 installEntriesKeyboard();
 
-// Shared by the action-bar Summarize button and the 'a' shortcut. Clicking the
-// mounted Dismiss control reuses the DELETE + clear flow in
-// installSummaryActions. False when no summary is showing, so callers fall
-// through to kicking one off.
+// Shared by the Summarize button and 'a': dismiss a showing summary via its
+// Dismiss control. False when none is showing.
 function dismissVisibleSummary() {
     const dismiss = document.querySelector('#reading-pane [data-summary-dismiss]');
     if (!dismiss) return false;
@@ -1609,24 +1387,20 @@ function dismissVisibleSummary() {
     return true;
 }
 
-// True while the summary is mid-generation, when Cancel is the only intended
-// action and the Summarize/Dismiss toggle must stay inert.
+// True mid-generation, when only Cancel should act.
 function summaryInFlight() {
     return !!document.querySelector('#reading-pane [data-summary-pending]');
 }
 
-// The button flips behaviour in the submit handler, so its label / icon /
-// aria-label must follow. Skipped mid-request so it doesn't clobber the
-// transient "Summarizing…" label — the SSE completion swap syncs again once
-// busy clears.
+// Keep the toggle's label/icon/aria-label in sync; skipped mid-request so the
+// "Summarizing…" label survives.
 function syncSummarizeToggleLabel() {
     const form = document.querySelector('#reading-pane [data-summary-toggle]');
     if (!form || form.getAttribute('aria-busy') === 'true') return;
     const btn = form.querySelector('button');
     if (!btn) return;
     const showing = !!document.querySelector('#reading-pane [data-summary-dismiss]');
-    // Matches the server render; the handler gates cover the window before this
-    // sync catches up.
+    // Matches the server render; handler gates cover the gap.
     btn.disabled = summaryInFlight();
     const labelEl = btn.querySelector('.action-label');
     if (labelEl) labelEl.textContent = showing ? 'Dismiss' : 'Summarize';
@@ -1638,8 +1412,7 @@ function syncSummarizeToggleLabel() {
 }
 document.addEventListener('rdrs:swap-complete', syncSummarizeToggleLabel);
 
-// Copy writes to the clipboard; Dismiss DELETEs the cached summary and strips
-// the summary block and the entry row's badge.
+// Copy to clipboard; Dismiss DELETEs the summary and strips it and the row badge.
 function installSummaryActions() {
     document.addEventListener('click', async (e) => {
         const copyBtn = e.target.closest('[data-summary-copy]');
@@ -1659,8 +1432,7 @@ function installSummaryActions() {
             const text = parts.join('\n\n');
             try {
                 await navigator.clipboard.writeText(text);
-                // Writing the button's textContent would clobber the icon span,
-                // dropping the glyph until the container re-renders.
+                // Not textContent, which would drop the icon span.
                 const label = copyBtn.querySelector('.action-label') || copyBtn;
                 const original = label.textContent;
                 label.textContent = 'Copied!';
@@ -1681,12 +1453,9 @@ function installSummaryActions() {
                 credentials: 'same-origin',
             });
             if (!r.ok) throw new Error('delete failed');
-            // The reader can switch entries while the DELETE is in flight, and
-            // clearing then would blank the *new* entry's summary. Same
-            // staleness rule performSwap() applies to the same target.
+            // Skip if the reader switched entries meanwhile (as in performSwap()).
             if (String(currentPaneEntryId()) === String(entryId)) {
-                // The wrapper stays: it is the swap target for a later
-                // summarize click.
+                // Keep the wrapper: it is the target for a later summarize.
                 const container = document.querySelector('[data-summary-container]');
                 if (container) container.replaceChildren();
                 syncSummarizeToggleLabel();
@@ -1705,12 +1474,8 @@ function installSummaryActions() {
 }
 installSummaryActions();
 
-// "Mark as Read..." posts to the GReader bulk-mark endpoint with an optional
-// `ts=` cutoff, then swaps the refreshed list in place: a `location.reload()`
-// would throw away the open entry, the sidebar's loaded feed lists and both
-// scroll positions to redraw a list that only lost some rows. A native form-POST
-// would navigate the reader to a JSON response, so JS glue is the long-term home
-// (the GReader API itself is permanent per the SSR-first spec).
+// "Mark as Read..." posts to the GReader bulk-mark endpoint (optional `ts=`) and
+// swaps the list in place; a form POST would land on a JSON response.
 const AGE_LABELS = {
     '1': 'older than 1 day',
     '7': 'older than 1 week',
@@ -1720,9 +1485,7 @@ const AGE_LABELS = {
 };
 const READING_LIST_STREAM = 'user/-/state/com.google/reading-list';
 
-// Bulk writes keep the GReader-standard `OK` body and carry the row count in
-// `X-RDRS-Affected`. Null when it is missing or unparseable, so callers fall
-// back to their own estimate rather than reporting "Marked null entries".
+// Row count from `X-RDRS-Affected`, or null so callers use their own estimate.
 function affectedCount(resp) {
     const raw = resp.headers.get('X-RDRS-Affected');
     if (raw === null) return null;
@@ -1730,9 +1493,7 @@ function affectedCount(resp) {
     return Number.isNaN(n) ? null : n;
 }
 
-// Bound per element and re-run after every swap: a category swap replaces the
-// whole list-pane header, discarding the listener-bearing <select>. The guard
-// stops swaps that leave the header in place from stacking a second listener.
+// Rebound after swaps (the header may be replaced); a guard prevents duplicates.
 function installMarkAsReadDropdown() {
     const select = document.getElementById('mark-read-age');
     if (!select || select.dataset.markReadBound) return;
@@ -1743,8 +1504,7 @@ function installMarkAsReadDropdown() {
         if (!age) return;
         const ageLabel = AGE_LABELS[age] || age;
         if (!confirm(`Mark ${ageLabel} entries as read?`)) return;
-        // The GReader stream ID for the current page (`feed/<url>`,
-        // `user/-/label/<cat>`), so one dropdown scopes to whatever is on screen.
+        // GReader stream ID for the current page, e.g. `feed/<url>`.
         const scope = select.dataset.markReadScope || READING_LIST_STREAM;
         const body = new URLSearchParams();
         body.set('s', scope);
@@ -1784,8 +1544,7 @@ function installMarkAsReadDropdown() {
 installMarkAsReadDropdown();
 document.addEventListener('rdrs:swap-complete', installMarkAsReadDropdown);
 
-// Each option's value is the URL to navigate to, and the 1-4 keys hit the same
-// options by position. Re-bound after swaps like the dropdown above.
+// Option values are URLs; keys 1-4 pick by position. Rebound after swaps.
 function installStatusFilterSelect() {
     const select = document.getElementById('status-filter');
     if (!select || select.dataset.statusFilterBound) return;
@@ -1799,13 +1558,8 @@ installStatusFilterSelect();
 document.addEventListener('rdrs:swap-complete', installStatusFilterSelect);
 
 // ── Scoped-search drawer ─────────────────────────────────────────────
-//
-// The server renders the drawer open when the request carried `?q=`, so deep
-// links and list swaps arrive in the right state; only the interactive
-// transitions are handled here.
-//
-// Closing clears the search: a collapsed box that is still filtering turns a
-// short list into a mystery.
+// Server renders it open for `?q=`. Closing also clears the search, so a hidden
+// filter never lingers.
 function searchDrawerParts() {
     const drawer = document.querySelector('[data-search-drawer]');
     return {
@@ -1829,20 +1583,16 @@ function closeSearchDrawer() {
     if (!drawer) return;
     drawer.classList.remove('is-open');
     toggle?.setAttribute('aria-expanded', 'false');
-    // Only when there is something to clear — a needless swap would drop the
-    // reader's scroll position.
+    // Only if needed; a swap would drop scroll position.
     if (input && input.value !== '') {
         input.value = '';
         form?.requestSubmit();
     }
-    // Focus would otherwise stay on a control inside a collapsed, zero-height
-    // container, which strands the keyboard user.
+    // Don't strand focus inside a collapsed container.
     toggle?.focus();
 }
 
-// Delegated, and therefore installed exactly once: a list-pane swap replaces
-// both the toggle and the close button, so per-element binding would have to
-// re-run every swap and would stack duplicate listeners when it did.
+// Delegated (installed once), since list-pane swaps replace these controls.
 function installSearchDrawer() {
     document.addEventListener('click', (e) => {
         if (e.target.closest('[data-search-toggle]')) {
@@ -1872,10 +1622,8 @@ function installSearchDrawer() {
 }
 installSearchDrawer();
 
-// The form lives outside the swapped `[data-entries-list]`, so it survives every
-// swap and keeps focus and caret while typing; only the binding is re-applied,
-// for swaps that re-render the whole layout. `installSwap()`'s submit handler
-// does the actual GET → query-string → swap.
+// The form sits outside the swapped list, so it keeps focus while typing;
+// `installSwap()` performs the actual swap.
 function installEntriesSearch() {
     const form = document.querySelector('form[data-entries-search]');
     if (!form || form.dataset.searchBound) return;
@@ -1888,17 +1636,13 @@ function installEntriesSearch() {
 installEntriesSearch();
 document.addEventListener('rdrs:swap-complete', installEntriesSearch);
 
-/// Re-render the current list in place from `?fragment=1` — page 1 of whatever
-/// the URL already asks for, status tab and scoped search included.
-///
-/// Resolves `false` when there is no list to swap or the swap bailed, so callers
-/// can fall back to a reload rather than leave stale rows on screen.
+/// Re-render the current list in place from `?fragment=1` (page 1). Resolves
+/// `false` if there is nothing to swap, so callers can reload instead.
 async function refreshEntriesList() {
     if (!document.querySelector('[data-entries-list]')) return false;
     const url = new URL(window.location.href);
     url.searchParams.set('fragment', '1');
-    // `after` would answer with the Load-More *append* fragment; `entry` feeds
-    // the SSR reading pane, which this response leaves alone.
+    // Drop `after` (append fragment) and `entry` (pane is left alone).
     url.searchParams.delete('after');
     url.searchParams.delete('entry');
     const applied = await performSwap(url.toString(), { method: 'GET' }, '[data-entries-list]',
@@ -1907,13 +1651,12 @@ async function refreshEntriesList() {
     return applied;
 }
 
-/// Announce a finished bulk mark-as-read: re-render the list in place and show
-/// `message`, or, with no list to swap, carry it to the next document.
+/// After a bulk mark-as-read: re-render the list and show `message`, or pass it
+/// to the next document.
 async function finishBulkMarkRead(message) {
     const refreshed = await refreshEntriesList();
     if (!refreshed) {
-        // No list pane, or the swap bailed: hand the message to the next
-        // document via the cookie.
+        // No swap possible: pass the message via the cookie.
         window.flash?.set('success', message);
         window.location.reload();
         return;
@@ -1923,23 +1666,15 @@ async function finishBulkMarkRead(message) {
     document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
 }
 
-/// Send the list scroller back to the first row: a bulk mark-as-read answers
-/// with page 1 again, so the kept offset points at unrelated rows — or, after
-/// "Mark Above as Read", past the end of the list.
-///
-/// Both scrollers are reset, as in `swapListPane()`: desktop scrolls
-/// `[data-entries-list]` internally, mobile scrolls the document.
+/// Scroll the list back to the top after a bulk mark-as-read (both the desktop
+/// list scroller and the mobile document).
 function scrollEntriesListToTop() {
     document.querySelector('[data-entries-list]')?.scrollTo({ top: 0 });
     window.scrollTo({ top: 0 });
 }
 
-// Marks every entry currently rendered — loaded rows plus anything Load More
-// appended — via one `i=<id>` per row to the GReader edit-tag endpoint. Entries
-// not yet loaded stay untouched.
-//
-// Split from the button so the `A` shortcut still reaches it while a scoped
-// search hides the button. `btn` is optional and only carries the busy state.
+// Mark every rendered entry read via GReader edit-tag. Separate from the button
+// so `A` still works when scoped search hides it; `btn` only carries busy state.
 async function markLoadedEntriesAsRead(btn) {
     const rows = Array.from(document.querySelectorAll('[data-entry-row]'));
     const ids = rows.map(r => r.dataset.entryId).filter(Boolean);
@@ -1963,8 +1698,7 @@ async function markLoadedEntriesAsRead(btn) {
             credentials: 'same-origin',
         });
         if (!resp.ok) throw new Error('Failed to mark entries as read');
-        // The server's count excludes rows that were already read, so it is
-        // usually smaller than the number posted.
+        // Excludes already-read rows, so usually smaller than posted.
         const n = affectedCount(resp) ?? ids.length;
         const message = `Marked ${n} ${n === 1 ? 'entry' : 'entries'} as read.`;
         await finishBulkMarkRead(message);
@@ -1982,25 +1716,21 @@ async function markLoadedEntriesAsRead(btn) {
 function installMarkAboveButton() {
     const btn = document.getElementById('mark-above-read');
     if (!btn || btn.dataset.markAboveBound) return;
-    // The button lives *inside* the swapped container, so a scoped-search swap
-    // drops in a fresh one; the guard keeps swaps that leave it in place from
-    // stacking a second listener and double-POSTing.
+    // Inside the swapped container; the guard prevents duplicate listeners.
     btn.dataset.markAboveBound = '1';
     btn.addEventListener('click', () => markLoadedEntriesAsRead(btn));
 }
 installMarkAboveButton();
 document.addEventListener('rdrs:swap-complete', installMarkAboveButton);
 
-// Clicking anywhere on a row opens the entry, by delegating to the title's
-// `<a data-swap="#reading-pane">` so `installSwap()` handles the multi-target
-// response (auto-mark-as-read, sidebar update).
+// Row click opens the entry via the title link, so `installSwap()` handles it.
 function installRowClickToOpen() {
     document.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey ||
             event.shiftKey || event.altKey) return;
         const row = event.target.closest('[data-entry-row]');
         if (!row) return;
-        // Already handled: the row action forms and the title link itself.
+        // Already handled: row action forms and the title link.
         if (event.target.closest('form')) return;
         if (event.target.closest('a[data-swap="#reading-pane"]')) return;
         // Any other link opens its own destination.

@@ -114,11 +114,8 @@ Feature: Category navigation
     Then the sidebar lists feed "Bravo Feed"
     And the sidebar does not list feed "Alpha Feed"
 
-  # Every interaction that moves an unread count refreshes the open category's
-  # feed list. Rewriting that list rebuilds each row's <img>, and WebKit paints a
-  # fresh <img> a frame late even from a warm cache — the favicons blinked on
-  # essentially every click. The rows are reconciled by feed id instead, so a tag
-  # set before the refresh survives it; a rebuilt row could not carry one.
+  # Rebuilt <img>s blink in WebKit, so feed rows are reconciled by id; a tag set
+  # before the refresh must survive it.
   Scenario: The unread-count refresh keeps the feed rows it already painted
     Given the "Alpha Feed" feed has a favicon
     When I open the entries page for category "Cat A"
@@ -130,10 +127,8 @@ Feature: Category navigation
     And the sidebar feed rows are still the ones I tagged
     And the sidebar feed "Alpha Feed" shows its icon
 
-  # Clicking the feed that is *already* open re-fetches the pane, and the answer
-  # is the one the DOM already shows. Rebuilding the pane for that rebuilt every
-  # row and every favicon in it, which is where WebKit blinks the icons. The swap
-  # is skipped when the server's answer hasn't changed.
+  # Re-clicking the open feed returns identical markup; the swap is skipped so
+  # WebKit does not blink the favicons.
   Scenario: Re-clicking the open feed leaves the entry list untouched
     Given the "Alpha Feed" feed has a favicon
     When I open the entries page for category "Cat A"
@@ -145,8 +140,7 @@ Feature: Category navigation
     And I click the sidebar feed "Alpha Feed"
     Then the entry list pane is still the one I tagged
 
-  # …but the render-time stamp the response carries must still land, or `j`/`k`
-  # would keep navigating against the boundary from the reader's first load.
+  # …but the render stamp must still land, or `j`/`k` use a stale boundary.
   Scenario: The skipped swap still advances the list's render stamp
     Given the "Alpha Feed" feed has a favicon
     When I open the entries page for category "Cat A"

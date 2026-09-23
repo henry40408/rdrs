@@ -1,29 +1,16 @@
-//! The browser session, and the emulations the suite depends on.
+//! The browser session and its CDP emulations.
 //!
-//! `WebDriver::managed` downloads and supervises a matching chromedriver itself,
-//! but — unlike the Playwright setup this replaces — it does *not* download the
-//! browser. A local Chrome or Chromium is a prerequisite now, and
-//! [`Browser::open`] says so in as many words, because the raw driver error does
-//! not.
-//!
-//! Every emulation goes through CDP rather than `BiDi`.
-//! `Emulation.setEmulatedMedia` is the only way to reach `prefers-color-scheme`
-//! at all. `Emulation.setScriptExecutionDisabled` is a choice: `BiDi`'s
-//! equivalent would pull in a non-default feature and a WebSocket stack for
-//! something CDP already does over the connection we have, and CDP is what
-//! Playwright's `javaScriptEnabled: false` used underneath.
+//! `WebDriver::managed` downloads only the driver, never the browser, so a local
+//! Chrome/Chromium is required; [`Browser::open`] says so explicitly. Emulations
+//! use CDP rather than `BiDi` to avoid an extra feature and WebSocket stack.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use thirtyfour::prelude::*;
 
-/// How long a query waits for a condition before giving up.
-///
-/// Only ever paid in full by a genuine failure, so it is set for the slowest
-/// machine that runs this: locally every wait settles in well under a second,
-/// while a two-core CI runner driving several browsers took longer than 10 s to
-/// land a navigation.
+/// How long a query waits before giving up. Generous because slow CI runners
+/// took over 10 s to land a navigation; only a real failure pays it in full.
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How often a query re-checks while waiting.
@@ -42,8 +29,7 @@ impl Viewport {
     }
 }
 
-/// The default viewport, matching the `Desktop Chrome` device the Playwright
-/// projects used.
+/// The default desktop viewport.
 pub const DESKTOP: Viewport = Viewport::new(1280, 720);
 
 /// Whether the page's own scripts run — the `e2e` / `e2e-nojs` split.
@@ -72,20 +58,9 @@ impl Browser {
     pub async fn open(scripting: Scripting) -> Result<Self> {
         let mut caps = DesiredCapabilities::chrome();
         caps.add_arg("--headless=new")?;
-        // Pins the hover and pointer *types* the way Playwright does, because
-        // nothing else can. A headless browser has no pointing device, so on a
-        // Linux runner it reports `hover: none` — and the stylesheet's touch
-        // baseline hangs off that, laying every desktop scenario out on the
-        // 44px-tap-target branch. macOS reports `hover: hover` regardless, which
-        // is why this was invisible locally.
-        //
-        // It cannot be corrected after the session starts:
-        // `Emulation.setEmulatedMedia` silently ignores `hover` and `pointer`
-        // (measured), and the only command that moves them,
-        // `setTouchEmulationEnabled`, goes the other way.
-        //
-        // The values are Blink's own enums: `kHoverHoverType = 2`,
-        // `kPointerFine = 4`.
+        // Headless Linux reports `hover: none`, which triggers the touch layout;
+        // this can't be fixed post-launch (`setEmulatedMedia` ignores hover/
+        // pointer). Values are Blink enums: kHoverHoverType=2, kPointerFine=4.
         caps.add_arg(
             "--blink-settings=primaryHoverType=2,availableHoverTypes=2,\
              primaryPointerType=4,availablePointerTypes=4",
@@ -96,10 +71,8 @@ impl Browser {
         ))?;
         // Containers get a 64 MB /dev/shm by default, which Chrome outgrows.
         caps.add_arg("--disable-dev-shm-usage")?;
-        // Playwright launches chromium with this and the layout assertions were
-        // written against it. Without it the classic scrollbars on Linux take
-        // 15px out of the viewport, while macOS's overlay scrollbars take none —
-        // invisible locally, a CI-only failure.
+        // Linux classic scrollbars would take 15px off the viewport (macOS
+        // overlays take none), breaking layout assertions on CI only.
         caps.add_arg("--hide-scrollbars")?;
 
         let driver = WebDriver::managed(caps).await.context(
@@ -112,11 +85,8 @@ impl Browser {
             driver,
             viewport: DESKTOP,
         };
-        // `--window-size` above sizes the *window*; the stylesheet reads the
-        // viewport, and the two differ by whatever chrome the platform's headless
-        // build keeps. The touch baseline also lives under
-        // `@media (max-width: 1024px)`, so a desktop scenario landing even
-        // slightly under 1024 would be laid out as a phone.
+        // `--window-size` sizes the window, not the viewport; landing even
+        // slightly under 1024px would trip the touch layout.
         browser.set_viewport(DESKTOP).await?;
         if scripting == Scripting::Disabled {
             browser.disable_scripting().await?;
@@ -124,13 +94,8 @@ impl Browser {
         Ok(browser)
     }
 
-    /// Downloads and starts the driver once, before any scenario asks for it.
-    ///
-    /// `WebDriver::managed` builds a *new* manager per call, which is harmless
-    /// when the driver is cached and pathological when it is not: several
-    /// sessions opening at once on a cold cache all download the same driver and
-    /// contend on its lock file. CI has a cold cache every run, which is exactly
-    /// where the scenarios run in parallel.
+    /// Downloads the driver once up front, so parallel sessions on a cold
+    /// cache (every CI run) don't all download it and contend on its lock file.
     ///
     /// # Errors
     ///
@@ -139,7 +104,7 @@ impl Browser {
         Self::open(Scripting::Enabled).await?.quit().await
     }
 
-    /// The underlying session, for the page objects.
+    /// The underlying session.
     pub fn driver(&self) -> &WebDriver {
         &self.driver
     }
@@ -149,12 +114,8 @@ impl Browser {
         self.viewport
     }
 
-    /// Resizes the viewport, Playwright's `setViewportSize`.
-    ///
-    /// Goes through `Emulation.setDeviceMetricsOverride` rather than the
-    /// `WebDriver` window commands: a headless window's outer size includes
-    /// chrome the layout does not see, and the responsive scenarios assert on
-    /// exact breakpoints.
+    /// Resizes the viewport exactly via CDP; `WebDriver` window sizes include
+    /// chrome, which would miss exact breakpoints.
     ///
     /// # Errors
     ///
@@ -176,14 +137,8 @@ impl Browser {
         Ok(())
     }
 
-    /// Emulates a touch-capable device, Playwright's `hasTouch`.
-    ///
-    /// The pointer-coarse scenarios need this: the app branches on
-    /// `(hover: none)` / `(pointer: coarse)`, which a viewport size alone does
-    /// not change. This is the *only* command that moves them —
-    /// `Emulation.setEmulatedMedia` silently ignores both (measured) — which also
-    /// means a desktop session cannot opt *into* `hover: hover` and has to start
-    /// there, as `--headless=new` arranges.
+    /// Emulates a touch device, the only way to flip `(hover: none)` /
+    /// `(pointer: coarse)`; `setEmulatedMedia` ignores both.
     ///
     /// # Errors
     ///
@@ -199,8 +154,7 @@ impl Browser {
         Ok(())
     }
 
-    /// Emulates `prefers-color-scheme`, with no stored preference — the app's
-    /// system-follow path, which is what the screenshots are meant to show.
+    /// Emulates `prefers-color-scheme` (the app's system-follow path).
     ///
     /// # Errors
     ///
@@ -219,14 +173,8 @@ impl Browser {
         Ok(())
     }
 
-    /// Cuts the browser off from the network — the "Offline" checkbox in the
-    /// browser's own developer tools.
-    ///
-    /// Not [`crate::network::Action::Abort`], which is what the no-JS
-    /// walkthrough uses: CDP request interception is attached to the *page*
-    /// target, and the requests that have to fail here are issued by the service
-    /// worker, which is a target of its own. Network conditions apply to the
-    /// whole browser context and so reach both.
+    /// Takes the browser offline. Unlike [`crate::network::Action::Abort`]
+    /// (page-target only), this also reaches the service worker.
     ///
     /// # Errors
     ///
@@ -253,9 +201,7 @@ impl Browser {
         Ok(())
     }
 
-    /// Grants clipboard access. Without it `navigator.clipboard.writeText`
-    /// rejects in a headless browser and the copy button never reaches its
-    /// "Copied" state.
+    /// Grants clipboard access; headless `clipboard.writeText` rejects without it.
     ///
     /// # Errors
     ///
@@ -273,14 +219,8 @@ impl Browser {
         Ok(())
     }
 
-    /// Is the element intersecting the viewport?
-    ///
-    /// Rebuilds Playwright's `toBeInViewport`, whose default ratio is "any
-    /// overlap at all". `WebElement::rect` reports document coordinates, so it
-    /// cannot answer this once the page has scrolled.
-    ///
-    /// The driver can still inject script into a page whose *own* scripts are
-    /// disabled, so this works in the `@nojs` scenarios too.
+    /// Does the element overlap the viewport at all? (`WebElement::rect` is in
+    /// document coordinates.) Works under `@nojs` too.
     ///
     /// # Errors
     ///
@@ -314,10 +254,8 @@ impl Browser {
         Ok(())
     }
 
-    /// Stops the page's own scripts from running.
-    ///
-    /// Takes effect on the *next* document, so it is issued before the first
-    /// navigation — which is why sessions are per-scenario rather than shared.
+    /// Stops the page's scripts from the *next* document on, hence it runs
+    /// before the first navigation and sessions are per-scenario.
     async fn disable_scripting(&self) -> Result<()> {
         self.driver
             .cdp()

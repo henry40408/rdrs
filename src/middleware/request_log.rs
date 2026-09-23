@@ -1,38 +1,17 @@
-//! Per-request timing, the HTTP-side counterpart to sqlx's statement log.
+//! Per-request timing, the HTTP counterpart to sqlx's statement log.
 //!
-//! Until this existed nothing recorded how long a request took: `sqlx::query`
-//! covered the database and stopped there, so a page that felt slow could not be
-//! attributed to query time, template rendering, an upstream fetch, or a lock
-//! held somewhere in between.
+//! Every request logs DEBUG `http.request`; one at or past
+//! [`SLOW_REQUEST_THRESHOLD`] logs WARN `http.slow_request` instead.
 //!
-//! **Levels mirror the sqlx convention deliberately.** Every request is a DEBUG
-//! `http.request`, and one at or beyond [`SLOW_REQUEST_THRESHOLD`] a WARN
-//! `http.slow_request` instead. That split is what makes the default filter
-//! useful without being noisy: a healthy deployment logs nothing per request,
-//! while a request that blew past a second surfaces on its own.
+//! **`route` is the matched route template, never the request path**: paths
+//! can carry credentials (`/invite/{token}`, signed proxy URLs) that must not
+//! reach logs. Unmatched requests are labelled [`UNMATCHED_ROUTE`].
 //!
-//! **The `route` field is the matched route template, never the request path.**
-//! `/invite/{token}` carries a single-use credential *in the path*, and the image
-//! proxy takes a signed URL the same way; logging `uri().path()` would write both
-//! into a file that outlives the credential and is routinely shipped to an
-//! aggregator. [`MatchedPath`] is also the label worth aggregating on — a
-//! per-token path would be a distinct series in every metrics backend. A request
-//! that matched no route has no template, and its path is attacker-controlled
-//! text, so it is labelled [`UNMATCHED_ROUTE`].
+//! Duration ends when the response head is ready, excluding body streaming, so
+//! SSE `/events` reads as fast — intended.
 //!
-//! **What the duration covers.** From entry into this layer to the moment the
-//! inner stack yields the response *head*, which is where every other layer's
-//! work and the whole handler live. It does not include streaming the body, so
-//! it is server-side service time rather than client-observed — the same thing
-//! `TraceLayer` reports as `latency`. The visible consequence is `/events`: an
-//! SSE handler returns its head immediately and then streams for minutes, so it
-//! reads as a fast request. That is intended; a connection-lifetime number would
-//! trip the slow threshold on every SSE client.
-//!
-//! Layered **outermost**, for the same reason the security headers are: several
-//! inner layers short-circuit without calling `next`, and `/events` sits outside
-//! the `core` stack. It still runs after routing, which is what makes the
-//! template available here at all.
+//! Layered **outermost**, since inner layers short-circuit and `/events` sits
+//! outside the `core` stack.
 
 use std::time::{Duration, Instant};
 
@@ -43,26 +22,16 @@ use axum::{
     response::Response,
 };
 
-/// A request taking at least this long is logged at WARN as `http.slow_request`
-/// instead of DEBUG.
-///
-/// One second, matching sqlx's own `slow_statements_duration` default so the HTTP
-/// and SQL slow logs agree on what "slow" means. Well under
-/// `services::http::SERVER_REQUEST_TIMEOUT`, so a request the timeout eventually
-/// kills is warned about first.
+/// Requests at least this long log at WARN as `http.slow_request`. Matches
+/// sqlx's `slow_statements_duration` default.
 pub const SLOW_REQUEST_THRESHOLD: Duration = Duration::from_secs(1);
 
-/// The `route` value for a request that matched no route (a 404 from the
-/// fallback). Deliberately not the requested path — see the module docs.
+/// `route` for unmatched requests; never the (attacker-controlled) path.
 pub const UNMATCHED_ROUTE: &str = "<unmatched>";
 
-/// Time the request and emit one structured event once the response head is
-/// ready. Transparent: the response is returned untouched.
+/// Time the request and emit one event once the response head is ready.
 pub async fn log_request_duration(req: Request, next: Next) -> Response {
     let method = req.method().clone();
-    // Both are taken before `next` consumes the request, and both are cheap:
-    // `Method` is an inline enum for the standard verbs, and the route
-    // template is a short string in every routed case.
     let route = route_label(req.extensions()).to_owned();
 
     let started = Instant::now();
@@ -80,15 +49,8 @@ fn route_label(extensions: &Extensions) -> &str {
         .map_or(UNMATCHED_ROUTE, MatchedPath::as_str)
 }
 
-/// Emit the event for a finished request.
-///
-/// Split out of [`log_request_duration`] so both branches can be exercised
-/// against an exact duration: reaching the WARN branch through the middleware
-/// would need a test that genuinely blocks for [`SLOW_REQUEST_THRESHOLD`].
-///
-/// `elapsed` is attached twice on purpose, following `sqlx::query`: the
-/// human-readable `Duration` debug for the console formats, and a plain
-/// `elapsed_ms` to filter and aggregate on under `RDRS_LOG_FORMAT=json`.
+/// Emit the event; split out so tests can pass an exact duration. `elapsed` is
+/// logged both as `Duration` (console) and `elapsed_ms` (JSON aggregation).
 fn log_completed(method: &Method, route: &str, status: u16, elapsed: Duration) {
     let elapsed_ms = as_millis_f64(elapsed);
 
@@ -116,7 +78,6 @@ fn log_completed(method: &Method, route: &str, status: u16, elapsed: Duration) {
     }
 }
 
-/// `elapsed` in milliseconds, as a number rather than a formatted string.
 fn as_millis_f64(elapsed: Duration) -> f64 {
     elapsed.as_secs_f64() * 1000.0
 }
@@ -129,7 +90,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tower::ServiceExt;
 
-    /// Everything the subscriber wrote during one test, as a string.
     #[derive(Clone, Default)]
     struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
 
@@ -167,10 +127,7 @@ mod tests {
         }
     }
 
-    /// Install a DEBUG-level subscriber for the current thread and return the
-    /// buffer it writes to. The guard must be held for as long as the events
-    /// are being produced — `#[tokio::test]` runs on a current-thread runtime,
-    /// so the awaited work stays on the thread the default is set for.
+    /// Thread-local DEBUG subscriber; hold the guard while events are produced.
     fn capture_logs() -> (CapturedLogs, tracing::subscriber::DefaultGuard) {
         let logs = CapturedLogs::default();
         let subscriber = tracing_subscriber::fmt()
@@ -182,9 +139,7 @@ mod tests {
         (logs, guard)
     }
 
-    /// A router shaped like `create_router`'s: a `core` of ordinary routes
-    /// merged under an outside-the-stack `/events`, with this middleware
-    /// applied outermost over both.
+    /// Mirrors `create_router`: `core` plus an outside-the-stack `/events`.
     fn app() -> Router {
         let core = Router::new()
             .route("/invite/{token}", get(async || "invite page"))
@@ -210,10 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn logs_the_route_template_not_the_invite_token() {
-        // The reason this middleware logs `MatchedPath` rather than
-        // `uri().path()`: an invite token is a single-use credential that
-        // travels in the path, and a log line outlives it. Logging the raw
-        // path would hand every reader of the log a working invite.
+        // The invite token is a credential in the path; it must not be logged.
         let (logs, _guard) = capture_logs();
 
         let status = get_path("/invite/s3cret-invite-token").await;
@@ -255,9 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn covers_the_sse_route_that_sits_outside_the_core_stack() {
-        // `/events` is merged in outside `core` precisely to escape the
-        // ETag/compression/timeout layers, so a middleware nested inside
-        // those would never see it. This one is layered outermost and does.
+        // `/events` sits outside `core`; only an outermost layer sees it.
         let (logs, _guard) = capture_logs();
 
         let status = get_path("/events").await;
@@ -289,8 +239,7 @@ mod tests {
 
     #[test]
     fn a_request_at_the_threshold_warns_instead() {
-        // At the boundary, not past it: `>=` is what makes a request that
-        // takes exactly the threshold count as slow.
+        // Exactly the threshold counts as slow.
         let (logs, _guard) = capture_logs();
 
         log_completed(&Method::GET, "/", 200, SLOW_REQUEST_THRESHOLD);
@@ -307,8 +256,7 @@ mod tests {
 
     #[test]
     fn a_request_just_under_the_threshold_stays_at_debug() {
-        // The literal below is one millisecond under the threshold; assert the
-        // relationship rather than trusting the two to stay in step.
+        // Keep the literal below in step with the threshold.
         assert_eq!(SLOW_REQUEST_THRESHOLD, Duration::from_secs(1));
         let (logs, _guard) = capture_logs();
 

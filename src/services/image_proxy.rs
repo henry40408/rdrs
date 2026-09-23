@@ -2,17 +2,12 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use crate::secret::{DOMAIN_IMAGE, tag};
 
-/// Bytes of the derived tag kept in a proxy-URL signature. 8 bytes (64 bits)
-/// keeps the URL short; forging one is still a 2^64 search against a keyed MAC
-/// whose root key never appears in a URL.
+/// Signature tag length: 64 bits keeps URLs short while forging stays a 2^64
+/// search against a keyed MAC.
 const SIG_BYTES: usize = 8;
 
-/// Signs a URL under the image domain and returns a truncated,
-/// base64-encoded signature.
-///
-/// The signature derives from the shared root key through
-/// [`DOMAIN_IMAGE`](crate::secret::DOMAIN_IMAGE), so it can never coincide with
-/// a session-cookie or CSRF tag built from the same key.
+/// Sign a URL under [`crate::secret::DOMAIN_IMAGE`] (so it never
+/// coincides with other tags from the root key); truncated, base64-encoded.
 pub fn sign_url(url: &str, secret: &[u8]) -> String {
     let t = tag(secret, DOMAIN_IMAGE, &[url.as_bytes()]);
     URL_SAFE_NO_PAD.encode(&t[..SIG_BYTES])
@@ -23,8 +18,7 @@ pub fn verify_signature(url: &str, signature: &str, secret: &[u8]) -> bool {
     constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
-/// Absolute when `base_url` is given, relative otherwise — absolute is what
-/// feeds served to external readers need, relative is enough in-page.
+/// Absolute with `base_url` (for external readers), relative otherwise.
 pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str>) -> String {
     let encoded = URL_SAFE_NO_PAD.encode(original_url);
     let signature = sign_url(original_url, secret);
@@ -36,8 +30,8 @@ pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str
     }
 }
 
-/// Signs `url|referrer` as one message, so a signature minted for one referrer
-/// cannot be replayed with another.
+/// Signs `url|referrer` together so a signature cannot be replayed with
+/// another referrer.
 pub fn sign_url_with_referrer(url: &str, referrer: &str, secret: &[u8]) -> String {
     let message = format!("{url}|{referrer}");
     let t = tag(secret, DOMAIN_IMAGE, &[message.as_bytes()]);
@@ -54,8 +48,8 @@ pub fn verify_signature_with_referrer(
     constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
-/// As [`create_proxy_url`], but carries the referrer the upstream image server
-/// needs to serve hotlink-protected images.
+/// As [`create_proxy_url`], plus the referrer needed for hotlink-protected
+/// images.
 pub fn create_proxy_url_with_referrer(
     original_url: &str,
     referrer: &str,
@@ -95,7 +89,7 @@ mod tests {
         let url = "https://example.com/image.jpg";
 
         let signature = sign_url(url, secret);
-        // Signature should be 11 characters (8 bytes base64 encoded without padding)
+        // 8 bytes, unpadded base64.
         assert_eq!(signature.len(), 11);
     }
 

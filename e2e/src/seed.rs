@@ -1,12 +1,6 @@
-//! Writing test data straight into the server's `SQLite` file.
-//!
-//! A port of `support/seed.js`, which used `better-sqlite3`. Going through the
-//! database rather than the UI is what keeps the suite's `Given` steps to one
-//! statement each: subscribing to a feed through the app would need a real
-//! upstream, a sync pass and a wait, per scenario.
-//!
-//! It is also why the server runs with `RDRS_DISABLE_SIDEBAR_CACHE=1` — see
-//! `server.rs`. Writes made here never run the handlers that bust that cache.
+//! Writes test data straight into the server's `SQLite` file, skipping the
+//! upstream fetch and sync a UI-driven `Given` would need. These writes never
+//! bust the sidebar cache, hence `RDRS_DISABLE_SIDEBAR_CACHE=1` in `server.rs`.
 
 use anyhow::{Context, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -28,7 +22,7 @@ pub struct NewEntry {
 }
 
 impl NewEntry {
-    /// An entry with the defaults the old helper applied.
+    /// An entry with empty link/content, no summary, published now.
     pub fn new(feed_id: i64, guid: &str, title: &str) -> Self {
         Self {
             feed_id,
@@ -70,19 +64,12 @@ pub struct Seed {
 
 impl Seed {
     /// Opens the pool the scenarios seed through.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the database cannot be opened.
     pub async fn open(db_path: &Path) -> Result<Self> {
         let options = SqliteConnectOptions::new()
             .filename(db_path)
-            // The server has already created and migrated it; a seeder that
-            // creates its own would silently write to an empty second file if
-            // the path were ever wrong.
+            // A wrong path must fail, not silently seed an empty second file.
             .create_if_missing(false)
-            // Scenarios run in parallel against one file, and the server holds
-            // the writer as often as they do. Waiting is correct here; failing
+            // Parallel scenarios and the server contend for the writer; failing
             // fast would surface as a flake.
             .busy_timeout(Duration::from_secs(10));
         let pool = SqlitePoolOptions::new()
@@ -94,10 +81,6 @@ impl Seed {
     }
 
     /// Inserts entries and returns their ids, in the order given.
-    ///
-    /// # Errors
-    ///
-    /// Fails when a statement is rejected.
     pub async fn insert_entries(&self, entries: &[NewEntry]) -> Result<Vec<i64>> {
         let mut tx = self.pool.begin().await?;
         let mut ids = Vec::with_capacity(entries.len());
@@ -129,10 +112,6 @@ impl Seed {
     }
 
     /// Inserts `count` numbered entries into a feed, newest first.
-    ///
-    /// # Errors
-    ///
-    /// Fails when a statement is rejected.
     pub async fn seed_test_entries(&self, feed_id: i64, count: u32) -> Result<Vec<i64>> {
         let entries: Vec<_> = (1..=count)
             .map(|i| {
@@ -150,9 +129,6 @@ impl Seed {
         self.insert_entries(&entries).await
     }
 
-    /// # Errors
-    ///
-    /// Fails when no such user exists.
     pub async fn user_id(&self, username: &str) -> Result<i64> {
         sqlx::query_scalar("SELECT id FROM user WHERE username = ?")
             .bind(username)
@@ -162,10 +138,6 @@ impl Seed {
     }
 
     /// Creates a category if it is not there, returning its id either way.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn create_category(&self, user_id: i64, name: &str) -> Result<i64> {
         sqlx::query("INSERT OR IGNORE INTO category (user_id, name) VALUES (?, ?)")
             .bind(user_id)
@@ -175,9 +147,6 @@ impl Seed {
         self.category_id(user_id, name).await
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn delete_category(&self, user_id: i64, name: &str) -> Result<()> {
         sqlx::query("DELETE FROM category WHERE user_id = ? AND name = ?")
             .bind(user_id)
@@ -187,9 +156,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when no such category exists.
     pub async fn category_id(&self, user_id: i64, name: &str) -> Result<i64> {
         sqlx::query_scalar("SELECT id FROM category WHERE user_id = ? AND name = ?")
             .bind(user_id)
@@ -200,10 +166,6 @@ impl Seed {
     }
 
     /// Creates a feed if its URL is not already taken, returning its id.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn create_feed(
         &self,
         category_id: i64,
@@ -223,9 +185,6 @@ impl Seed {
             .with_context(|| format!("feed `{url}` not found after insert"))
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn insert_icon(
         &self,
         feed_id: i64,
@@ -246,9 +205,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn mark_read(&self, entry_id: i64, relative_time: &str) -> Result<()> {
         sqlx::query("UPDATE entry SET read_at = datetime('now', ?) WHERE id = ?")
             .bind(relative_time)
@@ -258,9 +214,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn mark_starred(&self, entry_id: i64, relative_time: &str) -> Result<()> {
         sqlx::query("UPDATE entry SET starred_at = datetime('now', ?) WHERE id = ?")
             .bind(relative_time)
@@ -270,9 +223,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn insert_summary(&self, entry_id: i64, user_id: i64, text: &str) -> Result<()> {
         sqlx::query(
             "INSERT OR IGNORE INTO entry_summary (user_id, entry_id, status, summary_text)
@@ -286,9 +236,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn insert_failed_summary(
         &self,
         entry_id: i64,
@@ -307,9 +254,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn insert_pending_summary(&self, entry_id: i64, user_id: i64) -> Result<()> {
         sqlx::query(
             "INSERT OR IGNORE INTO entry_summary (user_id, entry_id, status)
@@ -322,9 +266,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn set_entry_content(&self, entry_id: i64, html: &str) -> Result<()> {
         sqlx::query("UPDATE entry SET content = ? WHERE id = ?")
             .bind(html)
@@ -334,9 +275,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn set_entry_link(&self, entry_id: i64, link: &str) -> Result<()> {
         sqlx::query("UPDATE entry SET link = ? WHERE id = ?")
             .bind(link)
@@ -346,16 +284,8 @@ impl Seed {
         Ok(())
     }
 
-    /// Seeds a fake Kagi config so the reading pane renders its Summarize
-    /// button.
-    ///
-    /// The token is bogus, and the mock upstream in `server.rs` is what
-    /// actually answers — enough for tests that assert UI state up through the
-    /// in-flight placeholder.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
+    /// Seeds a fake Kagi config so the Summarize button renders; the mock
+    /// upstream in `server.rs` answers.
     pub async fn configure_kagi(&self, user_id: i64, session_token: &str) -> Result<()> {
         let payload = serde_json::json!({ "kagi": { "session_token": session_token } }).to_string();
         let existing: Option<i64> =
@@ -379,17 +309,10 @@ impl Seed {
         Ok(())
     }
 
-    /// Opt a reader into open tracking, as the preferences checkbox does.
+    /// Opts a reader into open tracking; entries seeded before this carry no pixel.
     ///
-    /// `datetime('now')` rather than a bound timestamp, because the value is
-    /// compared against `entry.created_at` column-to-column and sqlx encodes a
-    /// bound timestamp in a format that does not compare — see
-    /// `models::entry_open`. Entries seeded *before* this runs carry no pixel:
-    /// the opt-in is the baseline the rate is measured from.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
+    /// Uses `datetime('now')`: it is compared column-to-column with
+    /// `entry.created_at`, and a sqlx-bound timestamp's format does not compare.
     pub async fn enable_pixel_tracking(&self, user_id: i64) -> Result<()> {
         sqlx::query(
             "INSERT INTO user_settings (user_id, pixel_tracking_enabled_at) \
@@ -402,13 +325,8 @@ impl Seed {
         Ok(())
     }
 
-    /// Record every entry of a feed as opened, the way an external client
-    /// fetching each pixel during a sync would — the case a browser-driven
-    /// scenario cannot reach.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
+    /// Records every entry of a feed as opened, as an external client fetching
+    /// pixels would — unreachable from a browser-driven scenario.
     pub async fn record_opens_for_feed(&self, user_id: i64, feed_id: i64) -> Result<()> {
         sqlx::query(
             "INSERT INTO entry_open (user_id, entry_id) \
@@ -422,9 +340,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn make_admin(&self, user_id: i64) -> Result<()> {
         sqlx::query("UPDATE user SET role = 'admin' WHERE id = ?")
             .bind(user_id)
@@ -433,9 +348,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the user has no entry with that title.
     pub async fn entry_id_by_title(&self, user_id: i64, title: &str) -> Result<i64> {
         sqlx::query_scalar(
             "SELECT e.id FROM entry e
@@ -450,9 +362,6 @@ impl Seed {
         .with_context(|| format!("entry `{title}` not found"))
     }
 
-    /// # Errors
-    ///
-    /// Fails when the user has no feed with that title.
     pub async fn feed_id_by_title(&self, user_id: i64, feed_title: &str) -> Result<i64> {
         sqlx::query_scalar(
             "SELECT f.id FROM feed f
@@ -466,9 +375,6 @@ impl Seed {
         .with_context(|| format!("feed `{feed_title}` not found"))
     }
 
-    /// # Errors
-    ///
-    /// Fails when the user has no feeds at all.
     pub async fn first_feed_id(&self, user_id: i64) -> Result<i64> {
         sqlx::query_scalar(
             "SELECT f.id FROM feed f
@@ -481,9 +387,6 @@ impl Seed {
         .context("no feed found for user")
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn mark_category_read(&self, user_id: i64, category_name: &str) -> Result<()> {
         sqlx::query(
             "UPDATE entry SET read_at = datetime('now')
@@ -500,9 +403,6 @@ impl Seed {
         Ok(())
     }
 
-    /// # Errors
-    ///
-    /// Fails when the statement is rejected.
     pub async fn mark_feed_read(&self, user_id: i64, feed_title: &str) -> Result<()> {
         sqlx::query(
             "UPDATE entry SET read_at = datetime('now')
@@ -519,12 +419,7 @@ impl Seed {
         Ok(())
     }
 
-    /// The titles of every entry a user can see, newest first — a read-side
-    /// helper the JS suite did through the API.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the query is rejected.
+    /// Titles of every entry a user can see, newest first.
     pub async fn entry_titles(&self, user_id: i64) -> Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT e.title FROM entry e

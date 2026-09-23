@@ -19,8 +19,6 @@ use super::types::{
     item_id_to_entry_id,
 };
 
-// --- stream/contents ---
-
 #[derive(Debug, Deserialize)]
 pub struct StreamContentsQuery {
     /// Number of items to return (default 20)
@@ -54,10 +52,7 @@ pub async fn stream_contents(
 ) -> AppResult<Json<StreamContentsResponse>> {
     let stream_id = StreamId::parse(&stream)?;
     let user_id = auth.user.id;
-    // Clamp to a non-negative count: `n` is user-supplied `i64`, and a negative
-    // value would make `limit: count + 1` go negative (SQLite treats a negative
-    // LIMIT as unbounded) and `take(count as usize)` wrap to a huge value —
-    // together returning the user's entire entry set in one response.
+    // Clamp: a negative `n` would make LIMIT unbounded and return everything.
     let count = query.n.unwrap_or(20).clamp(0, 1000);
 
     let filter = build_entry_filter(&stream_id, &query);
@@ -80,10 +75,8 @@ pub async fn stream_contents(
 
     let summary_cache = state.summary_cache.clone();
 
-    // Resolve stream-specific constraints
     let mut effective_filter = filter;
 
-    // Resolve feed_id from stream if it's a Feed stream
     if let StreamId::Feed(ref url) = stream_id {
         let f = feed::find_by_url_for_user(&state.db, url, user_id)
             .await?
@@ -91,7 +84,6 @@ pub async fn stream_contents(
         effective_filter.feed_id = Some(f.id);
     }
 
-    // Resolve category_id from stream if it's a Label stream
     if let StreamId::Label(ref name) = stream_id {
         let cat = category::find_by_name_and_user(&state.db, name, user_id)
             .await?
@@ -118,28 +110,23 @@ pub async fn stream_contents(
         None
     };
 
-    // Batch-query summary statuses from DB
     let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
     let db_statuses =
         entry_summary::get_statuses_for_entries(&state.db, user_id, &entry_ids).await?;
 
     let stream_id_str = stream_id.to_string();
 
-    // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let secret = &state.config.secret;
     let proxy_base_url = state.config.public_base_url.as_deref();
     let no_content = query.no_content.unwrap_or(false);
-    // One settings read for the whole page: a client syncing a thousand items
-    // would otherwise pay a query per item for a value that cannot change
-    // mid-response.
+    // One settings read for the whole page.
     let pixel = PixelContext {
         user_id,
         enabled_at: user_settings::get_pixel_tracking_enabled_at(&state.db, user_id).await?,
         secret,
-        // Absolute: this content is rendered inside another app, where a
-        // root-relative URL would resolve against that app's own host.
+        // Absolute: rendered inside another app with a different host.
         base_url: proxy_base_url,
     };
     let items: Vec<GReaderItem> = entries
@@ -163,8 +150,6 @@ pub async fn stream_contents(
         items,
     }))
 }
-
-// --- stream/items/ids ---
 
 #[derive(Debug, Deserialize)]
 pub struct StreamItemIdsQuery {
@@ -198,8 +183,7 @@ pub async fn stream_item_ids(
         .unwrap_or("user/-/state/com.google/reading-list");
     let stream_id = StreamId::parse(stream_str)?;
     let user_id = auth.user.id;
-    // Clamp to a non-negative count (see stream_contents above): a negative
-    // user-supplied `n` would otherwise bypass the limit and return everything.
+    // Clamp to non-negative (see `stream_contents`).
     let count = query.n.unwrap_or(20).clamp(0, 10000);
 
     let filter =
@@ -271,8 +255,6 @@ pub async fn stream_item_ids(
     Ok(Json(response))
 }
 
-// --- stream/items/count ---
-
 #[derive(Debug, Deserialize)]
 pub struct StreamItemCountQuery {
     /// Stream ID
@@ -317,8 +299,6 @@ pub async fn stream_item_count(
 
     Ok(count.to_string())
 }
-
-// --- stream/items/contents ---
 
 /// `GET /reader/api/0/stream/items/contents` (query params)
 pub async fn stream_items_contents(
@@ -376,11 +356,9 @@ async fn fetch_items_by_ids(
 
     let entries = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
 
-    // Batch-query summary statuses from DB
     let ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
     let db_statuses = entry_summary::get_statuses_for_entries(&state.db, user_id, &ids).await?;
 
-    // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let secret = &state.config.secret;
@@ -413,8 +391,6 @@ async fn fetch_items_by_ids(
     }))
 }
 
-// --- Helpers ---
-
 /// Build an `EntryFilter` from stream ID and query params.
 fn build_entry_filter(stream_id: &StreamId, query: &StreamContentsQuery) -> entry::EntryFilter {
     let mut filter =
@@ -435,16 +411,14 @@ fn build_entry_filter_from_params(
         StreamId::Read => filter.read_only = true,
         StreamId::Starred => filter.starred_only = true,
         StreamId::KeptUnread => filter.unread_only = true,
-        // ReadingList = all entries; Label/Feed have their category_id/feed_id
-        // applied later, so none of them constrain the base filter here.
+        // Label/Feed ids are applied later, so nothing constrains the base filter.
         StreamId::ReadingList | StreamId::Label(_) | StreamId::Feed(_) => {}
     }
 
     if let Some(xt_str) = xt
         && let Ok(xt_stream) = StreamId::parse(xt_str)
     {
-        // Only excluding "read" maps to a filter; other excluded tags
-        // (e.g. starred) have no direct filter, so they are ignored.
+        // Only excluding "read" maps to a filter; other tags are ignored.
         if let StreamId::Read = xt_stream {
             filter.unread_only = true;
         }
@@ -464,7 +438,7 @@ fn build_entry_filter_from_params(
 }
 
 /// Merge DB summary statuses with in-flight cache statuses.
-/// Cache takes priority (it has the most up-to-date in-flight state).
+/// Cache takes priority.
 fn merge_summary_statuses(
     db_statuses: &HashMap<i64, entry_summary::SummaryStatus>,
     summary_cache: &crate::services::summary_cache::SummaryCache,
@@ -481,8 +455,7 @@ fn merge_summary_statuses(
 }
 
 /// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
-/// The `secret` is the image proxy secret used to sign proxy URLs.
-/// When `no_content` is true, content sanitization is skipped (RDRS extension for list views).
+/// `secret` signs proxy URLs; `no_content` skips sanitization (RDRS extension).
 fn entry_with_feed_to_greader_item(
     ewf: &entry::EntryWithFeed,
     summary_status: Option<String>,
@@ -514,12 +487,8 @@ fn entry_with_feed_to_greader_item(
     let base_url = Some(ewf.content_base_url());
     let referrer = ewf.custom_referrer.as_deref();
 
-    // When no_content is set, skip all HTML sanitization (list view doesn't need content).
-    // Otherwise, sanitize entry.content once and reuse for both the GReader `summary` field
-    // and the RDRS `_content` extension field to avoid double HTML processing.
-    // The pixel is appended to the *sanitised* string in both arms — the
-    // sanitiser strips 1x1 images and proxies every `<img src>`, so injecting
-    // first would destroy it. See `services::pixel`.
+    // Sanitize once for both `summary` and `_content`. The pixel goes on after
+    // sanitizing, which would otherwise strip it. See `services::pixel`.
     let (sanitized_entry_content, sanitized_summary) = if no_content {
         (None, String::new())
     } else {

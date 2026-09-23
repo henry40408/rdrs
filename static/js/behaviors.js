@@ -1,23 +1,10 @@
-// static/js/behaviors.js — the declarative markup behaviours that used to be
-// inline `on*` attributes.
-//
-// A strict `script-src 'self'` (middleware::security_headers) blocks inline
-// event-handler attributes silently and in the *unsafe* direction: a
-// destructive form would submit with no confirmation at all. Each one is
-// re-expressed as a `data-` attribute plus one delegated listener, which also
-// means a swapped-in fragment picks the behaviour up for free.
-//
-// Loaded from app_layout.html. /login and /register extend base.html directly
-// and carry none of these attributes; the flash-dismiss behaviour they do share
-// lives in components/rdrs-flash.js.
+// Declarative `data-` behaviours replacing inline `on*` attributes, which a
+// strict `script-src 'self'` blocks silently (a destructive form would submit
+// unconfirmed). Delegated, so swapped-in fragments work for free.
 
 /**
- * `data-confirm="<message>"` on a <form>: ask before submitting, and cancel the
- * submit when the user declines.
- *
- * Capture phase on purpose: the bubble-phase form-swap handler in app.js would
- * already have issued the request by the time a bubble-phase listener here
- * could cancel it.
+ * `data-confirm="<message>"` on a <form>: cancel the submit if declined.
+ * Capture phase, or app.js's form-swap handler would already have sent it.
  */
 function installConfirm() {
     document.addEventListener(
@@ -36,12 +23,8 @@ function installConfirm() {
 }
 
 /**
- * `data-submit-on-change` on a <select>: submit the owning form as soon as the
- * selection changes, for filter bars that have no Apply button.
- *
- * `requestSubmit()` rather than `submit()` — the latter skips the `submit`
- * event, bypassing csrf.js's `_csrf` injection if one of these ever became a
- * POST.
+ * `data-submit-on-change` on a <select>: submit the form on change.
+ * `requestSubmit()` so the `submit` event (and csrf.js) still runs.
  */
 function installSubmitOnChange() {
     document.addEventListener('change', (event) => {
@@ -54,12 +37,9 @@ function installSubmitOnChange() {
 }
 
 /**
- * `data-hide-on-error` on an <img>: hide the element when the image fails to
- * load, so a feed whose cached icon 404s doesn't render a broken-image glyph.
- *
- * Two mechanisms, because a deferred ES module runs after the document has
- * parsed: the listener catches images still in flight, the sweep catches any
- * that already failed. `error` does not bubble, hence capture phase.
+ * `data-hide-on-error` on an <img>: hide it when it fails to load.
+ * Listener for in-flight images plus a sweep for ones that already failed;
+ * `error` doesn't bubble, hence capture.
  */
 function installHideOnError() {
     document.addEventListener(
@@ -74,8 +54,7 @@ function installHideOnError() {
     );
 
     for (const img of document.querySelectorAll('img[data-hide-on-error]')) {
-        // `complete` with a zero intrinsic width is the standard "finished, and
-        // failed" signal.
+        // Complete with zero width means it failed.
         if (img.complete && img.naturalWidth === 0) img.hidden = true;
     }
 }

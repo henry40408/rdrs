@@ -1,5 +1,4 @@
-//! Bulk triage — mark-as-read, starring, per-row controls — and the
-//! reading-pane summary toggle. A port of `triage.steps.js`.
+//! Bulk triage, per-row controls, and the reading-pane summary toggle.
 
 use std::time::Duration;
 
@@ -14,32 +13,22 @@ use thirtyfour::prelude::*;
 use super::entries::{entry_row, feed_id};
 use super::reading_pane::SUMMARIZE_TOGGLE;
 
-/// How long a held response may wait for its request to arrive. Generous: it
-/// is the SSE round trip that triggers it, not a click.
+/// Generous: the request is triggered by an SSE round trip.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How long a summary may take to come back.
-///
-/// Longer than the interaction timeout because it is not the page catching up:
-/// the summary worker drains one job at a time and runs its database work at
-/// background priority, so on a two-core CI runner it legitimately outlasts a
-/// wait sized for a click. Matched to the server's own `SUMMARY_TIMEOUT`, past
-/// which the job has genuinely failed rather than being slow.
+/// Matches the server's `SUMMARY_TIMEOUT`: the worker is serial and
+/// background-priority, so on slow CI it outlasts an interaction wait.
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Seeds a fake Kagi session token so the reading pane renders its Summarize
-/// button. Real Kagi requests go to the mock upstream.
+/// Seeds a fake Kagi token so the Summarize button renders; requests hit the mock.
 #[given("the user has Kagi configured")]
 async fn kagi_configured(world: &mut RdrsWorld) -> Result<()> {
     let user_id = world.user_id().await?;
     world.seed().configure_kagi(user_id, "e2e-test-token").await
 }
 
-/// Backdated past the "older than 1 day" cutoff
-/// (`COALESCE(published_at, created_at) < now - 1 day`), so the age option has
-/// something to catch while the Background's freshly-seeded entries stay put.
-/// That contrast is what proves the cutoff was applied rather than everything
-/// being marked.
+/// Backdated past the 1-day cutoff while the Background's entries stay fresh,
+/// proving the cutoff applied.
 #[given(expr = "the feed {string} has an entry titled {string} published 3 days ago")]
 async fn aged_entry(world: &mut RdrsWorld, feed_title: String, title: String) -> Result<()> {
     let username = world.user.username.clone();
@@ -53,13 +42,8 @@ async fn aged_entry(world: &mut RdrsWorld, feed_title: String, title: String) ->
 
 // ── Bulk marking ─────────────────────────────────────────────────────────────
 
-/// The `#mark-read-age` `<select>` fires a `window.confirm` before calling
-/// `/reader/api/0/mark-all-as-read`, so the prompt is auto-accepted first and
-/// the dropdown is then triggered by picking an option.
-///
-/// On success `app.js` swaps the refreshed list into the live document rather
-/// than reloading, so the assertions that follow run against the same page with
-/// no navigation to wait for.
+/// Auto-accepts the `confirm()`, then picks the option; `app.js` swaps the list
+/// in place, so there is no navigation to wait for.
 async fn mark_read_via_dropdown(world: &mut RdrsWorld, option: &str) -> Result<()> {
     super::keyboard::accept_next_dialog(world).await?;
     world
@@ -73,16 +57,13 @@ async fn mark_all_read(world: &mut RdrsWorld) -> Result<()> {
     mark_read_via_dropdown(world, "all").await
 }
 
-/// The age options carry a `ts=` cutoff, which is the case most likely to
-/// regress back to a reload: it is the only dropdown path that leaves rows
-/// behind, so a reload there is visible as lost scroll and a closed entry.
+/// The only dropdown path leaving rows behind, so a reload would be visible.
 #[when("I mark entries older than 1 day as read")]
 async fn mark_older_than_a_day(world: &mut RdrsWorld) -> Result<()> {
     mark_read_via_dropdown(world, "1").await
 }
 
-/// "Mark Above as Read" confirms before `POSTing`, same as the dropdown, and
-/// shares its swap-instead-of-reload success path.
+/// Confirms and swaps like the dropdown.
 #[when("I mark the loaded entries as read")]
 async fn mark_loaded_read(world: &mut RdrsWorld) -> Result<()> {
     super::keyboard::accept_next_dialog(world).await?;
@@ -91,9 +72,7 @@ async fn mark_loaded_read(world: &mut RdrsWorld) -> Result<()> {
 
 // ── The list scroller ────────────────────────────────────────────────────────
 
-/// Counted from the rows themselves, never from the empty-state placeholder: a
-/// list that failed to refresh still has its rows on screen, and asserting on
-/// the placeholder would let that pass as "empty" the moment it renders.
+/// Counts rows, not the placeholder, so a failed refresh cannot pass as empty.
 #[then(expr = "the entry list has {int} entries")]
 async fn list_has_entries(world: &mut RdrsWorld, count: usize) -> Result<()> {
     let driver = world.driver()?;
@@ -103,10 +82,8 @@ async fn list_has_entries(world: &mut RdrsWorld, count: usize) -> Result<()> {
     .await
 }
 
-/// `[data-entries-list]` (`.list-pane-body`) is the scroller at this viewport —
-/// the pane scrolls internally on desktop, which is where the offset survives a
-/// swap. Polled because the rows arrive with the page and the first attempt can
-/// land on a container that has not laid out yet.
+/// `[data-entries-list]` scrolls on desktop. Polled: the container may not
+/// have laid out yet.
 #[when("I scroll the entry list to the bottom")]
 async fn scroll_list_bottom(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -153,10 +130,7 @@ async fn click_read_toggle(world: &mut RdrsWorld, title: String) -> Result<()> {
     Ok(())
 }
 
-/// The Wire Room redesign removed the per-row read action; the star is the only
-/// visible row control. Marking read now happens through the reading pane:
-/// opening an entry auto-marks it read and returns the row in its read state
-/// plus the decremented sidebar count — the same observable behaviour.
+/// Rows have no read action; opening the entry marks it read instead.
 #[when(expr = "I mark the entry titled {string} read")]
 async fn mark_entry_read(world: &mut RdrsWorld, title: String) -> Result<()> {
     let row = entry_row(world, &title).await?;
@@ -176,9 +150,7 @@ async fn entry_is_starred(world: &mut RdrsWorld, title: String) -> Result<()> {
     .await
 }
 
-/// A regression guard against silently dropping a per-row control, as the
-/// 0.55.0 redesign did with mark-read and open-original. Every row must carry
-/// the full set.
+/// Guards against a redesign dropping per-row controls again.
 #[then("every entry row exposes the read toggle, star, open-original, time, and feed controls")]
 async fn rows_expose_controls(world: &mut RdrsWorld) -> Result<()> {
     let rows = world.driver()?.test_ids("entry-item").await?;
@@ -226,17 +198,14 @@ async fn open_original_links(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Guards the restored title hover affordance, also lost in 0.55.0.
-/// Theme-independent: it asserts the colour *changes* rather than a fixed
-/// value.
+/// Asserts the colour *changes*, so it is theme-independent.
 #[then(expr = "the entry title for {string} highlights on hover")]
 async fn title_highlights_on_hover(world: &mut RdrsWorld, title: String) -> Result<()> {
     let driver = world.driver()?;
     let row = entry_row(world, &title).await?;
     let link = row.test_id("entry-title-link").await?;
 
-    // Move the pointer away first, so a link that happens to sit under it
-    // already is not measured in its hovered state.
+    // Move the pointer away so nothing starts hovered.
     driver.action_chain().move_to(0, 0).perform().await?;
     let base = color_of(driver, &link).await?;
     link.scroll_into_view().await?;
@@ -264,25 +233,21 @@ async fn color_of(driver: &WebDriver, element: &WebElement) -> Result<String> {
 
 // ── Sidebar counts ───────────────────────────────────────────────────────────
 
-/// The sidebar Starred link carries no numeric badge — only Unread does — so
-/// this can only assert the link is there. Strengthen it to a numeric check if
-/// the Starred link ever gains a badge.
+/// Starred has no badge, so this only asserts the link exists.
 #[then(expr = "the sidebar starred count is at least {int}")]
 async fn starred_count(world: &mut RdrsWorld, minimum: u32) -> Result<()> {
-    // Dropped rather than named `_minimum`: the step macro binds the parameter
-    // itself, so an underscore prefix reads as "used but marked unused".
+    // Not `_minimum`: the step macro binds the parameter itself.
     let _ = minimum;
     let link = world.driver()?.css(r#"a[href="/entries/starred"]"#).await?;
     ensure!(link.is_displayed().await?, "the Starred link is hidden");
     Ok(())
 }
 
-/// A delta comparison needs a before-count captured in the same step that
-/// causes the change, which this one does not have — see the SSE steps for the
-/// version that does. For now it asserts the badge is present and non-negative.
+/// No before-count is captured here (see the SSE steps), so it only checks the
+/// badge is present.
 #[then(expr = "the sidebar unread count decreases by {int}")]
 async fn unread_decreases_by(world: &mut RdrsWorld, delta: u32) -> Result<()> {
-    // Dropped for the same reason as in `starred_count` above.
+    // See `starred_count`.
     let _ = delta;
     let text = world
         .driver()?
@@ -297,10 +262,8 @@ async fn unread_decreases_by(world: &mut RdrsWorld, delta: u32) -> Result<()> {
 
 // ── The held summary fragment ────────────────────────────────────────────────
 
-/// Holding the SSE-driven `GET /entries/{id}/summary/fragment` reproduces the
-/// race a reader hit: the event for the outgoing entry passes its
-/// `currentPaneEntryId()` pre-check, then the response lands after the pane has
-/// already moved on.
+/// Reproduces the race: the outgoing entry's event passes the
+/// `currentPaneEntryId()` check, then lands after the pane moved on.
 #[when("the summary fragment response is held")]
 async fn hold_summary_fragment(world: &mut RdrsWorld) -> Result<()> {
     let handle = world
@@ -329,8 +292,7 @@ async fn summary_fragment_lands(world: &mut RdrsWorld) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no summary fragment route was armed"))?;
     handle.release()?;
     handle.wait_for_settled(ARRIVAL_TIMEOUT).await?;
-    // The response is on the wire; give `performSwap` the two frames it needs
-    // to apply — or, as asserted next, discard — it before the DOM is read.
+    // Two frames for `performSwap` to apply or discard it.
     world
         .driver()?
         .eval("return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));")
@@ -352,10 +314,7 @@ async fn pane_shows_no_summary(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
-/// On failure this reports what the summary panel *did* hold — the pending
-/// placeholder, an error banner, or nothing at all — because "no displayed
-/// element" alone cannot tell a summary that never started from one still in
-/// flight.
+/// Reports what the panel held on failure, to tell never-started from in-flight.
 #[then("the reading pane shows a summary")]
 async fn pane_shows_summary(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -363,9 +322,7 @@ async fn pane_shows_summary(world: &mut RdrsWorld) -> Result<()> {
         let Some(box_) = driver.css_opt("#rp-summary-container .summary-box").await? else {
             return Ok(false);
         };
-        // The pending placeholder is a `.summary-box` too, so its presence is
-        // not the answer — the summary has landed only once the pending marker
-        // is gone.
+        // The pending placeholder is also a `.summary-box`.
         Ok(box_.attr("data-summary-pending").await?.is_none())
     })
     .await;
@@ -387,8 +344,7 @@ async fn pane_shows_summary(world: &mut RdrsWorld) -> Result<()> {
     anyhow::bail!("no summary rendered. The toggle is {toggle}, and the panel holds: {panel}")
 }
 
-/// After clicking Dismiss, `app.js` calls `container.replaceChildren()`, which
-/// empties `#rp-summary-container` but keeps the wrapper in the DOM.
+/// Dismiss empties `#rp-summary-container` but keeps the wrapper.
 #[then("the reading pane summary is dismissed")]
 async fn summary_dismissed(world: &mut RdrsWorld) -> Result<()> {
     pane_shows_no_summary(world).await
@@ -414,7 +370,7 @@ async fn summarize_toggle_reads(world: &mut RdrsWorld, text: String) -> Result<(
     .await
 }
 
-/// Only the visible icon span — the hidden one is toggled off with `hidden`.
+/// Only the visible icon span.
 #[then("the reading-pane summarize toggle still shows its icon")]
 async fn summarize_toggle_shows_icon(world: &mut RdrsWorld) -> Result<()> {
     let icon = world
@@ -441,8 +397,7 @@ async fn summarize_toggle_disabled(world: &mut RdrsWorld) -> Result<()> {
 
 // ── Proving the in-flight toggle is inert ────────────────────────────────────
 
-/// Counts re-queue POSTs to `/entries/{id}/summarize` — and not to
-/// `/summarize/cancel`, which the trailing `$` excludes.
+/// Counts re-queue POSTs; the trailing `$` excludes `/summarize/cancel`.
 #[when("I watch for summarize POST requests")]
 async fn watch_summarize_posts(world: &mut RdrsWorld) -> Result<()> {
     let handle = world
@@ -458,8 +413,7 @@ async fn no_summarize_post(world: &mut RdrsWorld) -> Result<()> {
         .summarize_posts
         .clone()
         .ok_or_else(|| anyhow::anyhow!("no summarize watch was armed"))?;
-    // A real re-queue POSTs synchronously on submit; this gives it a beat to
-    // land, then asserts none fired.
+    // Give a synchronous re-queue POST a beat to land.
     tokio::time::sleep(Duration::from_millis(300)).await;
     let count = handle.arrived();
     ensure!(count == 0, "{count} summarize POST(s) were sent");

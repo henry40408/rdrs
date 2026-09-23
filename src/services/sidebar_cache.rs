@@ -5,57 +5,40 @@ use moka::sync::Cache;
 
 use crate::handlers::user::SidebarCategoryDto;
 
-/// Cached per-user chrome data. Excludes session-specific fields (the
-/// masquerade admin flag), so the same entry serves every request from
-/// the same `user_id` regardless of session.
+/// Cached per-user chrome data; no session-specific fields, so one entry serves
+/// every session of a `user_id`.
 #[derive(Clone, Default)]
 pub struct CachedChrome {
     pub theme: Option<String>,
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
-    /// How the client should order and filter the category / feed lists.
-    /// Cached alongside the data it applies to, and busted by the preferences
-    /// form like every other field here.
+    /// How the client orders and filters the category / feed lists.
     pub sidebar_prefs: crate::models::user_settings::SidebarPrefs,
-    /// Entries the reader keeps readable offline. Cached here for the same
-    /// reason as `sidebar_prefs`: it lives in the row this cache already reads,
-    /// so carrying it costs nothing and reading it separately would cost a
-    /// query on every page render.
+    /// Entries kept readable offline; same row as `sidebar_prefs`, so free to carry.
     pub offline_keep: i64,
 }
 
-/// Stamp identifying how many times a user's entry has been busted. Taken
-/// before a read-through computation starts and handed back when it publishes,
-/// so a publish that lost a race against a `bust` can be recognised and
-/// dropped. Opaque on purpose — callers only ever round-trip it.
+/// Bust count taken before a read-through fill and checked on publish, so a
+/// fill that raced a `bust` is dropped. Opaque.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Generation(u64);
 
-/// One cache slot. `chrome` is `None` for a tombstone: `bust` keeps the slot
-/// (with a bumped generation) rather than removing it, because the generation
-/// is exactly what lets a slower concurrent read detect that it is stale.
+/// One cache slot. `chrome` is `None` for a tombstone: `bust` keeps the slot so
+/// its bumped generation can reveal stale concurrent reads.
 #[derive(Clone)]
 struct Slot {
     generation: u64,
     chrome: Option<CachedChrome>,
 }
 
-/// In-memory per-user cache for sidebar chrome data — replaces the 4 SQL
-/// queries that every page render previously ran against the read pool
-/// (theme + categories + per-category unread + total unread).
+/// In-memory per-user cache for sidebar chrome (theme, categories, unread
+/// counts), saving 4 queries per page render.
 ///
-/// Cache entries are invalidated explicitly by handlers that write data
-/// affecting any of those fields (mark-read, category CRUD, feed CRUD,
-/// theme update, feed sync, account deletion). A short TTL backs the
-/// explicit busts up — anything we forget to invalidate becomes stale
-/// for at most `ttl_secs`, not forever.
-///
-/// Population is read-through and therefore racy on its own: filling the entry
-/// means several `await`s against the DB, and a `bust` landing inside that
-/// window would be overwritten by the older snapshot and hidden for the whole
-/// TTL. `begin_read` + `insert_if_current` close that window — see
-/// `handlers::user::read_chrome_data`, the only reader.
+/// Handlers that write chrome-affecting data bust it explicitly; a short TTL
+/// bounds staleness from a missed bust. `begin_read` + `insert_if_current`
+/// stop a racing fill from overwriting a bust (see
+/// `handlers::user::read_chrome_data`, the only reader).
 #[derive(Clone)]
 pub struct SidebarCache {
     cache: Cache<i64, Slot>,
@@ -74,10 +57,8 @@ impl SidebarCache {
         }
     }
 
-    /// A cache that never serves or stores anything. Used by the E2E harness,
-    /// which seeds straight into `SQLite` and so never runs the handlers that
-    /// carry the `bust` hooks this cache depends on — leaving it on would let
-    /// a page render that raced the seeding cache a half-written world.
+    /// A cache that never stores anything, for the E2E harness: it seeds straight
+    /// into `SQLite`, bypassing the handlers' `bust` hooks.
     pub fn disabled() -> Self {
         Self {
             cache: Cache::builder().max_capacity(0).build(),
@@ -92,8 +73,8 @@ impl SidebarCache {
         self.cache.get(&user_id).and_then(|slot| slot.chrome)
     }
 
-    /// Snapshot the user's generation *before* a read-through computation
-    /// starts reading the DB. Hand the result to `insert_if_current`.
+    /// Snapshot the generation before a read-through fill; pass it to
+    /// `insert_if_current`.
     pub fn begin_read(&self, user_id: i64) -> Generation {
         Generation(self.cache.get(&user_id).map_or(0, |slot| slot.generation))
     }
@@ -111,16 +92,13 @@ impl SidebarCache {
                     chrome: Some(chrome),
                 })
             } else {
-                // Lost the race: what we computed predates the bust. Dropping
-                // it costs one recompute on the next request; publishing it
-                // would hide the write for the whole TTL.
+                // Lost the race: publishing would hide the write for the whole TTL.
                 Op::Nop
             }
         });
     }
 
-    /// Invalidate `user_id`'s chrome. Safe to call from any handler that
-    /// mutates chrome-affecting state.
+    /// Invalidate `user_id`'s chrome.
     pub fn bust(&self, user_id: i64) {
         if !self.enabled {
             return;
@@ -143,9 +121,7 @@ impl Default for SidebarCache {
         if std::env::var_os("RDRS_DISABLE_SIDEBAR_CACHE").is_some() {
             return Self::disabled();
         }
-        // 10 000 distinct users comfortably covers any single-host
-        // deployment; the 60 s TTL bounds stale data when a bust is
-        // missed (e.g. a write path we haven't yet wired up).
+        // 10 000 users covers any single host; the 60 s TTL bounds a missed bust.
         Self::new(10_000, 60)
     }
 }
@@ -169,15 +145,13 @@ mod tests {
         }
     }
 
-    /// Publish without a concurrent bust — the common path, and shorthand for
-    /// the tests below that only care about the resulting value.
+    /// Publish without a concurrent bust.
     fn publish(cache: &SidebarCache, user_id: i64, chrome: CachedChrome) {
         let generation = cache.begin_read(user_id);
         cache.insert_if_current(user_id, generation, chrome);
     }
 
-    // Constructed explicitly rather than via `default()`: these assert on
-    // caching behaviour, which `RDRS_DISABLE_SIDEBAR_CACHE` would switch off.
+    // Not `default()`: `RDRS_DISABLE_SIDEBAR_CACHE` would disable caching.
     fn cache() -> SidebarCache {
         SidebarCache::new(100, 60)
     }
@@ -216,8 +190,7 @@ mod tests {
 
     #[test]
     fn ttl_expires_entry() {
-        // 1-second TTL so the test is fast but still exercises moka's
-        // time-based eviction.
+        // 1 s TTL still exercises moka's time-based eviction.
         let cache = SidebarCache::new(100, 1);
         publish(&cache, 1, sample_chrome(1));
         assert!(cache.get(1).is_some());
@@ -226,10 +199,8 @@ mod tests {
         assert!(cache.get(1).is_none(), "entry should expire after TTL");
     }
 
-    /// The race this cache's generation stamp exists to close: a read-through
-    /// fill reads the DB, a write busts the entry, and only then does the fill
-    /// publish. Without the stamp the pre-bust snapshot wins and the write
-    /// stays invisible for the whole TTL.
+    /// The race the generation stamp closes: fill reads, write busts, fill
+    /// publishes. Without the stamp the write stays invisible for the TTL.
     #[test]
     fn publish_that_lost_a_race_with_bust_is_dropped() {
         let cache = cache();
@@ -255,8 +226,7 @@ mod tests {
         publish(&cache, 1, sample_chrome(9));
         cache.bust(1);
 
-        // A read that starts after the bust sees the bumped generation and is
-        // free to publish — otherwise the entry could never refill.
+        // A read after the bust may publish, or the entry could never refill.
         publish(&cache, 1, sample_chrome(0));
         assert_eq!(cache.get(1).expect("refilled").total_unread, 0);
     }

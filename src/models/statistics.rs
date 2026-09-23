@@ -4,10 +4,8 @@ use crate::db::{Db, DbInner};
 use crate::error::{AppError, AppResult};
 use crate::{query_all, query_scalar};
 
-/// Render a timestamp column as the `%Y-%m-%d %H:%M:%S` TEXT this module reads
-/// into `String`. `SQLite` stores exactly that; PG columns are `TIMESTAMPTZ`, so
-/// they need `to_char(...)` — a bare read would fail to decode one into
-/// `String`. Mirrors `entry::filters::Dialect::cursor_ts`.
+/// Render a timestamp column as `%Y-%m-%d %H:%M:%S` TEXT; PG `TIMESTAMPTZ`
+/// needs `to_char`. Mirrors `entry::filters::Dialect::cursor_ts`.
 fn ts_text(db: &Db, expr: &str) -> String {
     if db.is_postgres() {
         format!("to_char({expr}, 'YYYY-MM-DD HH24:MI:SS')")
@@ -16,11 +14,8 @@ fn ts_text(db: &Db, expr: &str) -> String {
     }
 }
 
-/// Parse a `YYYY-MM-DD` date-range bound for binding. As a `NaiveDate` it
-/// compares correctly on both backends: `SQLite` compares the TEXT
-/// lexicographically, `PostgreSQL` implicitly casts `date` to `timestamptz` —
-/// where a raw `%Y-%m-%d` *string* bind would not coerce. Falls back to today on
-/// unparseable input, matching the range-fill fallback used when charting.
+/// Parse a `YYYY-MM-DD` range bound as a `NaiveDate`, which compares correctly
+/// on both backends (a string bind would not coerce on PG). Falls back to today.
 fn parse_ymd(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap_or_else(|_| chrono::Utc::now().date_naive())
 }
@@ -35,18 +30,13 @@ pub struct PersonalOverview {
 }
 
 impl PersonalOverview {
-    /// Unread = entries published in the period that are not yet read.
-    ///
-    /// `read_entries` counts the read subset of the *same* publish cohort as
-    /// `total_entries`, so this is always non-negative — no clamp needed, and
-    /// none wanted, since one would mask a future cohort regression.
+    /// Entries published in the period and not yet read; never negative since
+    /// read is a subset of the same cohort (no clamp, so regressions surface).
     pub fn unread_entries(&self) -> i64 {
         self.total_entries - self.read_entries
     }
 
-    /// Fraction of period-published entries that have been read.
-    ///
-    /// Naturally bounded to 0–100% because read is a subset of total.
+    /// Fraction of period-published entries that have been read (0–100%).
     pub fn read_rate(&self) -> f64 {
         if self.total_entries == 0 {
             0.0
@@ -62,21 +52,15 @@ pub struct DailyReadCount {
     pub count: i64,
 }
 
-/// A contiguous span of days collapsed into one chart bar.
-///
-/// `start == end` when the bucket covers a single day; otherwise it spans
-/// `[start, end]` inclusive and `count` is the sum over those days.
+/// A contiguous span of days `[start, end]` (inclusive) collapsed into one bar.
 pub struct DailyBucket {
     pub start: NaiveDate,
     pub end: NaiveDate,
     pub count: i64,
 }
 
-/// Collapse per-day read counts into at most `max_bars` contiguous buckets so a
-/// dense date range stays readable (and tappable) as a fixed number of bars.
-///
-/// Each bucket covers `ceil(len / max_bars)` consecutive days, so input already
-/// within `max_bars` is unchanged. Input is assumed chronologically ordered.
+/// Collapse chronologically ordered per-day counts into at most `max_bars`
+/// buckets of `ceil(len / max_bars)` days each.
 pub fn bucket_daily_counts(daily: &[DailyReadCount], max_bars: usize) -> Vec<DailyBucket> {
     let max_bars = max_bars.max(1);
     if daily.is_empty() {
@@ -120,9 +104,7 @@ pub struct AdminEntryStats {
 }
 
 impl AdminEntryStats {
-    /// Fraction of period-published entries (site-wide) that have been read.
-    ///
-    /// Naturally bounded to 0–100% because read is a subset of total.
+    /// Fraction of period-published entries (site-wide) that have been read (0–100%).
     pub fn read_rate(&self) -> f64 {
         if self.total_entries == 0 {
             0.0
@@ -132,9 +114,7 @@ impl AdminEntryStats {
     }
 }
 
-/// Free space a `VACUUM` would hand back, for backends that can measure it.
-/// `SQLite` reads it off its page-level freelist accounting; there is no
-/// comparable figure on `PostgreSQL` without an extension, so PG reports `None`.
+/// Free space a `VACUUM` would reclaim; `SQLite` only (PG reports `None`).
 #[derive(Clone)]
 pub struct ReclaimableSpace {
     pub bytes: i64,
@@ -142,10 +122,8 @@ pub struct ReclaimableSpace {
     pub fragmentation_ratio: f64,
 }
 
-/// Admin database storage + record stats (period-independent). `reclaimable` is
-/// `None` on backends that cannot report free space, and the `/statistics` page
-/// omits the card entirely rather than rendering a zero that reads as "no
-/// bloat".
+/// Admin database storage + record stats (period-independent). The page omits
+/// the card when `reclaimable` is `None` rather than showing a misleading zero.
 #[derive(Clone)]
 pub struct AdminDatabaseStats {
     pub db_size_bytes: i64,
@@ -156,12 +134,8 @@ pub struct AdminDatabaseStats {
     pub tombstone_count: i64,
 }
 
-/// The read-count half of [`get_personal_overview`], hoisted to a constant so
-/// the query-plan regression test asserts against the SQL that actually runs.
-///
-/// The `INNER JOIN` to `category` is what forces the plan through a `feed_id`
-/// -keyed index, which is why this needs `idx_entry_feed_read_sort` rather than
-/// the sort-keyed `idx_entry_read_sort` — see the 0011 migration.
+/// Read-count half of [`get_personal_overview`], hoisted for the query-plan test.
+/// The `INNER JOIN` to `category` needs `idx_entry_feed_read_sort` (0011).
 const READ_ENTRIES_SQL: &str = r"
         SELECT COUNT(e.id)
         FROM entry e
@@ -173,15 +147,11 @@ const READ_ENTRIES_SQL: &str = r"
           AND e.read_at IS NOT NULL
         ";
 
-/// The starred-count half of [`get_personal_overview`], hoisted for the same
-/// reason as [`READ_ENTRIES_SQL`] — and written differently from it on purpose.
+/// Starred-count half of [`get_personal_overview`], hoisted for the query-plan test.
 ///
-/// Scoping the user with `feed_id IN (SELECT ...)` rather than the `INNER JOIN`
-/// its two siblings use is what puts `SQLite` on `idx_entry_feed_starred_sort`.
-/// Written as a join, the planner leads with `idx_entry_starred_sort` — keyed on
-/// the sort timestamp alone — and pays a table lookup per starred row to reach
-/// `feed_id`, because it costs the narrow range as cheap and does not model
-/// those lookups. The subquery removes the choice. See the 0013 migration.
+/// `feed_id IN (SELECT ...)` instead of a join on purpose: a join makes `SQLite`
+/// pick `idx_entry_starred_sort` and pay a table lookup per row, instead of
+/// `idx_entry_feed_starred_sort` (0013).
 const STARRED_ENTRIES_SQL: &str = r"
         SELECT COUNT(e.id)
         FROM entry e
@@ -196,16 +166,14 @@ const STARRED_ENTRIES_SQL: &str = r"
           AND e.starred_at IS NOT NULL
         ";
 
-/// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
-/// `[from, to)` — i.e. `from` is inclusive and `to` is exclusive.
+/// `from`/`to` are `YYYY-MM-DD`; the range is `[from, to)`.
 pub async fn get_personal_overview(
     db: &Db,
     user_id: i64,
     from: &str,
     to: &str,
 ) -> AppResult<PersonalOverview> {
-    // Bind the range bounds as dates (see `parse_ymd`) so the `>= $2 / < $3`
-    // comparisons against the timestamp columns work on both backends.
+    // Bind bounds as dates (see `parse_ymd`) for cross-backend comparisons.
     let (from, to) = (parse_ymd(from), parse_ymd(to));
     let total_entries: i64 = query_scalar!(
         db,
@@ -225,10 +193,8 @@ pub async fn get_personal_overview(
     )
     .map_err(AppError::Database)?;
 
-    // Read/starred counts are the read/starred *subset of the same publish
-    // cohort* as total_entries — i.e. entries published in the period that
-    // have since been read/starred (whenever) — not "reading activity in the
-    // period". This keeps Read ⊆ Total so Unread and Read Rate stay coherent.
+    // Read/starred are subsets of the same publish cohort as total_entries,
+    // not period activity, so Read ⊆ Total.
     let read_entries: i64 =
         query_scalar!(db, i64, READ_ENTRIES_SQL, user_id, from, to).map_err(AppError::Database)?;
 
@@ -260,18 +226,8 @@ pub async fn get_personal_overview(
     })
 }
 
-/// The daily-read chart query, built here rather than inline so the query-plan
-/// regression test asserts against the SQL that actually runs.
-///
-/// Ad-hoc `(date_string, count)` rows, fetched as a tuple and post-processed in
-/// Rust to fill zero-count days. Only the day bucket dialect-forks; the range
-/// bounds are bound as dates (see `parse_ymd`) so the raw comparison works on
-/// both backends without wrapping the column.
-///
-/// The `INNER JOIN` to `category` scopes by user, and `read_at` is compared as a
-/// range — a split that needs `idx_entry_feed_read_at` (`feed_id` for the join,
-/// `read_at` for the range) to stay off the table entirely. See the 0012
-/// migration for what the other candidate indexes cost.
+/// Daily-read chart query, hoisted for the query-plan test. Zero days are filled
+/// in Rust. Needs `idx_entry_feed_read_at` to stay covering (see 0012).
 fn daily_read_counts_sql(db: &Db) -> String {
     let day_bucket = if db.is_postgres() {
         "to_char(e.read_at, 'YYYY-MM-DD')"
@@ -291,8 +247,7 @@ fn daily_read_counts_sql(db: &Db) -> String {
     )
 }
 
-/// Days with no reads are included as zeros, so the chart has no gaps.
-/// `from` and `to` are `YYYY-MM-DD`; the range is `[from, to)`.
+/// Days with no reads are zero-filled. `from`/`to` are `YYYY-MM-DD`, range `[from, to)`.
 pub async fn get_daily_read_counts(
     db: &Db,
     user_id: i64,
@@ -354,8 +309,7 @@ pub async fn get_entries_by_category(
     from: &str,
     to: &str,
 ) -> AppResult<Vec<CategoryCount>> {
-    // `AS count` so `FromRow` (column-name match) populates `CategoryCount.count`;
-    // HAVING/ORDER BY reference the aggregate directly (portable, alias-free).
+    // `AS count` so `FromRow` fills `count`; HAVING/ORDER BY use the aggregate.
     let (from, to) = (parse_ymd(from), parse_ymd(to));
     query_all!(
         db,
@@ -379,8 +333,7 @@ pub async fn get_entries_by_category(
     .map_err(AppError::Database)
 }
 
-/// `limit` caps the number of results. Only feeds with at least one entry are
-/// returned, ordered by count DESC.
+/// Top `limit` feeds with at least one entry, ordered by count DESC.
 pub async fn get_top_feeds(
     db: &Db,
     user_id: i64,
@@ -388,8 +341,7 @@ pub async fn get_top_feeds(
     to: &str,
     limit: i64,
 ) -> AppResult<Vec<FeedCount>> {
-    // `AS count` so `FromRow` (column-name match) populates `FeedCount.count`;
-    // HAVING/ORDER BY reference the aggregate directly (portable, alias-free).
+    // `AS count` so `FromRow` fills `count`; HAVING/ORDER BY use the aggregate.
     let (from, to) = (parse_ymd(from), parse_ymd(to));
     query_all!(
         db,
@@ -445,8 +397,7 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
     )
     .map_err(AppError::Database)?;
 
-    // Read subset of the same publish cohort as total_entries (see
-    // get_personal_overview), so Site Read Rate stays bounded to 0–100%.
+    // Same publish cohort as total_entries, so the rate stays within 0–100%.
     let read_entries: i64 = query_scalar!(
         db,
         i64,
@@ -468,27 +419,11 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
     })
 }
 
-/// Period-independent. Storage figures are dialect-specific — see below.
+/// Period-independent. Storage figures are dialect-specific.
 pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> {
-    // Storage stats dialect-fork. SQLite exposes page-level accounting via
-    // PRAGMAs; PostgreSQL reports on-disk size via `pg_database_size()` but has
-    // no comparable free-space figure, so it reports `None` and the UI drops the
-    // card.
-    //
-    // The tempting substitute is `pg_stat_user_tables.n_dead_tup`, and it is
-    // wrong on three counts (measured against PostgreSQL 17.10):
-    //
-    //   1. That view excludes TOAST relations — and `entry.content` is exactly
-    //      what gets TOASTed. A table holding 880 KB, 800 KB of it in TOAST,
-    //      reported 60 dead tuples while the TOAST relation held 420.
-    //   2. It counts *tuples*, not bytes, and converting needs an average row
-    //      width, which is meaningless for a TOASTed column.
-    //   3. It is transient, not a high-water mark: autovacuum resets it to zero
-    //      while those pages stay in the file.
-    //
-    // A trustworthy number needs the `pgstattuple` extension — a deployment
-    // dependency and a full relation scan. Better no card than one that
-    // under-reports by an order of magnitude.
+    // PG has no reliable free-space figure without `pgstattuple`
+    // (`n_dead_tup` excludes TOAST, counts tuples not bytes, and resets on
+    // autovacuum), so it reports `None` and the UI drops the card.
     let (db_size_bytes, reclaimable_bytes) = match db.inner() {
         DbInner::Sqlite(pool) => {
             let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
@@ -525,9 +460,7 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
 
     let total_entries: i64 =
         query_scalar!(db, i64, "SELECT COUNT(*) FROM entry").map_err(AppError::Database)?;
-    // Bare MIN/MAX so SQLite uses the idx_entry_created_at endpoint
-    // optimization; the timestamp is read back as the `%Y-%m-%d %H:%M:%S` TEXT
-    // `try_parse_datetime` expects (to_char on PG — see `ts_text`).
+    // Bare MIN/MAX so SQLite uses the idx_entry_created_at endpoint optimization.
     let min_sql = format!("SELECT {} FROM entry", ts_text(db, "MIN(created_at)"));
     let max_sql = format!("SELECT {} FROM entry", ts_text(db, "MAX(created_at)"));
     let min_created: Option<String> = match db.inner() {
@@ -559,8 +492,7 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
     let tombstone_count: i64 = query_scalar!(db, i64, "SELECT COUNT(*) FROM entry_tombstone")
         .map_err(AppError::Database)?;
 
-    // Use the fallible parser (not parse_datetime, whose Utc::now() fallback
-    // would silently corrupt these aggregates on an unparseable timestamp).
+    // Fallible parser: `parse_datetime`'s now() fallback would corrupt aggregates.
     let (coverage_days, avg_new_entries_per_day) = match (
         min_created
             .as_deref()
@@ -571,11 +503,8 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
     ) {
         (Some(min), Some(max)) => {
             let coverage = (max - min).num_seconds() as f64 / 86_400.0;
-            // Averaged over the span entries are actually retained for, not the
-            // age since the oldest: retention prunes read entries, so
-            // `total_entries / age` understated the rate — old unread entries
-            // stretch the denominator while their pruned neighbours are gone
-            // from the numerator. A sub-day span is guarded at 1 day.
+            // Average over the retained span, not age since the oldest entry,
+            // since retention prunes read entries. Sub-day span guarded at 1 day.
             let avg = total_entries as f64 / coverage.max(1.0);
             (coverage, avg)
         }
@@ -618,9 +547,7 @@ mod tests {
         user_id
     }
 
-    /// A second user with their own category and feed, for the scoping
-    /// assertions. Separate from `create_user_with_data` because that one pins
-    /// the username and feed URL, both of which are UNIQUE.
+    /// A second user for scoping assertions (username and feed URL are UNIQUE).
     async fn create_second_user_with_feed(db: &Db) -> (i64, i64) {
         let user_id = seed_user(db, "otheruser", Role::User).await.id;
         let cat = category::create_category(db, user_id, "Theirs")
@@ -754,15 +681,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_personal_overview_uses_publish_cohort() {
-        // Read/starred counts must be the read/starred subset of the entries
-        // *published in the period* — not "activity in the period". This pins
-        // the fix for Unread always 0 / Read Rate always 100%.
+        // Read/starred counts are subsets of entries published in the period.
         let db = setup_db().await;
         let user_id = create_user_with_data(&db).await;
         let feed_id = get_feed_id(&db, user_id).await;
 
-        // Published BEFORE the period but read+starred DURING it. The old
-        // activity-based query counted these; the publish cohort must not.
+        // Published before the period but read+starred during it: excluded.
         let old = insert_entry(&db, feed_id, "old", "2023-12-01").await;
         mark_read(&db, old, "2024-01-15").await;
         mark_starred(&db, old, "2024-01-16").await;
@@ -854,8 +778,7 @@ mod tests {
         assert_eq!(counts[3].count, 0); // Jan 4: nothing
     }
 
-    /// Build a chronological run of `DailyReadCount`s starting at `2024-01-01`,
-    /// one per element of `counts`.
+    /// One `DailyReadCount` per element of `counts`, from `2024-01-01`.
     fn daily_run(counts: &[i64]) -> Vec<DailyReadCount> {
         let start = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
         counts
@@ -1005,8 +928,7 @@ mod tests {
 
         mark_read(&db, e1, "2024-01-06").await;
 
-        // Published before the period but read inside it: the old query
-        // counted this toward read_entries and could push the rate past 100%.
+        // Published before the period but read inside it: must not count.
         let old = insert_entry(&db, feed_id, "g-old", "2023-12-01").await;
         mark_read(&db, old, "2024-01-07").await;
 
@@ -1029,8 +951,7 @@ mod tests {
 
         // A freshly-initialized DB still has pages, so size is positive.
         assert!(s.db_size_bytes > 0);
-        // SQLite can always measure free space, so the card is populated here;
-        // the PG `None` arm is asserted in `tests/postgres_test.rs`.
+        // PG's `None` arm is asserted in `tests/postgres_test.rs`.
         let r = s.reclaimable.expect("SQLite reports reclaimable space");
         assert!(r.bytes >= 0);
         assert!((0.0..=1.0).contains(&r.fragmentation_ratio));
@@ -1066,8 +987,7 @@ mod tests {
             "coverage was {}",
             s.coverage_days
         );
-        // avg = retained entries / coverage span = 4 / 3. Now deterministic
-        // (no Utc::now() in the denominator) and unaffected by prune drift.
+        // avg = retained entries / coverage span = 4 / 3.
         assert!(
             (s.avg_new_entries_per_day - 4.0 / 3.0).abs() < 1e-6,
             "avg was {}",
@@ -1078,8 +998,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::float_cmp, reason = "exact-value test assertion")]
     async fn test_admin_database_stats_avg_guards_subday_span() {
-        // A single entry → coverage span 0 → denominator guarded at 1 day so
-        // the average is finite (and equals the entry count) rather than inf.
+        // Single entry → zero span → denominator guarded at 1 day.
         let db = setup_db().await;
         let user_id = create_user_with_data(&db).await;
         let feed_id = get_feed_id(&db, user_id).await;
@@ -1099,8 +1018,7 @@ mod tests {
         let user_id = create_user_with_data(&db).await;
         let feed_id = get_feed_id(&db, user_id).await;
 
-        // RFC 3339 timestamps spanning exactly 2 days. The previous SQL-only
-        // parser would have failed these and collapsed coverage to 0.0.
+        // RFC 3339 timestamps spanning exactly 2 days.
         insert_entry_created_at(&db, feed_id, "a", "2024-01-01T00:00:00Z").await;
         insert_entry_created_at(&db, feed_id, "b", "2024-01-03T00:00:00Z").await;
 
@@ -1120,14 +1038,8 @@ mod tests {
         );
     }
 
-    /// The read count is the one statistics query that joins entry -> feed ->
-    /// category *and* filters on `read_at`, so without a partial index keyed on
-    /// `feed_id` the planner falls back to `idx_entry_feed_sort` and reads
-    /// `read_at` off the table row — once per matching entry, against the widest
-    /// table in the schema. Measured on a 648 MB production database that was
-    /// 49k page misses and 1.4 s for the all-time period, versus 488 misses and
-    /// 4 ms once covered. The plan is the only observable that fails *before*
-    /// the index exists and passes after, so it is what this pins.
+    /// Without `idx_entry_feed_read_sort` the read count reads `read_at` off the
+    /// table per entry; the plan is the only observable that pins this.
     #[tokio::test]
     async fn test_read_entries_query_is_index_covered() {
         let db = setup_db().await;
@@ -1139,8 +1051,7 @@ mod tests {
         let DbInner::Sqlite(pool) = db.inner() else {
             unreachable!("connect_in_memory is always SQLite")
         };
-        // EXPLAIN QUERY PLAN yields (id, parent, notused, detail); only the
-        // last column carries the index name.
+        // Only the detail column carries the index name.
         let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "EXPLAIN QUERY PLAN {READ_ENTRIES_SQL}"
         )))
@@ -1162,19 +1073,8 @@ mod tests {
         );
     }
 
-    /// The daily-read chart is the other statistics query that joins entry ->
-    /// feed -> category, and unlike the read count it filters `read_at` as a
-    /// *range* rather than for NULL-ness. 0011's index cannot serve that: it
-    /// keys the sort timestamp, so `read_at` comes off the table row, once per
-    /// candidate. On a 714 MB production database that was 160k page misses and
-    /// 765 ms cold for an 8-day window; `idx_entry_feed_read_at` covers it at
-    /// 125 misses.
-    ///
-    /// Asserting on COVERING specifically is the point — refreshing the planner
-    /// statistics also moves this plan off 0011's index, onto
-    /// `idx_entry_read_at`, which still costs a table lookup per row to reach
-    /// `feed_id` for the join. Only a covering plan is free of that, and only
-    /// the plan is observable before the index exists.
+    /// The daily-read chart filters `read_at` as a range; only a COVERING plan on
+    /// `idx_entry_feed_read_at` avoids a table lookup per row.
     #[tokio::test]
     async fn test_daily_read_counts_query_is_index_covered() {
         let db = setup_db().await;
@@ -1204,17 +1104,8 @@ mod tests {
         );
     }
 
-    /// The third overview count, and the only one whose plan does not follow
-    /// from the index alone: with starred rows a small fraction of the table,
-    /// SQLite costs `idx_entry_starred_sort`'s narrow range as the cheaper plan
-    /// and pays a table lookup per row to reach `feed_id` for the join. On a
-    /// 567 MB / 70k-entry database that was 2,278 page misses for the all-time
-    /// period, against 594 and 493 for the two covered counts beside it; the
-    /// `feed_id IN (SELECT ...)` scope plus the 0013 index takes it to 23.
-    ///
-    /// The rewrite and the index only work together — the subquery *without*
-    /// the index is far worse than the join it replaced (73,761 misses on the
-    /// same database, a table scan per feed) — so the plan is what this pins.
+    /// The starred count needs both the `feed_id IN (SELECT ...)` rewrite and the
+    /// 0013 index; either alone is far worse, so the plan is pinned.
     #[tokio::test]
     async fn test_starred_entries_query_is_index_covered() {
         let db = setup_db().await;
@@ -1247,9 +1138,8 @@ mod tests {
         );
     }
 
-    /// The rewrite above changed the SQL behind a user-visible number, so it
-    /// must still count the same rows: starred entries published inside the
-    /// window, belonging to this user and nobody else.
+    /// The starred rewrite must still count only this user's starred entries
+    /// published inside the window.
     #[tokio::test]
     async fn test_starred_count_is_scoped_to_the_user_and_window() {
         let db = setup_db().await;
@@ -1264,8 +1154,7 @@ mod tests {
         // Inside the window, but never starred.
         insert_entry(&db, feed_id, "unstarred", "2024-01-07").await;
 
-        // Another user's starred entry in the same window: the `feed_id IN
-        // (SELECT ...)` scope is the only thing keeping it out.
+        // Another user's starred entry in the window: excluded by the subquery scope.
         let (other_id, other_feed) = create_second_user_with_feed(&db).await;
         let theirs = insert_entry(&db, other_feed, "theirs", "2024-01-05").await;
         mark_starred(&db, theirs, "2024-01-06").await;
@@ -1283,8 +1172,7 @@ mod tests {
         );
     }
 
-    /// Zero-count days are filled in Rust, so the SQL change above must not have
-    /// altered what the chart actually reports.
+    /// The chart must still report the same numbers after the SQL change.
     #[tokio::test]
     async fn test_daily_read_counts_fills_gaps_and_counts_reads() {
         let db = setup_db().await;

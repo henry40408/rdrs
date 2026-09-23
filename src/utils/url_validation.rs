@@ -4,7 +4,6 @@ use std::net::IpAddr;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use url::Url;
 
-/// Error type for URL validation failures.
 #[derive(Debug)]
 pub enum UrlValidationError {
     /// URL scheme is not http/https.
@@ -30,11 +29,8 @@ impl fmt::Display for UrlValidationError {
 
 impl std::error::Error for UrlValidationError {}
 
-/// The shared SSRF guard, in front of both the readability fetcher and the
-/// image proxy: http(s) only, and never a host that resolves inward —
-/// localhost, loopback, `.local`/`.internal`, or any private or reserved range.
-/// Both callers take a URL the *user* supplied, so anything reachable only from
-/// the server is out of bounds.
+/// Shared SSRF guard for user-supplied URLs: http(s) only, never localhost,
+/// loopback, `.local`/`.internal`, or a private/reserved range.
 pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
     match url.scheme() {
         "http" | "https" => {}
@@ -43,12 +39,10 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
 
     let host = url.host_str().ok_or(UrlValidationError::NoHost)?;
 
-    // Block localhost and loopback addresses
     if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
         return Err(UrlValidationError::BlockedHost);
     }
 
-    // Block .local and .internal domains
     #[allow(
         clippy::case_sensitive_file_extension_comparisons,
         reason = "these are DNS hostname suffixes, not file extensions; `host` is already lowercased by the url crate"
@@ -63,7 +57,7 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
         return Err(UrlValidationError::PrivateIp);
     }
 
-    // Also check if it's an IPv6 address in brackets
+    // IPv6 in brackets.
     if host.starts_with('[')
         && host.ends_with(']')
         && let Ok(ip) = host[1..host.len() - 1].parse::<IpAddr>()
@@ -75,19 +69,11 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
     Ok(())
 }
 
-/// The hosts a deployment has deliberately opted back in to, on top of the
-/// blanket block in [`validate_url`].
+/// Hosts a deployment opted back in to, on top of [`validate_url`]'s block
+/// (e.g. a LAN feed). Deny stays the default.
 ///
-/// A blanket block is wrong for a self-hosted reader: subscribing to a feed on
-/// the same LAN (a Gitea instance, a NAS, another reader) is ordinary use, and
-/// every suite here points the fetchers at a loopback mock server. So the deny
-/// stays the default and a deployment names its exceptions, rather than the
-/// guard being skippable wholesale.
-///
-/// An entry is a hostname (`nas.local`), an IP (`127.0.0.1`) or a CIDR block
-/// (`192.168.0.0/16`). A hostname entry only lifts the name-based rules: this
-/// layer does not resolve DNS, so a public name pointing at a private address
-/// is not caught here either way.
+/// Entries are hostnames, IPs or CIDR blocks. No DNS is resolved here, so a
+/// hostname entry only lifts the name-based rules.
 #[derive(Debug, Clone, Default)]
 pub struct FetchPolicy {
     nets: Vec<IpNet>,
@@ -95,8 +81,7 @@ pub struct FetchPolicy {
 }
 
 impl FetchPolicy {
-    /// Parse a comma-separated allow list. Empty or whitespace-only yields a
-    /// policy that permits nothing beyond [`validate_url`].
+    /// Parse a comma-separated allow list; empty permits nothing extra.
     pub fn parse(raw: &str) -> Result<Self, String> {
         let mut nets = Vec::new();
         let mut hosts = Vec::new();
@@ -124,9 +109,8 @@ impl FetchPolicy {
 
     /// [`validate_url`] with this policy's exceptions applied.
     ///
-    /// A non-http(s) scheme and a missing host stay fatal: those are not
-    /// "points somewhere private", they are "not a fetchable URL at all", and
-    /// no allow-list entry should turn `file:///etc/passwd` into a feed.
+    /// A bad scheme or missing host stays fatal: no entry may turn
+    /// `file:///etc/passwd` into a feed.
     pub fn validate(&self, url: &Url) -> Result<(), UrlValidationError> {
         match validate_url(url) {
             Ok(()) => Ok(()),
@@ -142,12 +126,8 @@ impl FetchPolicy {
         }
     }
 
-    /// Whether this host was named in the allow list, either as a hostname or
-    /// as an address inside one of its networks.
-    ///
-    /// A hostname match is deliberately all-or-nothing: naming `nas.local` says
-    /// "this host is mine", so `services::fetch` accepts whatever it resolves
-    /// to rather than re-judging the address.
+    /// Whether the host is allow-listed by name or network. A name match is
+    /// all-or-nothing: `services::fetch` then trusts whatever it resolves to.
     pub(crate) fn allows(&self, host: &str) -> bool {
         let bare = host
             .strip_prefix('[')
@@ -161,9 +141,8 @@ impl FetchPolicy {
         self.hosts.iter().any(|allowed| allowed == host)
     }
 
-    /// Whether an address falls inside one of the allow list's networks. Used
-    /// on addresses a hostname *resolved* to, where there is no name left to
-    /// match — see `services::fetch`.
+    /// Whether a resolved address falls in an allow-listed network (see
+    /// `services::fetch`).
     pub(crate) fn allows_ip(&self, ip: &IpAddr) -> bool {
         self.nets.iter().any(|net| net.contains(ip))
     }
@@ -176,16 +155,10 @@ fn host_net(ip: IpAddr) -> IpNet {
     }
 }
 
-/// Whether an address is one the server must never be talked into reaching.
-///
-/// "Private" here means *not reachable from the public internet*, which is
-/// wider than RFC 1918: a reader that refuses `192.168.0.1` but follows
-/// `100.100.100.100` into a Tailscale network has not stopped anything. The
-/// std predicates that would say this in one call (`is_global`, `is_shared`)
-/// are still unstable, so the ranges are listed here.
-///
-/// Made `pub(crate)` for the fetch guard, which applies the same rule to the
-/// addresses a *hostname* resolves to — see `services::fetch`.
+/// Whether an address the server must never reach: not publicly routable,
+/// wider than RFC 1918 (e.g. Tailscale's CGNAT). Listed by hand since
+/// `is_global` is unstable; also used by `services::fetch` on resolved
+/// addresses.
 pub(crate) fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
@@ -195,25 +168,22 @@ pub(crate) fn is_private_ip(ip: &IpAddr) -> bool {
                 || ipv4.is_broadcast()
                 || ipv4.is_documentation()
                 || ipv4.is_unspecified()
-                // 100.64.0.0/10, carrier-grade NAT — and what Tailscale hands out
+                // 100.64.0.0/10 CGNAT (Tailscale)
                 || (ipv4.octets()[0] == 100 && (64..128).contains(&ipv4.octets()[1]))
                 // 198.18.0.0/15, benchmarking
                 || (ipv4.octets()[0] == 198 && (18..20).contains(&ipv4.octets()[1]))
-                // 240.0.0.0/4 reserved, and 224.0.0.0/4 multicast: neither is a
-                // host that can serve a feed, and both are reachable on a LAN
+                // 240.0.0.0/4 reserved, 224.0.0.0/4 multicast
                 || ipv4.octets()[0] >= 224
         }
         IpAddr::V6(ipv6) => {
-            // An IPv4-mapped address is the same host by another spelling:
-            // `::ffff:127.0.0.1` must not walk past a check that only looked at
-            // the v6 rules.
+            // `::ffff:127.0.0.1` must be judged by the v4 rules.
             if let Some(mapped) = ipv6.to_ipv4_mapped() {
                 return is_private_ip(&IpAddr::V4(mapped));
             }
 
             ipv6.is_loopback()
                 || ipv6.is_unspecified()
-                // fc00::/7 unique-local, the v6 answer to RFC 1918
+                // fc00::/7 unique-local
                 || (ipv6.segments()[0] & 0xfe00) == 0xfc00
                 // fe80::/10 link-local
                 || (ipv6.segments()[0] & 0xffc0) == 0xfe80
@@ -293,9 +263,7 @@ mod tests {
         }
     }
 
-    /// Ranges that are just as unreachable from the internet as RFC 1918, and
-    /// just as reachable from the server: refusing `192.168.0.1` while
-    /// following `100.100.100.100` into a Tailscale network stops nothing.
+    /// Non-RFC-1918 ranges that are equally internal, e.g. Tailscale's CGNAT.
     #[test]
     fn blocks_the_ranges_that_are_private_without_being_rfc_1918() {
         for addr in [
@@ -318,10 +286,8 @@ mod tests {
 
     #[test]
     fn leaves_neighbouring_public_ranges_alone() {
-        // Each is adjacent to a blocked range and must stay reachable:
-        // 100.63/100.128 flank CGNAT, 198.17/198.20 flank benchmarking,
-        // 172.67 looks like RFC 1918 but sits above 172.31, and
-        // `::ffff:1.1.1.1` is a mapped *public* address.
+        // Neighbours of blocked ranges must stay reachable; `::ffff:1.1.1.1` is a
+        // mapped public address.
         for addr in [
             "100.63.255.255",
             "100.128.0.1",
@@ -403,9 +369,7 @@ mod tests {
 
     #[test]
     fn policy_never_lifts_scheme_or_host_rules() {
-        // Both entries are pointless for these two URLs on purpose: an allow
-        // list names hosts that may be *reached*, it never widens what counts
-        // as a fetchable URL.
+        // An allow list never widens what counts as a fetchable URL.
         let policy = FetchPolicy::parse("127.0.0.1,localhost").unwrap();
         assert!(matches!(
             policy.validate(&Url::parse("file:///etc/passwd").unwrap()),

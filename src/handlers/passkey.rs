@@ -18,26 +18,13 @@ use crate::models::{passkey, session, user, webauthn_challenge};
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
-// --- Registration ---
-
 #[derive(Debug, Serialize)]
 pub struct StartRegistrationResponse {
     pub options: CreationChallengeResponse,
 }
 
-/// The re-authentication check lives here, on the *start* of the ceremony,
-/// not on its finish.
-///
-/// Two reasons, and the first is fatal to the alternative: the challenge is
-/// single-use (`find_and_delete_challenge`), so a 403 at the finish step would
-/// consume it and leave the retry — after the user has typed their password —
-/// with nothing to complete. The user would also have already touched their
-/// authenticator, only to be asked for a password afterwards.
-///
-/// Checking only here is sufficient: a credential cannot be registered without
-/// a challenge, a challenge only exists because this handler issued one, and
-/// this handler will not issue one to a session that has not authenticated
-/// recently.
+/// Re-auth is checked here, not at finish: the challenge is single-use, so a
+/// 403 at finish would consume it and strand the retry.
 pub async fn start_registration(
     State(state): State<AppState>,
     auth_user: RecentlyAuthenticated,
@@ -58,23 +45,14 @@ pub async fn start_registration(
         .start_passkey_registration(user_uuid, &username, &username, Some(exclude_credentials))
         .map_err(|e| AppError::PasskeyRegistrationFailed(e.to_string()))?;
 
-    // webauthn-rs asks for `residentKey: discouraged` here, which is wrong for
-    // this app: sign-in is usernameless (`start_authentication` sends an empty
-    // `allowCredentials`), so a credential the authenticator cannot discover on
-    // its own could be registered and then never be usable to log in. Ask for a
-    // discoverable credential instead, which is what a passkey is.
-    //
-    // Patched on the response rather than the builder because
-    // `start_passkey_registration` hardcodes the flag and exposes no knob;
-    // `finish_passkey_registration` does not re-read it, so this is the whole
-    // change. `require_resident_key` is set alongside for WebAuthn L1 clients,
-    // which never learned the newer field.
+    // webauthn-rs hardcodes `residentKey: discouraged`, but sign-in is
+    // usernameless, so require a discoverable credential. `require_resident_key`
+    // covers WebAuthn L1 clients.
     if let Some(selection) = ccr.public_key.authenticator_selection.as_mut() {
         selection.resident_key = Some(ResidentKeyRequirement::Required);
         selection.require_resident_key = true;
     }
 
-    // Serialize and store the registration state
     let state_json =
         serde_json::to_string(&reg_state).map_err(|e| AppError::Internal(e.to_string()))?;
     let challenge_bytes: Vec<u8> = ccr.public_key.challenge.as_ref().to_vec();
@@ -103,10 +81,8 @@ pub struct FinishRegistrationResponse {
     pub name: String,
 }
 
-/// Deliberately takes a plain [`AuthUser`]: the freshness check happened at
-/// `start_registration`, and repeating it here would fail a ceremony that
-/// merely straddled the window boundary — after the challenge was already
-/// spent. See that handler for why the start is the right place.
+/// Plain [`AuthUser`]: freshness was checked at `start_registration`, and
+/// re-checking here could fail after the challenge is spent.
 pub async fn finish_registration(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -120,7 +96,6 @@ pub async fn finish_registration(
 
     let user_id = auth_user.user.id;
 
-    // Find and consume the challenge
     let challenge = webauthn_challenge::find_and_delete_challenge(
         &state.db,
         Some(user_id),
@@ -128,22 +103,18 @@ pub async fn finish_registration(
     )
     .await?;
 
-    // Deserialize the registration state
     let reg_state: PasskeyRegistration = serde_json::from_str(&challenge.state_data)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Complete registration
     let passkey_data = state
         .webauthn
         .finish_passkey_registration(&req.credential, &reg_state)
         .map_err(|e| AppError::PasskeyRegistrationFailed(e.to_string()))?;
 
-    // Serialize the passkey data for storage
     let credential_id: Vec<u8> = passkey_data.cred_id().as_ref().to_vec();
     let public_key_json =
         serde_json::to_vec(&passkey_data).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Get transports from the credential response if available
     let transports = req.credential.response.transports.as_ref().map(|t| {
         t.iter()
             .map(|t| format!("{t:?}").to_lowercase())
@@ -183,8 +154,6 @@ pub async fn finish_registration(
     ))
 }
 
-// --- Authentication ---
-
 #[derive(Debug, Serialize)]
 pub struct StartAuthenticationResponse {
     pub options: RequestChallengeResponse,
@@ -192,19 +161,9 @@ pub struct StartAuthenticationResponse {
 
 /// Issue a usernameless sign-in challenge.
 ///
-/// The challenge carries **no `allowCredentials`**. An earlier version built
-/// it with `start_passkey_authentication` over every row in the `passkey`
-/// table, which does the opposite of what its comment claimed: that call
-/// populates `allowCredentials` with each credential it is given, so a single
-/// unauthenticated request returned the credential ID of every passkey on the
-/// instance — stable, linkable per-user identifiers, plus a count of how many
-/// accounts had enrolled one — to anyone who asked.
-///
-/// Nothing here reads the database any more, which also retires the
-/// account-existence oracle that motivated the rate limit below: the response
-/// is now identical whether the instance has a thousand passkeys or none. The
-/// budget is still charged, because each call writes a challenge row and
-/// unauthenticated writes should not be free.
+/// Must carry no `allowCredentials`: listing them leaks every passkey's
+/// credential ID to unauthenticated callers. Still rate-limited because each
+/// call writes a challenge row.
 pub async fn start_authentication(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -231,11 +190,7 @@ pub async fn start_authentication(
         .start_discoverable_authentication()
         .map_err(|e| AppError::PasskeyAuthenticationFailed(e.to_string()))?;
 
-    // That call stamps `mediation: conditional`, which belongs to the browser
-    // autofill flow: a conditional `navigator.credentials.get()` waits silently
-    // for the user to pick a passkey from an input's dropdown. rdrs drives this
-    // from an explicit "Login with Passkey" button and wants the modal, so the
-    // field is cleared rather than advertising a mode `login.js` does not honour.
+    // Clear `mediation: conditional`: login is a button-driven modal, not autofill.
     rcr.mediation = None;
 
     let state_json =
@@ -272,9 +227,7 @@ pub async fn finish_authentication(
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<FinishAuthenticationRequest>,
 ) -> AppResult<(CookieJar, Json<FinishAuthenticationResponse>)> {
-    // Reserve an attempt before the challenge lookup or WebAuthn signature
-    // verification — same ordering rationale as password login: the check
-    // must run before any work an attacker's guess could otherwise spend.
+    // Reserve an attempt before any work an attacker's guess could spend.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -287,7 +240,6 @@ pub async fn finish_authentication(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    // Find and consume the challenge
     let challenge = webauthn_challenge::find_and_delete_challenge(
         &state.db,
         None,
@@ -295,14 +247,10 @@ pub async fn finish_authentication(
     )
     .await?;
 
-    // Deserialize the auth state
     let auth_state: DiscoverableAuthentication = serde_json::from_str(&challenge.state_data)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Find the passkey by credential ID (use raw_id which contains raw bytes).
-    // Client-supplied, and safe to trust for *selection* only: it decides which
-    // stored public key the signature is checked against, and naming someone
-    // else's credential just means the signature fails to verify below.
+    // Client-supplied ID only selects which public key to verify against.
     let credential_id: Vec<u8> = req.credential.raw_id.as_ref().to_vec();
     let stored_passkey = passkey::find_by_credential_id(&state.db, &credential_id)
         .await?
@@ -315,14 +263,10 @@ pub async fn finish_authentication(
         return Err(AppError::UserDisabled);
     }
 
-    // Deserialize the stored passkey data
     let mut passkey_data: Passkey = serde_json::from_slice(&stored_passkey.public_key)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Complete authentication. The single stored credential resolved above is
-    // the only one the assertion is allowed to match: `finish_discoverable_*`
-    // installs it as the allow-list before verifying, so the challenge going
-    // out empty costs nothing in strictness here.
+    // `finish_discoverable_*` uses this single credential as the allow-list.
     let auth_result = state
         .webauthn
         .finish_discoverable_authentication(
@@ -332,9 +276,7 @@ pub async fn finish_authentication(
         )
         .map_err(|e| AppError::PasskeyAuthenticationFailed(e.to_string()))?;
 
-    // The WebAuthn ceremony verified successfully: hand the reservation back
-    // before the session is created, so a legitimate user is never locked
-    // out by their own successful passkey sign-ins.
+    // Release the reservation so successful sign-ins never lock a user out.
     state.login_rate_limiter.release(Bucket::Login, ip);
 
     passkey_data.update_credential(&auth_result);
@@ -374,8 +316,6 @@ pub async fn finish_authentication(
         }),
     ))
 }
-
-// --- Management ---
 
 #[derive(Debug, Serialize)]
 pub struct PasskeyInfo {

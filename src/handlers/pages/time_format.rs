@@ -22,7 +22,6 @@ pub fn format_relative_time_compact(dt: Option<chrono::DateTime<chrono::Utc>>) -
     }
 }
 
-/// Format a datetime as a human-readable relative time string.
 /// Returns (`relative_text`, `iso_datetime_for_tooltip`).
 pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
     match dt {
@@ -54,12 +53,10 @@ pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (Strin
     }
 }
 
-/// Age (in days) up to which a feed still counts as fresh. Named because the
-/// `/feeds` help disclosure quotes these thresholds back to the user — the
-/// template reads them from here so the prose can never drift from the rule.
+/// Max age (days) of a fresh feed; also quoted by the `/feeds` help text.
 pub const FRESH_MAX_DAYS: i64 = 30;
 
-/// Age (in days) up to which a feed is merely a warning rather than stale.
+/// Max age (days) of a warning (not yet stale) feed.
 pub const WARNING_MAX_DAYS: i64 = 90;
 
 /// Compute freshness CSS class and key from `feed_updated_at` and `fetched_at`.
@@ -96,9 +93,7 @@ mod tests {
     use super::*;
     use chrono::{Duration, Utc};
 
-    /// A timestamp `d` in the past, for driving the "ago" branches. Values are
-    /// chosen comfortably inside each band so sub-second test latency can't tip
-    /// them across a boundary.
+    /// A timestamp `d` in the past; tests pick values well inside each band.
     #[allow(
         clippy::unnecessary_wraps,
         reason = "returns Option to feed the Option-taking function under test directly"

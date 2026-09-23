@@ -1,6 +1,5 @@
-//! Plain-text extraction from HTML. Pure string function — no request state.
-//! Strips tags (including `<script>`/`<style>` bodies and comments) and
-//! collapses whitespace to single spaces.
+//! Plain-text extraction from HTML: strips tags (including `<script>`/`<style>`
+//! bodies and comments) and collapses whitespace.
 
 fn strip_impl(raw: &str, tag_gap: bool) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -86,9 +85,8 @@ pub fn strip_to_plain_text(raw: &str) -> String {
     strip_impl(raw, true)
 }
 
-/// Like [`strip_to_plain_text`] but inserts **no** separator at tag
-/// boundaries, so a term split across inline tags (`超<b>少女</b>`) stays
-/// contiguous. Used to build the searchable `entry.content_text`.
+/// Like [`strip_to_plain_text`] with no separator at tag boundaries, so
+/// `超<b>少女</b>` stays contiguous. Builds the searchable `entry.content_text`.
 pub fn strip_to_search_text(raw: &str) -> String {
     strip_impl(raw, false)
 }
@@ -118,8 +116,6 @@ mod tests {
 
     #[test]
     fn search_text_joins_across_tags() {
-        // No separator at tag boundaries, so a term split by inline markup
-        // stays contiguous and matchable by LIKE.
         assert_eq!(
             strip_to_search_text("超<b>少女</b>與機器人"),
             "超少女與機器人"

@@ -1,4 +1,4 @@
-//! Registration, sign-in, invites and sign-out — a port of `auth.steps.js`.
+//! Registration, sign-in, invites and sign-out.
 
 use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
@@ -6,11 +6,7 @@ use rdrs_e2e::api::PASSWORD;
 use rdrs_e2e::dom::Dom;
 use rdrs_e2e::world::RdrsWorld;
 
-/// The invite path an admin issued for this scenario's account, kept on the
-/// world because two steps apart use it.
-///
-/// `currentUser.invitePath` in the JavaScript suite, which could stash it on
-/// the fixture object.
+/// Stores the invite path on the world for a later step.
 #[given("an admin has created an account for me")]
 async fn admin_created_account(world: &mut RdrsWorld) -> Result<()> {
     let username = world.user.username.clone();
@@ -24,8 +20,7 @@ async fn registered_user(world: &mut RdrsWorld) -> Result<()> {
     world.api().register(&username, &password).await
 }
 
-/// Registers an unrelated account first, so the account under test is *not*
-/// the instance's first user — the first one is promoted to admin.
+/// Registers another account first, since the first user becomes admin.
 #[given("the instance already has an owner account")]
 async fn instance_has_owner(world: &mut RdrsWorld) -> Result<()> {
     world.api().register("e2e-owner", PASSWORD).await
@@ -49,10 +44,8 @@ async fn redeem_invite(world: &mut RdrsWorld) -> Result<()> {
     submit_invite(world, &password).await
 }
 
-/// The confirmation is long enough to clear the field's own `minlength`, so the
-/// form submits and the server's mismatch check is what rejects it. A short
-/// value would be stopped by constraint validation first and never exercise
-/// this scenario.
+/// The confirmation clears `minlength`, so the server's mismatch check (not
+/// constraint validation) rejects it.
 #[when("I open my one-time link and mistype the confirmation")]
 async fn mistype_confirmation(world: &mut RdrsWorld) -> Result<()> {
     submit_invite(world, "badger-kestrel-19-plume").await
@@ -138,8 +131,8 @@ async fn no_app_settings_link(world: &mut RdrsWorld) -> Result<()> {
     driver.expect_absent("nav-app-settings").await
 }
 
-/// The admin guard redirects to `/login`, which bounces an already-signed-in
-/// session back to the inbox — either way the config table never renders.
+/// The admin guard redirects to `/login`, which bounces a signed-in session
+/// back to the inbox.
 #[then("I am not shown the app settings page")]
 async fn not_shown_app_settings(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -163,10 +156,8 @@ async fn logged_out_flash(world: &mut RdrsWorld) -> Result<()> {
         .await
 }
 
-/// Logout responds with `Clear-Site-Data: "cache", "storage"` (see
-/// `handlers::auth::LOGOUT_CLEAR_SITE_DATA`) specifically so the sidebar's
-/// `sessionStorage` mirror does not leak the previous user's feed titles and
-/// unread counts to whoever uses this browser next.
+/// Logout sends `Clear-Site-Data` so the sidebar's `sessionStorage` mirror
+/// does not leak to the next user.
 #[then("the sidebar's cached data no longer survives in session storage")]
 async fn sidebar_cache_cleared(world: &mut RdrsWorld) -> Result<()> {
     let cached = world

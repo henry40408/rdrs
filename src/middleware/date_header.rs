@@ -46,7 +46,6 @@ where
         Box::pin(async move {
             let mut response = inner.call(request).await?;
 
-            // Add Date header in RFC 7231 format (e.g., "Mon, 23 Feb 2026 01:23:45 GMT")
             let now = chrono::Utc::now();
             let date_str = now.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
             response

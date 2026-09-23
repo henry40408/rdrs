@@ -1,7 +1,4 @@
-//! Keyboard shortcuts, the selection they move, the go-to hint and the help
-//! overlay.
-//!
-//! Split out of `entries.steps.js` — see [`super::entries`].
+//! Keyboard shortcuts, selection, the go-to hint and the help overlay.
 
 use anyhow::{Result, ensure};
 use cucumber::{then, when};
@@ -14,28 +11,21 @@ async fn press_key(world: &mut RdrsWorld, key: String) -> Result<()> {
     world.driver()?.press(&key).await
 }
 
-/// The plain press step clicks `<body>` first, which would blur the help
-/// overlay (focus sits on its Esc button after `show()`) and can trigger its
-/// click-outside-to-close handler. This sends the key to whatever holds focus.
+/// Skips the `<body>` click, which would blur (or click-outside-close) the
+/// help overlay.
 #[when(expr = "I press the {string} key without refocusing")]
 async fn press_key_focused(world: &mut RdrsWorld, key: String) -> Result<()> {
     world.driver()?.press_focused(&key).await
 }
 
-/// Pre-arms a one-shot handler so the next `window.confirm` auto-accepts, for
-/// the shortcuts that go through a confirmation prompt (Shift+K → "Mark all as
-/// read?"). Must be registered *before* the keystroke.
-///
-/// Overriding `window.confirm` rather than answering a driver-level alert: the
-/// `WebDriver` alert commands race the page, which resumes the moment the dialog
-/// is dismissed, and the shortcut's own handler is what has to observe `true`.
+/// Auto-accepts the next `window.confirm`; register *before* the keystroke.
+/// Overrides `confirm` because `WebDriver` alert commands race the page.
 #[when("I confirm the next dialog")]
 async fn confirm_next_dialog(world: &mut RdrsWorld) -> Result<()> {
     accept_next_dialog(world).await
 }
 
-/// Arms the one-shot `window.confirm` override, shared with the triage steps
-/// whose dropdown and Mark-Above button go through the same prompt.
+/// Shared with the triage steps, which hit the same prompt.
 pub async fn accept_next_dialog(world: &RdrsWorld) -> Result<()> {
     world
         .driver()?
@@ -65,8 +55,7 @@ async fn second_selected(world: &mut RdrsWorld) -> Result<()> {
     expect_selected_index(world, 1).await
 }
 
-/// `.selected` is client-side only, so a stale highlight left on a row the
-/// reader has navigated away from shows up here as a count of 2.
+/// `.selected` is client-side, so a stale highlight shows as a count of 2.
 #[then("exactly one entry is selected")]
 async fn exactly_one_selected(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -131,13 +120,8 @@ async fn help_hidden(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_hidden("kb-help").await
 }
 
-/// Compares the x of the first four Navigation-group descriptions (j/k,
-/// o/Enter, Space — the wide key combo — and Esc): pre-fix, the Space row's key
-/// cell overflows its column and pushes its description right.
-///
-/// Read through a script rather than a CSS query: Playwright's selectors pierce
-/// an open shadow root and `WebDriver`'s do not, so the measurement has to happen
-/// inside the page.
+/// Pre-fix, the wide Space key cell pushed its description right. Measured in
+/// a script because `WebDriver` selectors do not pierce shadow roots.
 #[then("the help overlay descriptions are aligned")]
 async fn help_aligned(world: &mut RdrsWorld) -> Result<()> {
     let offsets = world
@@ -172,16 +156,8 @@ async fn help_aligned(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// The shadow stylesheet references tokens with no `var(--x, fallback)`
-/// defaults, so a token renamed in `app.css` would leave the modal unstyled —
-/// transparent panel, default text colour — while every other help-overlay
-/// assertion still passed.
-///
-/// Each token is resolved through a throwaway element in the light DOM and read
-/// back as a *computed* value, so both sides of the comparison go through the
-/// same normalisation: the browser rewrites colours to `rgb()` and strips
-/// quotes from font stacks, and comparing against the raw token text fails on
-/// formatting alone.
+/// Tokens have no `var()` fallbacks, so a rename would unstyle the modal.
+/// Both sides are read as computed values so formatting normalises equally.
 #[then("the help overlay resolves its design tokens")]
 async fn help_tokens(world: &mut RdrsWorld) -> Result<()> {
     let probe = world
@@ -228,11 +204,8 @@ async fn help_tokens(world: &mut RdrsWorld) -> Result<()> {
 
 // ── Shortcuts that open a tab ────────────────────────────────────────────────
 
-/// Seeded entry links point at `https://example.com/…`. What this asserts is
-/// *which URL* the shortcut targets, not that the page loads — so the origin is
-/// stubbed rather than fetched. Without the stub the popup's navigation fails
-/// DNS resolution and its URL collapses to `chrome-error://chromewebdata/` on
-/// any machine without internet.
+/// Stubs `example.com`: the assertion is the target URL, and offline DNS
+/// failure collapses it to `chrome-error://`.
 #[then(expr = "pressing the {string} key opens a new tab at {string}")]
 async fn key_opens_tab(world: &mut RdrsWorld, key: String, expected: String) -> Result<()> {
     world.stub_external_pages().await?;
@@ -241,8 +214,7 @@ async fn key_opens_tab(world: &mut RdrsWorld, key: String, expected: String) -> 
     let before = driver.windows().await?;
     driver.press(&key).await?;
 
-    // A popup can surface before its navigation commits, so this waits for a
-    // *new* handle and then for that handle to report a real URL.
+    // A popup can appear before navigation commits; wait for a real URL.
     let handle = eventually_some("a new tab to open", || async {
         let now = driver.windows().await?;
         Ok(now.into_iter().find(|handle| !before.contains(handle)))

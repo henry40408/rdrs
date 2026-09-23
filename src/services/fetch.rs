@@ -1,24 +1,11 @@
-//! The HTTP client every attacker-influenced fetch goes through.
+//! The HTTP client for every attacker-influenced fetch.
 //!
-//! Checking the URL a caller hands over is necessary but not sufficient: a
-//! validated `https://example.com/feed.xml` can answer `302 Location:
-//! http://127.0.0.1:8080/`, and a hostname that validates as a string can
-//! resolve to `10.0.0.1` — this time, or on the second lookup a moment after
-//! the check passed. Neither is visible where the caller stands, so the guard
-//! belongs in the client:
-//!
-//! - **every redirect hop** is re-validated against the same [`FetchPolicy`]
-//!   before it is followed, and the chain is capped at [`MAX_REDIRECTS`];
-//! - **every DNS answer** is filtered, so a name only ever connects to an
-//!   address the policy would have accepted written out in full. Because the
-//!   filtering happens where the connection is made, there is no window between
-//!   the check and the connect for the answer to change underneath it.
-//!
-//! [`Fetcher`] carries both plus the pooled clients, so a caller that holds one
-//! cannot accidentally reach the network any other way. Callers that talk to an
-//! endpoint the *user configured* — Linkding, Kagi — build their own client on
-//! purpose: a self-hosted Linkding on the LAN is the address the user typed,
-//! not one a feed talked us into.
+//! A vetted URL can still redirect inward or resolve (or rebind) to a private
+//! address, so the guard lives in the client: every redirect hop is
+//! re-validated against the [`FetchPolicy`] (capped at `MAX_REDIRECTS`), and
+//! every DNS answer is filtered at connect time, leaving no check/connect
+//! window. User-configured endpoints (Linkding, Kagi) deliberately use their
+//! own clients.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -30,17 +17,12 @@ use url::Url;
 use crate::services::http::DEFAULT_TIMEOUT;
 use crate::utils::url_validation::{FetchPolicy, UrlValidationError, is_private_ip};
 
-/// How many hops a fetch may follow. reqwest's own default is 10; the shorter
-/// cap is fine for feeds and bounds how long one blocked target can keep a
-/// connection busy.
+/// Redirect cap; shorter than reqwest's 10 to bound time spent on a blocked
+/// target.
 const MAX_REDIRECTS: usize = 5;
 
-/// A pooled HTTP client whose redirects and DNS answers are held to a
-/// [`FetchPolicy`], plus the policy itself for validating a URL before the
-/// request starts.
-///
-/// Cloning is cheap: `reqwest::Client` is a handle to a shared pool, and the
-/// policy sits behind an `Arc`.
+/// Pooled HTTP client whose redirects and DNS answers obey a [`FetchPolicy`].
+/// Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct Fetcher {
     policy: Arc<FetchPolicy>,
@@ -49,10 +31,7 @@ pub struct Fetcher {
 }
 
 impl Fetcher {
-    /// Build the pooled clients for `policy`.
-    ///
-    /// Fails only if the TLS backend cannot be initialised, which is a startup
-    /// problem rather than something a caller can recover from.
+    /// Build the pooled clients for `policy`. Fails only if TLS cannot initialise.
     pub fn new(policy: FetchPolicy) -> Result<Self, String> {
         let policy = Arc::new(policy);
 
@@ -78,11 +57,8 @@ impl Fetcher {
         })
     }
 
-    /// The client to use for a feed, honouring its per-feed HTTP/2 opt-out.
-    ///
-    /// `http1_only()` is a client-level setting that cannot be overridden per
-    /// request, which is why this is a choice between two pools rather than a
-    /// flag on the request.
+    /// The client for a feed, honouring its HTTP/2 opt-out (`http1_only()` is
+    /// client-level, hence two pools).
     pub fn client(&self, http2_disabled: bool) -> &reqwest::Client {
         if http2_disabled {
             &self.client_h1
@@ -91,10 +67,8 @@ impl Fetcher {
         }
     }
 
-    /// Check a URL before requesting it. The client re-checks every redirect
-    /// hop and every resolved address on its own, so this is about refusing an
-    /// obviously out-of-bounds URL early — with an error the caller can report
-    /// — rather than the only line of defence.
+    /// Early URL check for a reportable error; the client still re-checks every
+    /// hop and resolved address.
     pub fn validate(&self, url: &Url) -> Result<(), UrlValidationError> {
         self.policy.validate(url)
     }
@@ -121,8 +95,7 @@ fn redirect_policy(policy: &Arc<FetchPolicy>) -> redirect::Policy {
     })
 }
 
-/// Why a redirect was not followed. Surfaces through `reqwest::Error` to the
-/// caller, which reports it like any other fetch failure.
+/// Why a redirect was not followed; surfaces through `reqwest::Error`.
 #[derive(Debug)]
 enum RedirectRefused {
     Blocked(Url),
@@ -153,8 +126,7 @@ impl Resolve for GuardedResolver {
         let policy = self.policy.clone();
         Box::pin(async move {
             let host = name.as_str().to_owned();
-            // A host named in the allow list is the deployment's own: accept
-            // wherever it points rather than re-judging the address.
+            // An allow-listed host is trusted wherever it points.
             let host_allowed = policy.allows(&host);
 
             let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
@@ -180,8 +152,7 @@ impl Resolve for GuardedResolver {
     }
 }
 
-/// A hostname whose every address was refused — the DNS-rebinding case, where
-/// the name itself looks public.
+/// A hostname whose every address was refused (DNS rebinding).
 #[derive(Debug)]
 struct BlockedResolution(String);
 
@@ -204,8 +175,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// reqwest wraps a redirect-policy error in its own ("error following
-    /// redirect for url (…)"), so assertions read the whole source chain.
+    /// reqwest wraps redirect-policy errors, so assertions read the source chain.
     fn chain(err: &reqwest::Error) -> String {
         let mut out = err.to_string();
         let mut source = std::error::Error::source(err);
@@ -232,9 +202,8 @@ mod tests {
             .map_err(|e| e.to_string())
     }
 
-    /// `localhost` stands in for the rebinding case: a name whose *string* form
-    /// says nothing about where it points, resolving to an address the policy
-    /// refuses. It resolves from the hosts file, so this needs no network.
+    /// `localhost` stands in for rebinding: a name resolving to a refused address
+    /// (via the hosts file, no network).
     #[tokio::test]
     async fn refuses_a_name_that_resolves_inward() {
         let err = resolve(&resolver(""), "localhost")
@@ -260,8 +229,7 @@ mod tests {
         assert!(addrs.iter().any(|a| a.ip().is_loopback()));
     }
 
-    /// A name resolving to both a public and a private address keeps only the
-    /// public one — the private answer must not be reachable by racing it.
+    /// A name resolving to public and private addresses keeps only the public one.
     #[test]
     fn keeps_only_the_addresses_the_policy_accepts() {
         let policy = FetchPolicy::default();
@@ -295,8 +263,7 @@ mod tests {
         );
     }
 
-    /// The redirect case the URL check cannot see: the URL the caller vetted is
-    /// public and answers normally, and only its `Location` points inward.
+    /// The vetted URL is public; only its `Location` points inward.
     #[tokio::test]
     async fn refuses_to_follow_a_redirect_pointing_inward() {
         let server = MockServer::start().await;
@@ -325,8 +292,7 @@ mod tests {
         );
     }
 
-    /// A hop that stays in bounds is still followed — the guard refuses
-    /// destinations, not redirects.
+    /// An in-bounds hop is still followed.
     #[tokio::test]
     async fn follows_a_redirect_that_stays_in_bounds() {
         let server = MockServer::start().await;
@@ -374,8 +340,7 @@ mod tests {
 
         let chain = chain(&err);
         assert!(chain.contains("too many redirects"), "got: {chain}");
-        // The message alone would also match reqwest's own default cap of 10,
-        // so count the hops the server actually served.
+        // Count hops served, since the message also matches reqwest's own cap.
         let served = server.received_requests().await.unwrap().len();
         assert!(
             served <= MAX_REDIRECTS + 1,
@@ -387,8 +352,6 @@ mod tests {
     #[test]
     fn the_http1_only_client_is_a_separate_pool() {
         let fetcher = Fetcher::default();
-        // Same guard, different client: the HTTP/2 opt-out cannot be applied
-        // per request, so a feed that needs it gets its own pool.
         assert!(!std::ptr::eq(fetcher.client(true), fetcher.client(false)));
     }
 }

@@ -1,10 +1,5 @@
-// static/js/admin.js — the copy button on the one-time account link.
-//
-// The link is shown exactly once (only its HMAC is stored), so copying has to be
-// reliable rather than pretty. `navigator.clipboard` needs a secure context, and
-// a self-hosted rdrs reached over plain HTTP on a LAN has no clipboard API at
-// all, so the fallback selects the text and says to press ⌘C. That is also why
-// the link lives in a readonly <input> rather than a <code> block.
+// Copy button for the one-time account link. `navigator.clipboard` is missing
+// over plain HTTP, so the fallback selects the readonly <input> and asks for ⌘C.
 
 function flashLabel(button, text) {
     const label = button.querySelector('.action-label') || button;
@@ -32,8 +27,7 @@ document.addEventListener('click', async (e) => {
         await navigator.clipboard.writeText(input.value);
         flashLabel(button, 'Copied!');
     } catch {
-        // The text is already selected, so say what to do rather than report a
-        // failure the reader cannot act on.
+        // Already selected: tell the reader what to do rather than report failure.
         flashLabel(button, 'Press ⌘C');
     }
 });

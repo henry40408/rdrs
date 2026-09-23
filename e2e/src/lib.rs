@@ -1,6 +1,5 @@
-//! Browser E2E support for rdrs: the server under test, the throwaway accounts
-//! the scenarios run as, the seed helper that fills their databases, and the
-//! browser session the Cucumber steps drive.
+//! Browser E2E support: server under test, throwaway accounts, seeding, and
+//! the browser session the Cucumber steps drive.
 
 use std::sync::OnceLock;
 
@@ -18,10 +17,8 @@ pub mod world;
 
 pub use server::Harness;
 
-/// Eight lowercase alphanumerics, the shape `nanoid` produced for usernames.
-///
-/// Accounts are never cleaned up — one server serves the whole run — so every
-/// scenario needs a name no other scenario will pick.
+/// Eight lowercase alphanumerics; accounts are never cleaned up, so each
+/// scenario needs a unique name.
 pub fn random_slug() -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::rng();
@@ -30,10 +27,7 @@ pub fn random_slug() -> String {
         .collect()
 }
 
-/// The first cell of every row in a step's data table.
-///
-/// Every table in this suite is a single column — titles, URLs — which is what
-/// `table.raw().map((row) => row[0])` said in the JavaScript steps.
+/// The first cell of every row in a step's (single-column) data table.
 ///
 /// # Errors
 ///

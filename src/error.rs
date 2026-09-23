@@ -32,11 +32,8 @@ pub enum AppError {
     #[error("Forbidden")]
     Forbidden,
 
-    /// The session is authenticated but has not proved its credentials
-    /// recently enough for a sensitive operation. Distinct from
-    /// [`AppError::Forbidden`] on purpose: the client is *not* being told to
-    /// give up, it is being told to re-authenticate and retry, and the browser
-    /// keys its password prompt off this exact response.
+    /// Sensitive operation needs recent re-authentication. Distinct from
+    /// [`AppError::Forbidden`]: the browser keys its password prompt off it.
     #[error("Reauthentication required")]
     ReauthenticationRequired,
 
@@ -115,19 +112,10 @@ pub enum AppError {
     #[error("Internal server error")]
     Internal(String),
 
-    /// A client IP exceeded its credential-attempt budget (see
-    /// [`crate::middleware::RateLimiter`]). Covers every credential-accepting
-    /// endpoint class — password login (including `GReader` `ClientLogin`),
-    /// registration, and passkey ceremonies (both the probe-only start and
-    /// the verifying finish) — each throttled against its own budget (see
-    /// [`crate::middleware::rate_limit::Bucket`]). The message is
-    /// deliberately generic: it must read identically whether the username
-    /// does not exist, the password was wrong, or the account is disabled,
-    /// so a throttled attacker learns nothing about which of those is true.
-    ///
-    /// `retry_after_secs` is what remains of the limiter's current fixed
-    /// window, echoed back as a `Retry-After` header so a well-behaved client
-    /// can wait exactly that long instead of guessing — or hammering.
+    /// Client IP exceeded a credential-attempt budget
+    /// ([`crate::middleware::rate_limit::Bucket`]). The message must stay generic
+    /// so it reveals nothing about the username, password or account state.
+    /// `retry_after_secs` (rest of the window) is sent as `Retry-After`.
     #[error("Too many requests")]
     TooManyRequests { retry_after_secs: u64 },
 }
@@ -143,9 +131,7 @@ impl IntoResponse for AppError {
             AppError::UserDisabled => (StatusCode::FORBIDDEN, "User is disabled"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden"),
-            // 403 rather than 401: the session is valid, so re-running the
-            // login flow is the wrong response. The message is what
-            // `passkey.js` matches on to raise its password prompt.
+            // 403, not 401: the session is valid. `passkey.js` matches this message.
             AppError::ReauthenticationRequired => {
                 (StatusCode::FORBIDDEN, "Reauthentication required")
             }
@@ -184,9 +170,7 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
             AppError::TooManyRequests { retry_after_secs } => {
-                // RFC 6585 §4: a 429 "SHOULD" say when to come back. Returned
-                // early rather than through the shared tail below, which has
-                // no way to attach a header.
+                // RFC 6585 §4; returned early since the shared tail can't add headers.
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
                     [(header::RETRY_AFTER, retry_after_secs.to_string())],

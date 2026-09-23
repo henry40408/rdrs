@@ -19,20 +19,15 @@ use crate::utils::url_validation::validate_url;
 /// Maximum URLs accepted in a single summarizer run.
 pub const MAX_URLS: usize = 30;
 
-/// Set of user ids with a `/summarizer/item` request currently in flight. The
-/// client resolves cards one at a time, but that ordering lives only in the
-/// browser; this registry enforces **one live Kagi call per user** on the
-/// server so a hand-crafted burst of parallel `/summarizer/item` POSTs cannot
-/// fan out 30 concurrent outbound requests.
+/// User ids with a `/summarizer/item` request in flight: enforces one live Kagi
+/// call per user server-side, so a burst of POSTs cannot fan out.
 pub type InFlightRegistry = Arc<Mutex<HashSet<i64>>>;
 
-/// Construct an empty in-flight registry (used in `AppState` and tests).
 pub fn new_inflight_registry() -> InFlightRegistry {
     Arc::new(Mutex::new(HashSet::new()))
 }
 
-/// RAII marker: removes the user from the in-flight set when dropped, so the
-/// slot is released on every exit path (including early returns / panics).
+/// Releases the user's in-flight slot on drop, on every exit path.
 pub struct InFlightGuard {
     registry: InFlightRegistry,
     user_id: i64,
@@ -46,10 +41,8 @@ impl Drop for InFlightGuard {
     }
 }
 
-/// Reserve the user's single in-flight slot. Returns `Some(guard)` if the user
-/// had no request in flight, or `None` if one is already running (the caller
-/// should reject the new request). The lock is held only for the set insert —
-/// never across an `.await`.
+/// Reserve the user's in-flight slot; `None` if one is already running. The
+/// lock is never held across an `.await`.
 pub fn try_begin_inflight(registry: &InFlightRegistry, user_id: i64) -> Option<InFlightGuard> {
     let mut set = registry.lock().ok()?;
     if !set.insert(user_id) {
@@ -61,9 +54,8 @@ pub fn try_begin_inflight(registry: &InFlightRegistry, user_id: i64) -> Option<I
     })
 }
 
-/// Parse the textarea into a validated, de-duplicated, order-preserving list of
-/// URL strings. Rejects an empty list, more than `MAX_URLS`, and any line that
-/// is not a fetchable http(s) URL (SSRF-validated).
+/// Parse the textarea into a de-duplicated, ordered, SSRF-validated URL list
+/// of 1..=`MAX_URLS` entries.
 pub(crate) fn parse_url_lines(input: &str) -> Result<Vec<String>, String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -98,12 +90,8 @@ pub(crate) fn url_host(url: &str) -> String {
         .unwrap_or_else(|| url.to_string())
 }
 
-/// One URL's card. `state` selects the rendered branch; unused string fields are
-/// empty. `summary` is Kagi's output run through
-/// [`crate::services::sanitize_summary`] — it is rendered with `|safe`, and
-/// Kagi writes it from a page nobody here controls, so it is not trusted.
-///
-/// `pub` (not `pub(crate)`): it's a field type of the `pub` `SummarizerTemplate`.
+/// One URL's card. `summary` is rendered with `|safe`, so it must have passed
+/// through [`crate::services::sanitize_summary`] — Kagi output is untrusted.
 #[derive(Debug, Clone)]
 pub struct SummarizerCard {
     pub index: usize,
@@ -120,8 +108,7 @@ pub(crate) struct SummarizerCardTemplate {
     pub card: SummarizerCard,
 }
 
-/// Renders the `/summarizer` page: a settings prompt when Kagi isn't
-/// configured, or the URL-list form + result cards when it is.
+/// The `/summarizer` page.
 #[derive(Template)]
 #[template(path = "summarizer.html")]
 pub struct SummarizerTemplate {
@@ -250,7 +237,7 @@ pub async fn item(
         Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
 
-    // Re-validate (defense in depth — the browser could POST anything).
+    // Re-validate: the browser could POST anything.
     let parsed = match url::Url::parse(&form.url) {
         Ok(u) if matches!(u.scheme(), "http" | "https") => u,
         _ => return render(err_card("Not a valid URL.".into())),
@@ -259,9 +246,7 @@ pub async fn item(
         return render(err_card("URL not allowed.".into()));
     }
 
-    // Enforce one live summary per user on the server (the client already
-    // serialises, but a hand-crafted burst must not fan out concurrent Kagi
-    // calls). Held until the function returns, releasing the slot on every path.
+    // One live Kagi call per user; the slot is held until return.
     let Some(_slot) = try_begin_inflight(&state.summarizer_inflight, auth_user.user.id) else {
         return render(err_card(
             "Another summary is already in progress — wait for it to finish.".into(),

@@ -23,16 +23,13 @@ pub struct SaveResult {
     pub bookmark_url: Option<String>,
 }
 
-/// Configuration for all save services (stored as JSON in database)
+/// Configuration for all save services (stored as JSON).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SaveServicesConfig {
     #[serde(default)]
     pub linkding: Option<LinkdingConfig>,
     #[serde(default)]
     pub kagi: Option<KagiConfig>,
-    // Future services can be added here:
-    // pub pocket: Option<PocketConfig>,
-    // pub wallabag: Option<WallabagConfig>,
 }
 
 impl SaveServicesConfig {
@@ -44,8 +41,7 @@ impl SaveServicesConfig {
         serde_json::to_string(self)
     }
 
-    /// Only services whose credentials are actually filled in — a present but
-    /// half-configured entry does not count.
+    /// Services whose credentials are fully filled in.
     pub fn configured_services(&self) -> Vec<&'static str> {
         let mut services = Vec::new();
         if self

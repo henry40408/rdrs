@@ -1,14 +1,10 @@
-//! Touch-target audit at iPhone-SE width (375px).
-//!
-//! Walks every interactive element on the main pages, records rendered
-//! bounding boxes, and reports anything under 44px in either axis.
+//! Touch-target audit at iPhone-SE width (375px): reports interactive
+//! elements under 44px in either axis.
 //!
 //!   cd e2e && cargo run --bin touch-audit
 //!
-//! A **report, not a gate** — unlike `csp-audit` and `nojs`. Inline text links
-//! are a legitimate exemption and the remaining findings need judgement, so
-//! this prints and exits 0; the JSON report next to it is what a follow-up
-//! reads.
+//! A **report, not a gate**: inline text links are exempt and findings need
+//! judgement, so it exits 0 and writes a JSON report.
 
 use std::path::{Path, PathBuf};
 
@@ -27,11 +23,7 @@ const MIN: u32 = 44;
 /// iPhone SE, the narrowest layout the app supports.
 const VIEWPORT: Viewport = Viewport::new(375, 667);
 
-/// Measures every interactive element and reports the ones below `MIN`.
-///
-/// Kept as page script rather than driven element-by-element from here: the
-/// audit reads a computed style and a rect for every control on the page, and
-/// a round trip each would take minutes.
+/// Runs in-page; a `WebDriver` round trip per control would take minutes.
 const MEASURE: &str = r#"
 const MIN = arguments[0];
 const openSidebar = arguments[1];
@@ -66,9 +58,8 @@ const done = arguments[arguments.length - 1];
       label,
       w: Math.round(r.width),
       h: Math.round(r.height),
-      // Inline text links are an accepted exemption; `.entry-item-title` is the
-      // title link, whose >= 44px target is the whole row (the row is
-      // click-delegated to it via installRowClickToOpen).
+      // Inline links are exempt; `.entry-item-title`'s target is the whole row
+      // (click-delegated via installRowClickToOpen).
       inlineText:
         !!el.closest('p, .entry-item-title, .entry-item-meta, .reading-pane-article, .breadcrumb') ||
         labelWrapped,
@@ -228,8 +219,7 @@ async fn audit(browser: &mut Browser, endpoints: &Endpoints) -> Result<Vec<PageR
 }
 
 async fn measure(driver: &WebDriver, open_sidebar: bool) -> Result<Vec<Finding>> {
-    // `execute_async`, because the sidebar branch has to await its animation
-    // before measuring — a synchronous script would read the drawer mid-slide.
+    // Async so the sidebar branch can await its slide-in animation.
     let value = driver
         .execute_async(
             MEASURE,

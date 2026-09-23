@@ -1,8 +1,5 @@
-//! Opening entries, the reading pane, its neighbour navigation, and the
-//! summary panel — including the scenarios that hold a response back to prove
-//! a stale one never wins.
-//!
-//! Split out of `entries.steps.js` — see [`super::entries`].
+//! Opening entries, the reading pane, neighbour navigation and the summary
+//! panel, including held-response races proving a stale response never wins.
 
 use std::time::Duration;
 
@@ -14,35 +11,23 @@ use rdrs_e2e::world::RdrsWorld;
 
 use super::entries::{entry_id, entry_row};
 
-/// The action-bar Summarize/Dismiss toggle, located by its stable
-/// `data-summary-toggle` marker rather than its accessible name — the name
-/// flips between "Summarize" and "Dismiss summary" with summary state, and
-/// "Dismiss summary" would otherwise collide with the summary box's own
-/// Dismiss control.
+/// Located by `data-summary-toggle`: its name flips to "Dismiss summary",
+/// which collides with the summary box's own Dismiss.
 pub const SUMMARIZE_TOGGLE: &str = ".reading-pane-actions [data-summary-toggle] button";
 
-/// The action bar's star toggle, scoped to the bar: every entry row carries a
-/// star with the same accessible name, and a body-wide lookup finds one of
-/// those first.
+/// Scoped to the action bar; every row has a star with the same name.
 const PANE_STAR: &str = ".reading-pane-actions [id^='reading-pane-star-form-'] button";
 
-/// How long a held response is kept before being let through.
-///
-/// Long enough for the second click to land while the first is still in
-/// flight, which is the whole point of the race scenarios.
+/// Long enough for a second click to land while the first is in flight.
 const HOLD: Duration = Duration::from_millis(600);
 
-/// A settled response gets this long to apply before the assertions run —
-/// pre-fix, the bug shows up as the pane flipping back *after* this point.
+/// Pre-fix, the pane flipped back *after* this delay.
 const SETTLE: Duration = Duration::from_millis(100);
 
 // ── Opening an entry ─────────────────────────────────────────────────────────
 
-/// Clicks the title link rather than the row: `installRowClickToOpen` bails on
-/// any `<a>` target, so the title link is the canonical open-entry action.
-///
-/// Waits for the reading-pane swap to complete — the empty placeholder loses
-/// its `.reading-pane-empty` class once the fragment replaces `#reading-pane`.
+/// Clicks the title (`installRowClickToOpen` ignores `<a>` targets) and waits
+/// for the pane to lose `.reading-pane-empty`.
 #[when(expr = "I click the entry titled {string}")]
 async fn click_entry(world: &mut RdrsWorld, title: String) -> Result<()> {
     open_entry(world, &title).await?;
@@ -55,16 +40,8 @@ async fn click_entry(world: &mut RdrsWorld, title: String) -> Result<()> {
     })
     .await?;
 
-    // The fragment landing is not the whole story: the pane's actions come
-    // alive only once `/api/entries/{id}/neighbors` resolves, and a keystroke
-    // aimed at one before then is a no-op — which is exactly what the "the
-    // summarize toggle is inert" scenario asserts on purpose. Waiting for the
-    // toggle's state to *stop changing* serves both readings: an entry with a
-    // summary already in flight settles disabled, an ordinary one settles
-    // enabled, and neither is assumed.
-    //
-    // Playwright never needed this: its per-step round trips took long enough
-    // that the resolve had always landed by the next line.
+    // The actions wake only once `/neighbors` resolves, so wait for the toggle's
+    // state to stop changing (disabled if a summary is in flight, else enabled).
     settles("the reading pane's actions", 3, || async {
         match driver.css_opt(SUMMARIZE_TOGGLE).await? {
             // No Kagi configured, so there is no toggle to settle.
@@ -76,9 +53,7 @@ async fn click_entry(world: &mut RdrsWorld, title: String) -> Result<()> {
     .map(|_| ())
 }
 
-/// The same click *without* the pane wait: this click's response is being held
-/// by a delayed route, so the pane must still be empty when the next step
-/// clicks the second entry.
+/// No pane wait: this response is held, and the next step clicks another entry.
 #[when(expr = "I click the entry titled {string} without waiting for the pane")]
 async fn click_entry_no_wait(world: &mut RdrsWorld, title: String) -> Result<()> {
     open_entry(world, &title).await
@@ -90,9 +65,7 @@ async fn open_entry(world: &RdrsWorld, title: &str) -> Result<()> {
     Ok(())
 }
 
-/// The feed name inside an entry row points at the same `/feeds/{id}/entries`
-/// the sidebar does, so it must take the same in-place swap rather than
-/// reloading.
+/// Links to `/feeds/{id}/entries`, so it must swap in place like the sidebar.
 #[when(expr = "I click the feed name in the entry titled {string}")]
 async fn click_feed_name(world: &mut RdrsWorld, title: String) -> Result<()> {
     let row = entry_row(world, &title).await?;
@@ -105,8 +78,8 @@ async fn click_feed_name(world: &mut RdrsWorld, title: String) -> Result<()> {
 
 // ── Held responses ───────────────────────────────────────────────────────────
 
-/// Holds one entry's fragment response back, then serves it — or watches the
-/// page's own stale-response guard abort it, which is the post-fix behaviour.
+/// Holds one entry's fragment, then serves it, or sees the stale-response
+/// guard abort it (post-fix).
 #[when(expr = "the fragment response for the entry titled {string} is delayed")]
 async fn delay_fragment(world: &mut RdrsWorld, title: String) -> Result<()> {
     let id = entry_id(world, &title).await?;
@@ -170,8 +143,7 @@ fn nav_test_id(direction: &str) -> &'static str {
     }
 }
 
-/// The pane carries no entry id of its own, but every action form targets
-/// `/entries/{id}/…` — mirrors `app.js`'s `currentPaneEntryId()` to read it.
+/// Mirrors `app.js`'s `currentPaneEntryId()`, via the action forms.
 async fn pane_entry_id(world: &RdrsWorld) -> Result<Option<String>> {
     let Some(form) = world
         .driver()?
@@ -180,9 +152,7 @@ async fn pane_entry_id(world: &RdrsWorld) -> Result<Option<String>> {
     else {
         return Ok(None);
     };
-    // The pane is mid-swap often enough that the handle goes stale between
-    // finding the form and reading it; that reads as "no entry yet", which is
-    // what the caller is polling for.
+    // A mid-swap stale handle reads as "no entry yet", which the caller polls for.
     let Ok(action) = form.attr("action").await else {
         return Ok(None);
     };
@@ -193,14 +163,11 @@ async fn pane_entry_id(world: &RdrsWorld) -> Result<Option<String>> {
         .map(|id| id.as_str().to_owned()))
 }
 
-/// Captures the current entry before the click so the wait can be for the pane
-/// actually swapping to a different one — which guards against a follow-up
-/// navigation firing before this swap (and its neighbour re-resolve) lands.
+/// Waits for the pane to change entry, so a follow-up cannot race this swap.
 #[when(expr = "I navigate to the {string} entry in the reading pane")]
 async fn navigate_pane(world: &mut RdrsWorld, direction: String) -> Result<()> {
     let before = pane_entry_id(world).await?;
-    // The button starts disabled and `app.js` enables it once
-    // `/api/entries/{id}/neighbors` resolves, so this waits for clickable.
+    // Enabled once `/neighbors` resolves; `click` waits for clickable.
     world.driver()?.click(nav_test_id(&direction)).await?;
     eventually("the pane to show a different entry", || async {
         Ok(pane_entry_id(world).await? != before)
@@ -285,11 +252,8 @@ async fn pane_favicon(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// A synchronous snapshot right after the (delayed) navigation click: the swap
-/// handler has already run `cancelPaneImages()` on the still-visible outgoing
-/// pane, so the favicon's `src` reveals whether it was wrongly blanked. Read
-/// once, with no retry, so it cannot be masked by the next entry eventually
-/// landing.
+/// Read once, right after the delayed click: `cancelPaneImages()` has run on
+/// the outgoing pane, and a retry would be masked by the next entry landing.
 #[then("the reading pane favicon still has its image")]
 async fn pane_favicon_kept(world: &mut RdrsWorld) -> Result<()> {
     let favicon = world
@@ -341,8 +305,7 @@ async fn broken_image_fallback(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// The innermost `<pre>` (Rouge's gutter and code cells) must be neutralised to
-/// zero padding while the outer one keeps its block padding.
+/// Rouge's inner `<pre>` gets zero padding; the outer keeps its padding.
 #[then("the nested code-block pre has no padding while the outer pre does")]
 async fn nested_pre_padding(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -388,8 +351,7 @@ async fn click_pane_star(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.click_css(PANE_STAR).await
 }
 
-/// The label flips with the starred state, which is what makes it a layout
-/// input worth asserting on.
+/// The label flips with starred state, which affects layout.
 #[then(expr = "the reading-pane star button reads {string}")]
 async fn pane_star_reads(world: &mut RdrsWorld, text: String) -> Result<()> {
     let driver = world.driver()?;
@@ -483,23 +445,15 @@ async fn click_summary_action(world: &mut RdrsWorld, label: String) -> Result<()
         },
     )
     .await?;
-    // Waits for the `#rp-summary-container` swap to settle rather than for the
-    // network to go idle, which the app's background sidebar polling makes
-    // unreliable.
+    // Waits for the swap, not network idle (sidebar polling never idles).
     no_summary_error(world).await
 }
 
 // ── Icon alignment ───────────────────────────────────────────────────────────
 
-/// Every icon drawn beside text must centre on the text's cap height. Centring
-/// the two *boxes* is not enough: where the glyphs sit inside a line box is up
-/// to the font's ascent and descent, and a flex row (or a `flex-start` banner
-/// whose icon is shorter than its line) centres boxes, not ink.
-///
-/// Swept page-wide rather than per control — pane actions, neighbour buttons,
-/// the summary error banner, the sidebar — so an icon added later is covered
-/// without anyone remembering to extend this. The stacked icon-over-label
-/// mobile bar is skipped: nothing there shares a line.
+/// Icons must centre on the text's cap height, not its box: glyph position
+/// depends on font metrics. Swept page-wide so new icons are covered; the
+/// stacked mobile bar is skipped.
 #[then("every icon beside text is centred on the text")]
 async fn icons_centred_on_text(world: &mut RdrsWorld) -> Result<()> {
     let measured = world
@@ -522,10 +476,8 @@ async fn icons_centred_on_text(world: &mut RdrsWorld) -> Result<()> {
                   if (node.data.trim() && !parent.closest('kbd') && shown(parent)) text = node;
                 }
                 if (!text) return null;
-                // A zero-size inline-block rests on the baseline. It goes in a
-                // wrapper with the text so that, when the text is a flex
-                // container's bare child, it shares the text's line instead of
-                // becoming a flex item of its own.
+                // A zero-size inline-block marks the baseline; wrapped with the text so a
+                // flex parent does not make it its own item.
                 const line = document.createElement('span');
                 const probe = document.createElement('span');
                 probe.style.display = 'inline-block';
@@ -536,9 +488,7 @@ async fn icons_centred_on_text(world: &mut RdrsWorld) -> Result<()> {
                 const style = getComputedStyle(text.parentElement);
                 ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
                 const capCentre = baseline - ctx.measureText('H').actualBoundingBoxAscent / 2;
-                // The ink, not the viewport: a glyph need not fill its 24-unit
-                // box evenly. A sprite `<use>` reports its box in CSS pixels; an
-                // inline icon in its own viewBox units.
+                // Measure ink: `<use>` reports CSS px, inline icons viewBox units.
                 const box = svg.getBoundingClientRect();
                 const use = svg.querySelector('use');
                 const ink = (use || svg).getBBox();
@@ -564,9 +514,7 @@ async fn icons_centred_on_text(world: &mut RdrsWorld) -> Result<()> {
         .iter()
         .filter_map(|row| {
             let offset = row["offset"].as_f64()?;
-            // A pixel of slack: rounding the ascent, the descent and the icon's
-            // box each moves the ink a fraction. The misalignment this catches
-            // is two.
+            // 1px slack for rounding; the bug this catches is 2px.
             (offset.abs() > 1.0).then(|| {
                 format!(
                     "`{}` ({offset:+.2}px)",
@@ -585,9 +533,7 @@ async fn icons_centred_on_text(world: &mut RdrsWorld) -> Result<()> {
 
 // ── The address bar ──────────────────────────────────────────────────────────
 
-/// `performSwap` rewrites the URL after a `#reading-pane` swap (`pushState` on
-/// first open from an empty pane, `replaceState` on later switches), so this
-/// waits until the address bar's `entry` query matches the clicked entry.
+/// `performSwap` pushes/replaces the URL after a pane swap.
 #[then(expr = "the URL has the ?entry= parameter for {string}")]
 async fn url_has_entry(world: &mut RdrsWorld, title: String) -> Result<()> {
     let id = entry_id(world, &title).await?;

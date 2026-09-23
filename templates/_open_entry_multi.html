@@ -1,14 +1,7 @@
 {%- import "macros.html" as macros -%}
-{# Multi-target swap response for `GET /entries/{id}/fragment`. The title
-   click in `_entry_row.html` carries `data-swap="#reading-pane"`, but the
-   `<template>` blocks below override that default — the swap helper
-   iterates each block and replaces by its `data-swap-target` selector.
-   This lets one round trip update the reading pane and mark the row as read.
-   The sidebar's unread counts arrive over SSE (`emit_sidebar`), not here.
-
-   Opening an entry only flips its read state, so the row update is the marker
-   form plus an `entry-read` class directive — not a whole-row re-render. The
-   star form is deliberately absent: opening never touches it. #}
+{# `GET /entries/{id}/fragment`: the templates override the link's data-swap to
+   update the reading pane and mark the row read in one round trip. Sidebar
+   counts arrive over SSE; the star form is absent because opening never touches it. #}
 <template data-swap-target="#reading-pane">{% include "_reading_pane.html" %}</template>
 <template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}</template>
 <template data-class-target="#entry-row-{{ r.id }}" data-class-{% if r.is_read %}add{% else %}remove{% endif %}="entry-read"></template>

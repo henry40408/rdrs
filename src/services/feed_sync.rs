@@ -18,12 +18,8 @@ pub struct SyncResult {
     pub updated_entries: i64,
 }
 
-/// Pick the freshest available "last updated" signal for a feed.
-///
-/// Combines the feed-level timestamp (RSS `<lastBuildDate>` / Atom `<updated>`),
-/// the newest entry date, and the HTTP `Last-Modified` header, returning the most
-/// recent one. The HTTP header guards against feeds whose in-feed dates are stale
-/// or bogus (e.g. a frozen `<lastBuildDate>` on a feed with no entries).
+/// Pick the freshest "last updated" signal: feed-level timestamp, newest entry
+/// date, or HTTP `Last-Modified` (which guards against frozen in-feed dates).
 fn effective_feed_updated_at(
     feed_timestamp: Option<chrono::DateTime<Utc>>,
     latest_entry_date: Option<chrono::DateTime<Utc>>,
@@ -45,9 +41,8 @@ pub async fn refresh_feed(
         .await?
         .ok_or(AppError::FeedNotFound)?;
 
-    // Re-checked on every refresh rather than only where the URL is stored: a
-    // row predating this guard, or one written by an OPML import, still reaches
-    // the network from here every sync cycle.
+    // Re-checked every refresh: older rows and OPML imports bypass the write-time
+    // guard.
     let parsed_url = Url::parse(&feed_data.url).map_err(|_e| AppError::InvalidUrl)?;
     if let Err(e) = fetcher.validate(&parsed_url) {
         let error_msg = e.to_string();
@@ -57,22 +52,18 @@ pub async fn refresh_feed(
         return Err(AppError::InvalidUrl);
     }
 
-    // Use per-feed custom user agent if set, otherwise use global default
     let effective_user_agent = feed_data
         .custom_user_agent
         .as_deref()
         .unwrap_or(default_user_agent);
 
-    // Per-feed opt-out of HTTP/2 needs the HTTP/1.1-only pooled client; all
-    // other feeds share the default pooled client. `http1_only()` is a
-    // client-level setting and cannot be applied per request, which is why this
-    // one knob still selects between two shared clients.
+    // `http1_only()` is client-level, so the per-feed HTTP/2 opt-out selects a
+    // separate shared client.
     let client = fetcher.client(feed_data.http2_disabled);
 
     let mut headers = HeaderMap::new();
 
-    // User-Agent (possibly a per-feed override) is sent per request now that the
-    // client is shared rather than rebuilt with `.user_agent(...)` each call.
+    // UA is per request since the client is shared.
     if let Ok(value) = HeaderValue::from_str(effective_user_agent) {
         headers.insert(USER_AGENT, value);
     }
@@ -173,8 +164,8 @@ pub async fn refresh_feed(
         }
     };
 
-    // Parse feed with custom timestamp parser for Chinese date support
-    // Note: Parser is not Send, so we must drop it before any .await
+    // Custom timestamp parser for Chinese dates. Parser is not Send; drop it
+    // before any .await.
     let parse_result = {
         let parser = feed_rs::parser::Builder::new()
             .timestamp_parser(parse_timestamp)
@@ -204,10 +195,9 @@ pub async fn refresh_feed(
     let icon_url = parsed_feed.icon.as_ref().map(|i| i.uri.clone());
     let logo_url = parsed_feed.logo.as_ref().map(|l| l.uri.clone());
 
-    // Check if icon refresh is needed
     let needs_icon_refresh = image::needs_refresh(&db, image::ENTITY_FEED, feed_id, 7).await?;
 
-    // Fetch icon if needed (every 7 days)
+    // Fetch icon if needed (every 7 days).
     if needs_icon_refresh {
         match icon_fetcher::fetch_feed_icon(
             icon_url.as_deref(),
@@ -255,21 +245,16 @@ pub async fn refresh_feed(
         }
     }
 
-    // Extract feed-level timestamp as fallback for entries without dates
     let feed_timestamp = parsed_feed
         .updated
         .or(parsed_feed.published)
         .map(|dt| dt.with_timezone(&Utc));
 
-    // Parse the HTTP Last-Modified header as an additional freshness signal.
-    // Some feeds report a stale/bogus in-feed date (e.g. a frozen <lastBuildDate>
-    // on a feed with no entries) while the server still serves a recent
-    // Last-Modified; without this the feed's "last updated" would be misjudged.
+    // HTTP Last-Modified catches feeds with stale in-feed dates.
     let http_last_modified = new_last_modified.as_deref().and_then(parse_timestamp);
 
-    // Wrap the whole feed's upserts plus the fetch-result update in one
-    // transaction: collapses N per-entry commits into a single commit and makes
-    // each sync atomic (the read side never observes a half-applied feed).
+    // One transaction per feed: a single commit, and readers never see a
+    // half-applied sync.
     let (new_entries, updated_entries, unchanged_entries, skipped_entries) = {
         let mut new_entries = 0i64;
         let mut updated_entries = 0i64;
@@ -295,15 +280,13 @@ pub async fn refresh_feed(
 
             let author = item.authors.first().map(|a| a.name.clone());
 
-            // Use published date, fall back to updated date, then feed timestamp
-            // If no date is available, use None so sorting falls back to created_at
+            // published, then updated, then feed timestamp; None falls back to created_at.
             let published_at = item
                 .published
                 .or(item.updated)
                 .map(|dt| dt.with_timezone(&Utc))
                 .or(feed_timestamp);
 
-            // Track the latest entry date for feed_updated_at
             if let Some(dt) = published_at {
                 latest_entry_date = Some(match latest_entry_date {
                     Some(current) if current > dt => current,
@@ -331,8 +314,6 @@ pub async fn refresh_feed(
             }
         }
 
-        // Use the most recent of feed-level timestamp, latest entry date, and
-        // the HTTP Last-Modified header.
         let effective_updated_at =
             effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
 
@@ -456,9 +437,7 @@ pub async fn refresh_bucket(
         }
     }
 
-    // A full bucket sync fetches and parses many feeds concurrently, leaving
-    // transient per-feed buffers behind. Reclaim them now so steady-state RSS
-    // does not creep up over long uptime.
+    // Reclaim transient per-feed buffers so RSS does not creep over long uptime.
     crate::reclaim_memory();
 
     results
@@ -475,9 +454,8 @@ mod tests {
     use crate::test_support::seed_user;
     use crate::utils::url_validation::FetchPolicy;
 
-    /// Every suite here drives a `wiremock` server, which binds loopback — what
-    /// the guard exists to refuse. Allowing that one address is the same opt-in
-    /// a deployment uses for a LAN feed, not a bypass of its own.
+    /// wiremock binds loopback, so allow it the same way a deployment opts in a
+    /// LAN feed.
     fn loopback_fetcher() -> Fetcher {
         Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
             .expect("the guarded client must build")
@@ -486,18 +464,12 @@ mod tests {
     use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    // ---------------------------------------------------------------------------
-    // Test infrastructure
-    // ---------------------------------------------------------------------------
-
-    /// Build an in-memory `Db` for a test. Each call is an isolated database, so
-    /// the `_name` (previously a shared-cache key) is no longer needed.
+    /// Isolated in-memory `Db`; `_name` is unused.
     async fn seeded_pool(_name: &str) -> Db {
         Db::connect_in_memory().await.unwrap()
     }
 
-    /// Seed one user → category → feed whose URL points at `url`.
-    /// Returns the feed id.
+    /// Seed user → category → feed pointing at `url`; returns the feed id.
     async fn seed_feed(pool: &Db, url: &str) -> i64 {
         let u = seed_user(pool, "syncuser", Role::User).await;
         let cat = category::create_category(pool, u.id, "Tech").await.unwrap();
@@ -515,7 +487,6 @@ mod tests {
         .id
     }
 
-    /// Like `seed_feed` but allows a custom user agent override.
     async fn seed_feed_with_ua(pool: &Db, url: &str, custom_user_agent: &str) -> i64 {
         let u = seed_user(pool, "uauser", Role::User).await;
         let cat = category::create_category(pool, u.id, "Tech").await.unwrap();
@@ -534,9 +505,7 @@ mod tests {
         .id
     }
 
-    /// Minimal two-item RSS fixture — no `<icon>` or `<logo>` elements so the
-    /// icon fetcher is never triggered. `site_url: None` on the feed achieves
-    /// the same for the favicon fallback.
+    /// Two-item RSS with no `<icon>`/`<logo>`, so the icon fetcher never runs.
     const RSS_TWO: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>F</title>
   <item><guid>g1</guid><title>One</title><link>https://e/1</link><description>c1</description>
         <pubDate>Tue, 10 Jun 2025 10:00:00 GMT</pubDate></item>
@@ -544,8 +513,7 @@ mod tests {
         <pubDate>Tue, 10 Jun 2025 11:00:00 GMT</pubDate></item>
 </channel></rss>"#;
 
-    /// Same guids as `RSS_TWO` but with changed descriptions, to drive the
-    /// "updated entries" path.
+    /// `RSS_TWO` guids with changed descriptions, for the update path.
     const RSS_TWO_UPDATED: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>F</title>
   <item><guid>g1</guid><title>One</title><link>https://e/1</link><description>c1-v2</description>
         <pubDate>Tue, 10 Jun 2025 10:00:00 GMT</pubDate></item>
@@ -553,9 +521,8 @@ mod tests {
         <pubDate>Tue, 10 Jun 2025 11:00:00 GMT</pubDate></item>
 </channel></rss>"#;
 
-    /// A stored URL is checked on every refresh, not only where it was written:
-    /// rows predating the guard, and rows an OPML import created, both arrive
-    /// here and would otherwise be fetched once a minute forever.
+    /// Stored URLs are checked every refresh, covering legacy and OPML-imported
+    /// rows.
     #[tokio::test]
     async fn refresh_feed_refuses_a_private_url_the_policy_does_not_allow() {
         let server = MockServer::start().await;
@@ -573,15 +540,13 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::InvalidUrl));
 
-        // The refusal is recorded like any other fetch failure, so the feed does
-        // not look silently healthy in the UI.
+        // Recorded as a fetch failure so the feed does not look healthy.
         let stored = feed::find_by_id(&pool, feed_id).await.unwrap().unwrap();
         assert!(stored.fetch_error.is_some());
     }
 
-    /// The URL on the feed row passes every check; only the `Location` it
-    /// answers with points inward. Nothing the sync worker can see before
-    /// connecting would catch this — the client has to.
+    /// The feed URL is fine; only the redirect points inward, so the client must
+    /// catch it.
     #[tokio::test]
     async fn refresh_feed_does_not_follow_a_redirect_into_a_blocked_range() {
         let server = MockServer::start().await;
@@ -601,8 +566,8 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::FetchError(_)), "got: {err:?}");
 
-        // Naming the redirect matters: without the guard this same fetch fails
-        // too, but only after connecting to the blocked address and timing out.
+        // Without the guard this still fails, but only after connecting and timing
+        // out.
         let stored = feed::find_by_id(&pool, feed_id).await.unwrap().unwrap();
         let recorded = stored.fetch_error.unwrap_or_default();
         assert!(recorded.contains("redirect"), "got: {recorded}");
@@ -616,10 +581,6 @@ mod tests {
         .unwrap();
         assert_eq!(imported, 0, "a refused fetch must not import anything");
     }
-
-    // ---------------------------------------------------------------------------
-    // Happy-path: new entries are inserted
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn refresh_feed_inserts_new_entries() {
@@ -643,10 +604,6 @@ mod tests {
         assert_eq!(result.updated_entries, 0);
     }
 
-    // ---------------------------------------------------------------------------
-    // Feed not found
-    // ---------------------------------------------------------------------------
-
     #[tokio::test]
     async fn feed_not_found() {
         let pool = seeded_pool("feed_sync_not_found").await;
@@ -658,10 +615,6 @@ mod tests {
             "expected FeedNotFound, got {err:?}"
         );
     }
-
-    // ---------------------------------------------------------------------------
-    // Existing entries are updated on second sync
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn updates_existing_entries() {
@@ -703,10 +656,8 @@ mod tests {
         assert_eq!(second.updated_entries, 2);
     }
 
-    /// A feed that re-serves byte-identical content (no etag / last-modified,
-    /// so the 304 shortcut never fires) must report zero updates: the upsert's
-    /// guarded UPDATE writes nothing when every column already matches. This is
-    /// the dominant real-world case — feeds resend their whole window each poll.
+    /// Byte-identical re-served content (no 304 shortcut) must report zero
+    /// updates: the guarded UPDATE writes nothing.
     #[tokio::test]
     async fn resync_of_identical_content_updates_nothing() {
         let server = MockServer::start().await;
@@ -737,10 +688,6 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------------------
-    // Tombstoned guids are skipped
-    // ---------------------------------------------------------------------------
-
     #[tokio::test]
     async fn skips_tombstoned_guid() {
         let server = MockServer::start().await;
@@ -770,10 +717,6 @@ mod tests {
         assert!(found.is_none(), "g1 must not exist (tombstoned)");
     }
 
-    // ---------------------------------------------------------------------------
-    // 304 Not Modified returns zero counts
-    // ---------------------------------------------------------------------------
-
     #[tokio::test]
     async fn not_modified_304() {
         let server = MockServer::start().await;
@@ -791,10 +734,6 @@ mod tests {
         assert_eq!(result.new_entries, 0);
         assert_eq!(result.updated_entries, 0);
     }
-
-    // ---------------------------------------------------------------------------
-    // HTTP 4xx/5xx persists a fetch error on the feed row
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn http_error_persists_fetch_error() {
@@ -827,10 +766,6 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------------------
-    // Malformed XML returns a parse error
-    // ---------------------------------------------------------------------------
-
     #[tokio::test]
     async fn malformed_xml_errors() {
         let server = MockServer::start().await;
@@ -855,16 +790,11 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------------------
-    // Conditional-GET headers are sent when etag/last_modified are set
-    // ---------------------------------------------------------------------------
-
     #[tokio::test]
     async fn sends_conditional_get_headers() {
         let server = MockServer::start().await;
 
-        // The mock verifies that If-None-Match is included; `.expect(1)` makes
-        // wiremock fail the test if the header is never seen.
+        // `.expect(1)` fails the test if If-None-Match is never seen.
         Mock::given(method("GET"))
             .and(header("if-none-match", "\"abc123\""))
             .respond_with(ResponseTemplate::new(304))
@@ -875,7 +805,6 @@ mod tests {
         let pool = seeded_pool("feed_sync_cond_get").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        // Write etag + last_modified directly onto the feed row
         feed::update_fetch_result(
             &pool,
             feed_id,
@@ -892,12 +821,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.new_entries, 0);
-        // wiremock verifies the expectation on server drop
     }
-
-    // ---------------------------------------------------------------------------
-    // Per-feed custom User-Agent is sent
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn uses_custom_user_agent() {
@@ -925,24 +849,15 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.new_entries, 2);
-        // wiremock verifies the User-Agent expectation on server drop
     }
-
-    // ---------------------------------------------------------------------------
-    // refresh_bucket: empty bucket returns empty vec
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn refresh_bucket_empty() {
         let pool = seeded_pool("feed_sync_bucket_empty").await;
-        // Use bucket 255 — no feeds hashed there in our empty DB
+        // Bucket 255 is empty in a fresh DB.
         let results = refresh_bucket(pool, 255, "RDRS-Test/1.0", &loopback_fetcher()).await;
         assert!(results.is_empty());
     }
-
-    // ---------------------------------------------------------------------------
-    // refresh_bucket: feeds in the bucket are synced
-    // ---------------------------------------------------------------------------
 
     #[tokio::test]
     async fn refresh_bucket_runs_feeds() {
@@ -959,7 +874,6 @@ mod tests {
         let pool = seeded_pool("feed_sync_bucket_feeds").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        // Discover which bucket the seeded feed was assigned
         #[allow(
             clippy::cast_sign_loss,
             reason = "`bucket` is stored as a URL-hash modulo 60, always in 0..=59"
@@ -1006,8 +920,7 @@ mod tests {
 
     #[test]
     fn test_effective_feed_updated_at_uses_http_last_modified_when_feed_date_is_stale() {
-        // Regression: blocktempo serves lastBuildDate=2019 with no entries, but the
-        // HTTP Last-Modified header is recent. The freshest signal must win.
+        // Regression: stale lastBuildDate, recent Last-Modified; freshest must win.
         let feed_ts = Some(dt(2019, 1, 22));
         let latest_entry = None;
         let http_lm = Some(dt(2026, 6, 1));

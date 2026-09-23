@@ -1,5 +1,4 @@
-//! Viewports, the mobile drawer, the statistics chart and the flash banner —
-//! a port of `responsive.steps.js`.
+//! Viewports, the mobile drawer, the statistics chart and the flash banner.
 
 use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
@@ -31,16 +30,14 @@ async fn feed_with_entries(world: &mut RdrsWorld, count: u32) -> Result<()> {
     seed_feed(world, "Mobile Feed", count).await.map(|_| ())
 }
 
-/// One read entry per day across the default 7-day window, so the chart renders
-/// a full row of bars — including the rightmost, whose tooltip is what used to
-/// overflow the viewport.
+/// One read per day for 7 days, so the rightmost bar's tooltip (which used to
+/// overflow) renders.
 #[given("I have read entries across several days")]
 async fn read_entries_across_days(world: &mut RdrsWorld) -> Result<()> {
     seed_read_history(world, 8).await
 }
 
-/// One read entry per day across ~30 days, so a 90-day range has plenty of
-/// activity to bucket into bars.
+/// One read per day for ~30 days, for a 90-day range.
 #[given("I have read entries spanning several weeks")]
 async fn read_entries_across_weeks(world: &mut RdrsWorld) -> Result<()> {
     seed_read_history(world, 30).await
@@ -159,8 +156,7 @@ async fn tap_sidebar_close(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.click_css(".sidebar-close").await
 }
 
-/// Clicks the dimmed area on the right half of the viewport, well clear of the
-/// left-anchored drawer — exercising the document-level tap-outside close.
+/// Clicks the right half, clear of the drawer, to hit the tap-outside close.
 #[when("I tap outside the sidebar")]
 async fn tap_outside_sidebar(world: &mut RdrsWorld) -> Result<()> {
     let viewport = world.browser()?.viewport();
@@ -284,11 +280,8 @@ async fn no_horizontal_scroll(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// The star and open-original cluster (`.rail-actions`) and the feed meta line
-/// (`.entry-item-meta`) share grid row 2; their vertical centres must coincide.
-/// The old absolute-overlay positioning used a hand-tuned `bottom` offset that
-/// drifted on mobile (the meta grew via the feed-link tap padding), leaving the
-/// actions several px low.
+/// `.rail-actions` and `.entry-item-meta` share grid row 2 and must share a
+/// vertical centre (an old hand-tuned offset drifted on mobile).
 #[then("the entry-row actions are vertically centered on the meta line")]
 async fn row_actions_centered(world: &mut RdrsWorld) -> Result<()> {
     let row = world.driver()?.test_id("entry-item").await?;
@@ -311,10 +304,7 @@ async fn row_actions_centered(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// The filter bar holds the status filter, the mark-as-read select and the
-/// search box, and uses `flex-wrap`, so inside the fixed-width list pane it may
-/// legitimately wrap onto a second row — that is by design and not what this
-/// guards. The real invariant is that nothing overflows the pane horizontally.
+/// Wrapping is by design; the invariant is no horizontal overflow.
 #[then("the entry-list filter bar does not overflow the list pane")]
 async fn filter_bar_fits(world: &mut RdrsWorld) -> Result<()> {
     let pane = world.driver()?.css(".list-pane").await?;
@@ -353,13 +343,8 @@ async fn filter_bar_fits(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Sub-pixel slack for the size assertions.
-///
-/// `getBoundingClientRect` reports fractional layout, so a control laid out to
-/// exactly 44px can measure 43.99999237 — Playwright's `boundingBox()` never
-/// showed this because it reads the CDP box model, whose quads are already
-/// quantised. A tap target off by a ten-thousandth of a pixel is the same tap
-/// target; anything that actually regresses is out by whole pixels.
+/// `getBoundingClientRect` is fractional (44px can read 43.99999); real
+/// regressions are whole pixels.
 const SUBPIXEL: f64 = 0.5;
 
 #[then(expr = "the {string} control is at least {int}px tall")]
@@ -382,11 +367,7 @@ async fn control_at_least_wide(world: &mut RdrsWorld, selector: String, min: f64
     Ok(())
 }
 
-/// Every control in the reading pane's action bar, as `(label, x, width)`.
-///
-/// On mobile the bar is a fixed strip whose buttons are laid out by flex, so a
-/// label that changes width — "Summarize" → "Summarizing…" → "Dismiss", "Star"
-/// → "Starred" — is exactly the input that must *not* move anything.
+/// Action-bar controls as `(label, x, width)`; label changes must not move them.
 async fn action_bar_boxes(world: &RdrsWorld) -> Result<Vec<(String, f64, f64)>> {
     let boxes = world
         .driver()?
@@ -429,9 +410,7 @@ async fn record_action_bar(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// The bar's slots must stay the same size in the same places whatever the
-/// labels now read — otherwise every button slides sideways under the thumb
-/// that just tapped one.
+/// Slots must not shift as labels change, or buttons slide under the thumb.
 #[then("the reading-pane action bar layout is unchanged")]
 async fn action_bar_unchanged(world: &mut RdrsWorld) -> Result<()> {
     let before = world
@@ -470,9 +449,8 @@ async fn element_visible(world: &mut RdrsWorld, selector: String) -> Result<()> 
 
 // ── The reading pane overlay ─────────────────────────────────────────────────
 
-/// At ≤1024px the reading pane is `display: none` by default and only surfaces
-/// when `.reading-pane-active` is present. Both are asserted: the class alone
-/// would pass even if a future CSS regression unset `display: block`.
+/// At ≤1024px the pane is hidden unless `.reading-pane-active`; both class and
+/// visibility are asserted.
 #[then("the reading pane is visible on mobile")]
 async fn pane_visible_on_mobile(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -496,9 +474,7 @@ async fn tap_pane_back(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.click("reading-pane-back").await
 }
 
-/// `closeReadingPane()` strips `.reading-pane-active` and restores the empty
-/// placeholder; at ≤1024px the pane without the active class is
-/// `display: none`, so it must be both class-free and actually hidden.
+/// `closeReadingPane()` removes the class; the pane must also be hidden.
 #[then("the reading pane overlay is dismissed")]
 async fn pane_overlay_dismissed(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -597,9 +573,7 @@ async fn chart_at_most_bars(world: &mut RdrsWorld, max: usize) -> Result<()> {
 async fn some_labels_hidden(world: &mut RdrsWorld) -> Result<()> {
     let labels = world.driver()?.css_all(".stats-bar-label").await?;
     ensure!(!labels.is_empty(), "the chart renders no axis labels");
-    // `:visible` has no WebDriver equivalent, so each label is asked directly —
-    // a driver-side computation, which is also why it survives scripting being
-    // switched off.
+    // No WebDriver `:visible`, so ask each label; works with scripting off.
     let mut visible = 0;
     for label in &labels {
         if label.is_displayed().await? {
@@ -627,8 +601,7 @@ async fn bars_at_least_wide(world: &mut RdrsWorld, min: f64) -> Result<()> {
 
 // ── The flash banner ─────────────────────────────────────────────────────────
 
-/// Drives the page-level `<rdrs-flash>` API directly — the same entry point the
-/// app's own JS uses.
+/// Calls `<rdrs-flash>` directly, as the app's JS does.
 #[when("a flash banner is shown")]
 async fn flash_shown(world: &mut RdrsWorld) -> Result<()> {
     world
@@ -641,11 +614,8 @@ async fn flash_shown(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.css(".banner").await.map(|_| ())
 }
 
-/// The dot and the dismiss button are grid items in an `align-items: start`
-/// row, so each carries its own offset to the message beside it. Both are
-/// centred on the first line box, which is what a single-line banner reads as
-/// level; the pair used hand-tuned constants (`0.45em`, `1px`) that put the
-/// dismiss glyph a pixel below the dot.
+/// Dot and dismiss are grid items in an `align-items: start` row; both must
+/// centre on the first line box (old constants put dismiss 1px low).
 #[then("the flash banner's dot and dismiss are centred on its first line")]
 async fn banner_dot_and_dismiss_centred(world: &mut RdrsWorld) -> Result<()> {
     let measured = world
@@ -675,8 +645,7 @@ async fn banner_dot_and_dismiss_centred(world: &mut RdrsWorld) -> Result<()> {
         let at = measured[part]
             .as_f64()
             .ok_or_else(|| anyhow::anyhow!("the banner has no {part}"))?;
-        // Half a pixel: the offsets are exact arithmetic on the line height, so
-        // only subpixel rounding is left. The bug this catches is a whole one.
+        // Half a pixel for rounding; the bug is a whole pixel.
         ensure!(
             (at - centre).abs() <= 0.5,
             "the banner's {part} sits at {at}, {:+.2}px off the first line's centre at {centre}",
@@ -696,8 +665,7 @@ async fn banner_below_hamburger(world: &mut RdrsWorld) -> Result<()> {
         "the banner overlaps the hamburger ({banner_y} vs {})",
         toggle_y + toggle_height
     );
-    // …and full-width: the banner's left edge reaches past the floating
-    // button's left edge instead of being indented to clear it.
+    // …and full-width, not indented to clear the floating button.
     ensure!(
         banner_x < toggle_x,
         "the banner is indented to {banner_x}, clear of the button at {toggle_x}"
@@ -705,15 +673,9 @@ async fn banner_below_hamburger(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Reproduces iPad-landscape: a **wide** (>1024px, so the persistent split
-/// layout rather than the mobile drawer) **touch** viewport. Touch triggers
-/// `@media (hover: none)`, which bumps `.banner-dismiss` to 44px tall; the base
-/// `.banner { align-items: start }` then pinned the message to the top of the
-/// inflated grid row while the `align-self: center` timestamp sat lower.
-///
-/// Playwright could not change `hasTouch` on a live context and had to spin a
-/// second one with the session's cookies copied across. CDP emulates it on the
-/// session in place, so this stays in the same browser and the same sign-in.
+/// iPad landscape: a wide (>1024px) touch viewport. `(hover: none)` makes
+/// `.banner-dismiss` 44px, and `align-items: start` pinned the message above
+/// the centred timestamp. CDP emulates touch in place, keeping the session.
 #[then("the flash banner is vertically centered on a wide touch tablet")]
 async fn banner_centered_on_touch_tablet(world: &mut RdrsWorld) -> Result<()> {
     world.resize(Viewport::new(1180, 820)).await?;
@@ -763,13 +725,8 @@ async fn banner_centered_on_touch_tablet(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-/// Every checkbox row in a form: the label's box against the box of whatever
-/// follows it.
-///
-/// Checked over all of them rather than by test id, so a checkbox added later
-/// is covered without anyone remembering to extend this. The 44px tap rule
-/// makes these labels `inline-flex`, and an inline label lets the hint after it
-/// continue along the label's own last line — which is the layout this catches.
+/// Every checkbox label against what follows it, so new checkboxes are covered.
+/// The 44px rule makes labels `inline-flex`, letting a hint flow inline.
 #[then("every checkbox hint starts on its own line")]
 async fn checkbox_hints_start_on_their_own_line(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
@@ -802,15 +759,12 @@ async fn checkbox_hints_start_on_their_own_line(world: &mut RdrsWorld) -> Result
         let id = row["id"].as_str().unwrap_or("(unnamed)").to_owned();
         let label_bottom = row["labelBottom"].as_f64().unwrap_or_default();
         let hint_top = row["hintTop"].as_f64().unwrap_or_default();
-        // Half a pixel of slack for subpixel rounding. A hint sharing the
-        // label's line sits a whole line-height above its bottom edge, not a
-        // fraction of a pixel.
+        // Half a pixel for rounding; an inline hint is a whole line off.
         ensure!(
             hint_top >= label_bottom - 0.5,
             "`{id}`'s hint starts at {hint_top}, above the label's bottom edge at {label_bottom} — it is running alongside the label instead of under it"
         );
-        // The other half of the trade-off: the reason those labels are flex at
-        // all is the 44px tap row, so pushing the hint down must not cost it.
+        // The 44px tap row must survive.
         let label_height = row["labelHeight"].as_f64().unwrap_or_default();
         ensure!(
             label_height >= 44.0,

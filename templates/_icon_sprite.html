@@ -1,26 +1,9 @@
-{# Icon sprite, emitted once per document by base.html. The macros in
-   _icons.html reference these symbols with <use>, so an icon costs ~40 bytes at
-   each call site instead of repeating its path data — which matters most in the
-   swap fragments, where the same handful of icons was re-sent on every entry
-   open, and in list pages that render two icons per row.
+{# Icon sprite, referenced via <use> from _icons.html. No presentation
+   attributes: `.ico` in app.css sets them and they inherit into <use>.
 
-   Presentation attributes are deliberately absent here: `.ico` in app.css sets
-   fill/stroke/stroke-width/stroke-linecap/stroke-linejoin on the referencing
-   <svg>, and those are inherited SVG properties, so they cross into the <use>
-   shadow tree. Styling therefore stays exactly where it was.
-
-   Collapsing the sprite is load-bearing and deliberately split in two. The
-   `hidden` attribute does NOT work here: the HTML UA stylesheet declares
-   `@namespace` for XHTML, so its `[hidden] { display: none }` rule never
-   matches an element in the SVG namespace. Left unconstrained the sprite
-   renders as an empty replaced element at the default 300x150 and pushes the
-   whole page down.
-
-   `width`/`height`/`overflow` are SVG *presentation attributes*, not an inline
-   `style` — `style-src 'self'` forbids the latter, and these survive even if
-   app.css is slow or fails to load, so the worst case is a zero-sized inline
-   box rather than a 300x150 hole. `.icon-sprite` in app.css then takes it out
-   of flow entirely. #}
+   `hidden` does not work on SVG-namespace elements, and an unsized sprite
+   renders at 300x150. Size it with presentation attributes, not inline
+   `style` (forbidden by CSP), so it collapses even without app.css. #}
 <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" data-icon-sprite
      class="icon-sprite" width="0" height="0" overflow="hidden">
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>

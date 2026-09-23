@@ -1,7 +1,5 @@
-// static/js/login.js — the /login form and the passkey sign-in button, extracted
-// from an inline <script> to survive `script-src 'self'`. The base64url helpers
-// are duplicated in passkey.js, which drives *enrolment* on /user-settings; the
-// two pages never load each other's module.
+// /login form and passkey sign-in (external module for `script-src 'self'`).
+// base64url helpers are duplicated in passkey.js; the pages never share modules.
 
 const isWebAuthnSupported = window.PublicKeyCredential !== undefined;
 

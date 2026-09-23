@@ -79,8 +79,7 @@ pub async fn list_by_user(db: &Db, user_id: i64) -> AppResult<Vec<Category>> {
 }
 
 pub async fn update_name(db: &Db, id: i64, user_id: i64, new_name: &str) -> AppResult<Category> {
-    // `RETURNING` with `fetch_optional` folds the "0 rows matched" case into a
-    // `None`, so no separate re-select is needed.
+    // `None` means no row matched.
     match query_opt!(
         db,
         Category,

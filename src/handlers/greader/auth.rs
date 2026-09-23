@@ -22,29 +22,20 @@ use crate::utils::http::request_user_agent;
 /// POST token validity duration in seconds (30 minutes).
 const POST_TOKEN_VALIDITY_SECS: i64 = 30 * 60;
 
-// --- GReaderUser extractor ---
-
-/// Where a `GReader` request's authority comes from. The two are not
-/// interchangeable: a `Cookie` credential is a full web session (whatever it
-/// is authorized to do, so is this request), while an `ApiToken` credential is
-/// a narrower, independently-revocable GReader-only grant. Neither can forge
-/// the other — see `handlers/greader/auth.rs`'s `FromRequestParts` for how
-/// each is verified before this enum is ever constructed.
+/// Where a `GReader` request's authority comes from: `Cookie` is a full web
+/// session; `ApiToken` is a narrower, independently revocable grant.
 #[derive(Debug, Clone)]
 pub enum GReaderCredential {
-    /// Web UI cookie path — the signature was already verified by
-    /// `session_token_from_jar`. This is the *only* way a `GReader` request
-    /// can carry a full web session: an `Authorization` header token is never
-    /// matched against `session`.
+    /// Web UI cookie path (signature verified by `session_token_from_jar`); the
+    /// only way to carry a full web session.
     Cookie(Session),
     /// Native client `ClientLogin` path — an independent `api_token` row.
     ApiToken(ApiToken),
 }
 
 impl GReaderCredential {
-    /// The MAC subject for a post token. Both kinds share `DOMAIN_GREADER_TOKEN`,
-    /// but `api_tokens` carry the `rdrs_gr_` prefix so the two subject spaces
-    /// cannot overlap.
+    /// The MAC subject for a post token; the `rdrs_gr_` prefix keeps
+    /// `api_tokens` from overlapping session tokens.
     pub fn post_token_subject(&self) -> &str {
         match self {
             GReaderCredential::Cookie(s) => &s.session_token,
@@ -53,11 +44,8 @@ impl GReaderCredential {
     }
 }
 
-/// Authentication extractor for Google Reader API endpoints.
-/// Supports dual auth:
-///   1. `Authorization: GoogleLogin auth=<token>` header (external clients) —
-///      validated as an `api_token` row (`GReaderCredential::ApiToken`).
-///   2. Session cookie fallback (Web UI) — `GReaderCredential::Cookie`.
+/// Auth extractor: `Authorization: GoogleLogin auth=<token>` (an `api_token`
+/// row), falling back to the session cookie.
 #[derive(Debug, Clone)]
 pub struct GReaderUser {
     pub user: User,
@@ -73,7 +61,6 @@ impl FromRequestParts<AppState> for GReaderUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // 1. Try Authorization header: "GoogleLogin auth=<token>"
         if let Some(auth_header) = parts.headers.get("authorization")
             && let Ok(auth_str) = auth_header.to_str()
             && let Some(token) = auth_str
@@ -89,16 +76,11 @@ impl FromRequestParts<AppState> for GReaderUser {
                         via_cookie: false,
                     });
                 }
-                // A header token that is not an `api_token` row is simply
-                // rejected. It is deliberately *not* retried against
-                // `session`: that coupling is what this table exists to
-                // remove, and a migration window for it would in practice
-                // just be left switched on forever.
+                // Deliberately not retried against `session`.
                 Err(e) => return Err(e),
             }
         }
 
-        // 2. Fallback: session cookie
         let jar = CookieJar::from_request_parts(parts, state)
             .await
             .map_err(|_e| AppError::Unauthorized)?;
@@ -137,11 +119,8 @@ async fn validate_token(state: &AppState, token: &str) -> AppResult<(Session, Us
     Ok((session, user))
 }
 
-/// Validate an `Authorization: GoogleLogin auth=<token>` value as an
-/// independent `api_token` row (not the raw `session.session_token` — that
-/// coupling is exactly what this table exists to remove). Returns
-/// `AppError::Unauthorized` when no row matches; there is no fallback to
-/// `session`, so a pre-cutover client must re-run `ClientLogin`.
+/// Validate a `GoogleLogin auth=<token>` value as an `api_token` row, with
+/// no fallback to `session`.
 async fn validate_api_token(state: &AppState, token: &str) -> AppResult<(ApiToken, User)> {
     let api_token = api_token::find_by_token(&state.db, token)
         .await?
@@ -161,14 +140,11 @@ async fn validate_api_token(state: &AppState, token: &str) -> AppResult<(ApiToke
         return Err(AppError::UserDisabled);
     }
 
-    // Best-effort: a failure here must not fail the request the token is
-    // authenticating.
+    // Best-effort: must not fail the request being authenticated.
     let _ = api_token::touch_and_refresh(&state.db, &api_token).await;
 
     Ok((api_token, user))
 }
-
-// --- ClientLogin endpoint ---
 
 #[derive(Debug, serde::Deserialize)]
 pub struct ClientLoginForm {
@@ -180,12 +156,8 @@ pub struct ClientLoginForm {
 
 /// `POST /accounts/ClientLogin`
 ///
-/// Google Reader `ClientLogin`: accepts form-encoded Email + Passwd,
-/// returns `SID`, `LSID`, `Auth` in text/plain.
-///
-/// `Auth` is an `api_token` row, not the caller's web session: a token leaked
-/// from an RSS reader app must not be equivalent to a full session takeover
-/// (see `models::api_token` and the module doc on `secret.rs`).
+/// Returns `SID`, `LSID`, `Auth` as text/plain. `Auth` is an `api_token`, so a
+/// leaked client token is not a full session takeover.
 pub async fn client_login(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -195,9 +167,7 @@ pub async fn client_login(
     let username = form.email.clone();
     let password = form.passwd.clone();
 
-    // Reserve an attempt before the username lookup or password
-    // verification, mirroring the web login endpoint — this is the same
-    // credential check, just fronting a different client protocol.
+    // Reserve an attempt before any lookup or verification, as web login does.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     let user_agent = request_user_agent(&headers);
@@ -211,9 +181,7 @@ pub async fn client_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    // Per-account budget as well, mirroring the web login endpoint — a
-    // distributed spray would otherwise simply pick whichever of the two
-    // login protocols was not watching the account.
+    // Per-account budget too, so a spray can't pick the unwatched protocol.
     if let Some(retry_after_secs) = state
         .login_rate_limiter
         .try_acquire_account(Bucket::Login, &username)
@@ -229,9 +197,7 @@ pub async fn client_login(
     }
 
     let Some(user) = user::find_by_username(&state.db, &username).await? else {
-        // Equalise the "no such account" path with the "wrong password" one;
-        // see the web login handler for why the clock, not the message, is
-        // what leaks here.
+        // Equalise timing with the wrong-password path.
         verify_dummy_password(&password);
         audit::login_failed(username.len(), "unknown_user", &ip.to_string(), &user_agent);
         return Err(AppError::InvalidCredentials);
@@ -242,8 +208,7 @@ pub async fn client_login(
         return Err(AppError::InvalidCredentials);
     }
 
-    // Correct password: hand both reservations back before the
-    // disabled-account check, same as the web login endpoint.
+    // Correct password: release reservations before the disabled check.
     state.login_rate_limiter.release(Bucket::Login, ip);
     state
         .login_rate_limiter
@@ -255,9 +220,7 @@ pub async fn client_login(
     }
 
     let ip = ip.to_string();
-    // The client's own reported User-Agent doubles as the label shown on the
-    // /user-settings revocation list — GReader clients don't send anything
-    // more identifying than that.
+    // The client's User-Agent labels the token on /user-settings.
     let label = user_agent.clone();
     let t = api_token::create_api_token(&state.db, user.id, "greader", &label, &user_agent, &ip)
         .await?;
@@ -275,22 +238,16 @@ pub async fn client_login(
     Ok(format!("SID=unused\nLSID=unused\nAuth={}", t.token))
 }
 
-// --- POST Token endpoint ---
-
 /// `GET /reader/api/0/token`
 ///
-/// Returns a short-lived POST token for CSRF protection.
-/// The token is `<timestamp>/<hmac_hex>`, keyed off the shared root secret.
+/// Short-lived CSRF token `<timestamp>/<hmac_hex>`, keyed off the root secret.
 pub async fn get_post_token(auth: GReaderUser, State(state): State<AppState>) -> AppResult<String> {
     let token = generate_post_token(&state.config.secret, auth.credential.post_token_subject());
     Ok(token)
 }
 
-/// The MAC input for a post token: the credential subject, a separator, and
-/// the timestamp. Session tokens and `api_tokens` both use the `A-Za-z0-9-_`
-/// alphabet and so never contain `/`, which makes the concatenation
-/// unambiguous — without the separator `("a", 12)` and `("a1", 2)` would sign
-/// the same bytes.
+/// The MAC input `<subject>/<timestamp>`; subjects never contain `/`, so the
+/// concatenation is unambiguous.
 fn post_token_parts<'a>(subject: &'a str, timestamp: &'a str) -> [&'a [u8]; 3] {
     [subject.as_bytes(), b"/", timestamp.as_bytes()]
 }

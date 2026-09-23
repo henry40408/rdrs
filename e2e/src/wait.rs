@@ -1,15 +1,6 @@
-//! Retrying assertions.
-//!
-//! Playwright's `expect(...)` polls until the assertion holds or a timeout
-//! expires, which is what let the old steps write
-//! `await expect(page).toHaveURL('/')` straight after a click. `WebDriver` has
-//! no such layer: a `find` that runs before `app.js` has finished swapping a
-//! class simply reports the old state.
-//!
-//! thirtyfour's `ElementQuery` filters cover the cases that are really "wait
-//! for an element matching X", and the page objects use them. These helpers
-//! cover the rest — a computed value that has to settle, like an unread count
-//! or the URL after a form post.
+//! Retrying assertions. `WebDriver` has no auto-waiting layer, so a read that
+//! runs before `app.js` finishes a swap reports the old state. `ElementQuery`
+//! covers "wait for an element"; these cover computed values that must settle.
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -20,16 +11,8 @@ use thirtyfour::error::{WebDriverError, WebDriverErrorInner};
 
 use crate::browser::{WAIT_INTERVAL, WAIT_TIMEOUT};
 
-/// Is this the DOM having moved under the probe, rather than a real fault?
-///
-/// The app swaps regions of the page in place, so an element found on one poll
-/// can be detached before the next line reads it. To a poll that is "not yet" —
-/// the answer it is there to wait for — and treating it as an error turns every
-/// assertion that spans a swap into a flake.
-///
-/// Only the stale-reference error is forgiven. A missing element, a bad
-/// selector or a dead session still fail immediately, which is what keeps a
-/// genuinely broken page from being waited on for the full timeout.
+/// A stale reference means the app swapped the region mid-poll: "not yet", not
+/// a fault. Every other error still fails immediately.
 fn is_stale(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause.downcast_ref::<WebDriverError>().is_some_and(|error| {
@@ -41,11 +24,8 @@ fn is_stale(error: &anyhow::Error) -> bool {
     })
 }
 
-/// Polls `probe` until it reports the expected value.
-///
-/// On timeout the failure names the last value seen, not merely that a wait
-/// expired — that is the difference between "the counter never reached 2" and a
-/// message you have to reproduce by hand to understand.
+/// Polls `probe` until it reports the expected value; a timeout names the last
+/// value seen.
 ///
 /// # Errors
 ///
@@ -92,12 +72,8 @@ where
     eventually_within(WAIT_TIMEOUT, what, probe).await
 }
 
-/// [`eventually`] with a deadline of its own.
-///
-/// For the handful of waits that are not "the page is catching up" but "a
-/// background worker is getting to it" — chiefly summarization, which drains
-/// one job at a time and yields its database work to interactive requests, so
-/// on a slow machine it legitimately outlasts the interaction timeout.
+/// [`eventually`] with its own deadline, for background work (e.g.
+/// summarization) that can legitimately outlast [`WAIT_TIMEOUT`].
 ///
 /// # Errors
 ///
@@ -126,13 +102,9 @@ where
     }
 }
 
-/// Polls `probe` until it reports the same value `samples` times running.
-///
-/// For state that is *settling* rather than heading for a known value — where
-/// the test cannot say which answer is correct, only that the page has stopped
-/// changing its mind. The reading pane is the case in point: its actions are
-/// wired up asynchronously, so "disabled" means "not ready yet" on one entry
-/// and "deliberately inert" on another, and only one of those ever changes.
+/// Polls `probe` until it reports the same value `samples` times running, for
+/// state with no known target (e.g. pane actions that may be "not ready" or
+/// "deliberately inert").
 ///
 /// # Errors
 ///
@@ -172,9 +144,6 @@ where
 
 /// Polls `probe` until it reports a value, handing it back.
 ///
-/// The shape for "read something once it exists" — Playwright's
-/// `expect(locator).toBeVisible()` followed by a read, in one step.
-///
 /// # Errors
 ///
 /// Fails when `probe` errors, or when it has still reported `None` by
@@ -199,26 +168,15 @@ where
     }
 }
 
-/// Runs `action` again while the page keeps moving out from under it.
+/// Retries `action` on stale references: sidebar refetches (swap-complete, SSE)
+/// can detach a handle between find and click.
 ///
-/// The acting counterpart to the polls above. They forgive a stale reference
-/// while waiting for the page to *report* something; this forgives one in a
-/// step that is trying to *do* something. Finding an element and clicking it
-/// are two round trips, and the app swaps whole regions in between — every
-/// `rdrs:swap-complete` refetches the sidebar, and an SSE `sidebar` event does
-/// it again unprompted — so a handle can be detached before the click reaches
-/// it. That is the page being busy, exactly as it is for a read, and it is the
-/// one error worth another attempt.
-///
-/// `action` has to find what it acts on *inside* the closure. Given a handle
-/// captured beforehand it just replays the same dead reference until the
-/// deadline.
+/// `action` must find its element *inside* the closure, or it replays the same
+/// dead reference.
 ///
 /// # Errors
 ///
-/// Fails with whatever `action` failed with: immediately when that is anything
-/// but a stale reference, and once the page has refused to hold still for
-/// [`WAIT_TIMEOUT`] when it is.
+/// Fails at once on any non-stale error, or after [`WAIT_TIMEOUT`] of staleness.
 pub async fn despite_swaps<T, F, Fut>(what: &str, mut action: F) -> Result<T>
 where
     F: FnMut() -> Fut,
@@ -279,9 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn despite_swaps_reports_anything_else_at_once() {
-        // The counterpart the retry must not swallow: waiting out the full
-        // timeout on a button that is simply absent would trade a clear failure
-        // for a slow, unexplained one.
+        // A missing element must fail fast, not wait out the timeout.
         let attempts = Cell::new(0);
 
         let error = despite_swaps("clicking a button that is not there", || async {

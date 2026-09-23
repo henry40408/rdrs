@@ -1,13 +1,9 @@
 //! The open-tracking pixel: a 1x1 image appended to rendered entry content so
-//! the server learns which entries a client actually rendered.
+//! the server learns which entries a client rendered.
 //!
-//! **Injection must run on the output of [`sanitize_html`], never on its
-//! input.** The sanitiser removes 1x1 images outright (`is_tracking_pixel`) and
-//! rewrites every surviving `<img src>` through the signed image proxy. Our
-//! pixel is exactly a 1x1 image and must stay same-origin, so both of those
-//! would destroy it. The ordering is not a nicety — it is the only thing that
-//! makes the feature work, and it is pinned by a test in each call site's file
-//! as well as by `injected_pixel_survives_the_sanitiser` below.
+//! **Inject on the output of [`sanitize_html`], never its input**: the
+//! sanitiser strips 1x1 images and proxies every `<img>`, which would destroy
+//! a same-origin pixel. Pinned by `injected_pixel_survives_the_sanitiser`.
 //!
 //! [`sanitize_html`]: crate::services::sanitize_html
 
@@ -15,9 +11,8 @@ use chrono::{DateTime, Utc};
 
 use crate::secret;
 
-/// The 43-byte transparent GIF every pixel request is answered with, valid or
-/// not. Inlined rather than fetched from `static/` because the response must
-/// not depend on anything the request can influence.
+/// The transparent GIF served for every pixel request, valid or not; inlined so
+/// the response depends on nothing the request controls.
 pub const TRANSPARENT_GIF: &[u8] = &[
     0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // "GIF89a"
     0x01, 0x00, 0x01, 0x00, // 1x1
@@ -30,38 +25,27 @@ pub const TRANSPARENT_GIF: &[u8] = &[
     0x3B, // trailer
 ];
 
-/// Path prefix the pixel endpoint is mounted under.
-///
-/// Deliberately short and outside `/api`: the URL is embedded in entry HTML that
-/// external readers cache, and the `.gif` suffix is what lets a client treat the
-/// response as an ordinary image. The middleware skip lists in
-/// `middleware::forward_auth` and `middleware::csrf` name this prefix for the
-/// same reason `/api` appears in them — the request carries no session and must
-/// not be given one.
+/// Pixel endpoint prefix: short, outside `/api`, `.gif` so clients treat it as
+/// an image. Skipped by `middleware::forward_auth` and `middleware::csrf`: the
+/// request carries no session and must not be given one.
 pub const PIXEL_PATH_PREFIX: &str = "/p/";
 
-/// Everything the render paths need to decide on, address and sign a pixel.
-///
-/// Built once per request rather than per entry: a `GReader` page serialises up
-/// to a thousand items, and reading `pixel_tracking_enabled_at` for each would
-/// turn one settings lookup into a thousand.
+/// Everything needed to decide on, address and sign a pixel. Built once per
+/// request, not per entry (a `GReader` page can hold a thousand items).
 #[derive(Debug, Clone, Copy)]
 pub struct PixelContext<'a> {
     pub user_id: i64,
     /// When this reader opted in, or `None` for opted out.
     pub enabled_at: Option<DateTime<Utc>>,
-    /// The root key; the pixel signature derives from it under
-    /// [`secret::DOMAIN_PIXEL`].
+    /// Root key; the signature derives under [`secret::DOMAIN_PIXEL`].
     pub secret: &'a [u8],
-    /// Absolute base for the pixel URL, for content that will be rendered
-    /// outside this origin (`GReader` clients). `None` yields a root-relative
-    /// URL, which is what an in-page render wants.
+    /// Absolute base for content rendered off-origin (`GReader`); `None` yields a
+    /// root-relative URL.
     pub base_url: Option<&'a str>,
 }
 
 impl<'a> PixelContext<'a> {
-    /// An opted-out context, for the render paths that have no reader-specific
-    /// settings to hand.
+    /// An opted-out context, for paths with no reader settings.
     pub fn disabled(user_id: i64, secret: &'a [u8]) -> Self {
         Self {
             user_id,
@@ -94,18 +78,12 @@ impl<'a> PixelContext<'a> {
         )
     }
 
-    /// Append the pixel to `html` when this reader is tracking opens and the
-    /// entry is one the metric can speak about; otherwise hand `html` back
-    /// untouched.
-    ///
-    /// `entry_created_at` gates on the opt-in baseline for the same reason the
-    /// endpoint re-checks it: an entry that arrived before tracking was turned
-    /// on is not in the denominator, so serving it a pixel would only produce a
-    /// request the endpoint then throws away.
+    /// Append the pixel when tracking is on and the entry was created after the
+    /// opt-in (older entries are outside the denominator); else return `html`.
     ///
     /// # Ordering
     ///
-    /// Call this on the *result* of `sanitize_html`. See the module docs.
+    /// Call on the *result* of `sanitize_html`. See the module docs.
     pub fn maybe_inject(
         &self,
         mut html: String,
@@ -118,9 +96,7 @@ impl<'a> PixelContext<'a> {
         if entry_created_at < enabled_at {
             return html;
         }
-        // Empty content stays empty: a pane with nothing in it renders no
-        // article, so there was no open to record and a lone pixel would only
-        // give the empty state something to lay out around.
+        // Empty content stays empty: no article rendered, no open to record.
         if html.trim().is_empty() {
             return html;
         }
@@ -175,8 +151,7 @@ mod tests {
 
     #[test]
     fn entries_older_than_the_opt_in_get_no_pixel() {
-        // The backlog that was already in the database when tracking was turned
-        // on is outside the denominator, so it must not be asked to report.
+        // Pre-opt-in backlog is outside the denominator.
         let enabled_at = Utc::now();
         let html = "<p>Article</p>".to_string();
         assert_eq!(
@@ -212,10 +187,7 @@ mod tests {
 
     #[test]
     fn injected_pixel_survives_the_sanitiser() {
-        // The regression this whole module is shaped around: sanitising *after*
-        // injecting destroys the pixel twice over — the 1x1 is stripped as a
-        // tracking pixel, and anything that did survive would be rewritten to
-        // the image proxy and stop being same-origin.
+        // Sanitising after injecting would strip the 1x1 and proxy what survived.
         let sanitized = sanitize_html("<p>Article</p>", SECRET, None, None, None);
         let injected = ctx(Some(hour_ago())).maybe_inject(sanitized, 42, Utc::now());
         assert!(injected.contains("/p/7-42-"), "{injected}");

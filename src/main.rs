@@ -2,9 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-// Use mimalloc to keep resident memory low: long-running multi-threaded sync
-// accumulates allocator fragmentation that the system glibc allocator tends to
-// retain as RSS. mimalloc returns freed pages to the OS far more aggressively.
+// mimalloc returns freed pages to the OS; glibc retains fragmentation as RSS.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -93,8 +91,7 @@ async fn main() {
         );
     }
 
-    // Open the pool for the configured backend and run its migrations. The
-    // backend is fixed for the process lifetime (see `Config::backend`).
+    // Open the pool and run migrations; the backend is fixed for the process.
     let db = Db::connect(&config.database_url, config.backend())
         .await
         .expect("Failed to open database");
@@ -103,9 +100,7 @@ async fn main() {
 
     let cancel_token = CancellationToken::new();
 
-    // Event bus for SSE live updates (sidebar + summary). Capacity covers a
-    // burst of mutations without lagging a slow subscriber; a lagged receiver
-    // recovers via a sidebar resync signal.
+    // SSE event bus; a lagged receiver recovers via a sidebar resync.
     let events = services::EventBus::new(256);
 
     let summary_cache = services::create_summary_cache(1000, 24);
@@ -114,7 +109,6 @@ async fn main() {
 
     let sidebar_cache = Arc::new(services::SidebarCache::default());
 
-    // Per-entry cancellation tokens for summary jobs (cancel/abort support)
     let summary_cancels: rdrs::services::CancelRegistry =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
@@ -131,7 +125,6 @@ async fn main() {
         },
     );
 
-    // Recover incomplete summary jobs from database
     let recovered =
         services::recover_incomplete_jobs(db.clone(), summary_tx.clone(), summary_cache.clone())
             .await;
@@ -147,24 +140,19 @@ async fn main() {
     let cleanup_worker_handle =
         services::start_cleanup_worker(db.clone(), 1, 24, cancel_token.clone());
 
-    // Start read-entry retention worker (every 24h; per-user opt-in via
-    // user_settings.retention_read_days, 0 = disabled). Prunes nothing when
-    // nobody opted in, but still refreshes planner statistics periodically.
+    // Read-entry retention (daily, per-user opt-in); also refreshes planner stats.
     let retention_worker_handle = services::start_retention_worker(
         db.clone(),
         Duration::from_secs(24 * 3600),
         cancel_token.clone(),
     );
 
-    // Backfill entry.content_text for rows predating migration v10 in the
-    // background so startup is not blocked. Idempotent and one-shot: a
-    // fully-backfilled DB costs a single COUNT and the task exits. Body search
-    // over not-yet-filled rows is degraded until it completes.
+    // Background one-shot backfill of pre-v10 entry.content_text; body search is
+    // degraded until it completes.
     let content_text_backfill_handle =
         services::start_content_text_backfill(db.clone(), cancel_token.clone());
 
-    // Built once: each `Fetcher` owns two connection pools, and every guarded
-    // fetch in the process shares them.
+    // Built once: every guarded fetch shares its connection pools.
     let fetcher = rdrs::services::Fetcher::new(config.fetch_allow_private.clone())
         .unwrap_or_else(|e| {
             tracing::error!(event = "startup.fetcher_failed", error = %e, "failed to build the guarded HTTP client");
@@ -208,9 +196,7 @@ async fn main() {
         .await
         .expect("Failed to bind");
 
-    // Start server with graceful shutdown. Cancelling the token from inside
-    // the shutdown future ends every in-flight SSE stream so the server does
-    // not hang waiting on long-lived connections.
+    // Cancelling the token on shutdown ends SSE streams so the server can't hang.
     let shutdown_token = cancel_token.clone();
     axum::serve(
         listener,
@@ -228,7 +214,6 @@ async fn main() {
         "server stopped, initiating graceful shutdown"
     );
 
-    // Cancel background tasks (idempotent — already cancelled above).
     cancel_token.cancel();
 
     tracing::info!(

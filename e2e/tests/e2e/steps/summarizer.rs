@@ -1,4 +1,4 @@
-//! The standalone Summarizer page — a port of `summarizer.steps.js`.
+//! The standalone Summarizer page.
 
 use anyhow::{Result, ensure};
 use cucumber::gherkin::Step;
@@ -44,9 +44,7 @@ async fn see_cards(world: &mut RdrsWorld, count: usize) -> Result<()> {
     .await
 }
 
-/// Cards run one at a time (a client-side serial queue in `summarizer.js`) and
-/// the mock Kagi upstream adds a delay per request, so each card is waited on
-/// in turn rather than asserted immediately.
+/// Cards run serially and the mock upstream is delayed, so wait on each.
 #[then(expr = "each card resolves to a completed state containing {string}")]
 async fn cards_complete(world: &mut RdrsWorld, text: String) -> Result<()> {
     let driver = world.driver()?;
@@ -70,9 +68,7 @@ async fn cards_complete(world: &mut RdrsWorld, text: String) -> Result<()> {
 
 #[when("I copy the first summary card")]
 async fn copy_first_card(world: &mut RdrsWorld) -> Result<()> {
-    // The label swap only needs the clipboard write to resolve; granting the
-    // permission keeps `navigator.clipboard.writeText` from rejecting in a
-    // headless browser.
+    // Headless browsers reject `clipboard.writeText` without the permission.
     world.browser()?.grant_clipboard().await?;
     let driver = world.driver()?;
     despite_swaps("copying the first summary card", || async {
@@ -99,8 +95,7 @@ async fn copy_button_reads(world: &mut RdrsWorld, text: String) -> Result<()> {
     .await
 }
 
-/// Scoped to the page content: the sidebar always carries its own link to
-/// `/user-settings`, so a bare `href` selector matches that too.
+/// Scoped to page content; the sidebar also links `/user-settings`.
 #[then("I should see a link to Settings")]
 async fn see_settings_link(world: &mut RdrsWorld) -> Result<()> {
     let link = world

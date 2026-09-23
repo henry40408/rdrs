@@ -1,23 +1,20 @@
 //! Client-side DOM-render benchmark for the entry-list / reading-pane swap.
 //!
-//! Measures the part of a swap that is purely the browser's: everything after
-//! the server's bytes have arrived. `performSwap()` is instrumented from the
-//! outside — no source edits — by wrapping two globals in an init script that
-//! runs before `app.js`:
+//! Measures only the browser's share of a swap by wrapping two globals in an
+//! init script (no `app.js` edits):
 //!
-//! | phase       | what it covers                                              |
-//! |-------------|-------------------------------------------------------------|
-//! | `parseMs`   | `DOMParser.parseFromString` on the response body            |
-//! | `applyMs`   | parse-return → `rdrs:swap-complete`: the skip check, the morph, and node insertion |
-//! | `handlerMs` | the synchronous `rdrs:swap-complete` dispatch — every post-swap hook (time tooltips, sidebar refresh, control rebinding, image init) |
+//! | phase       | covers                                                    |
+//! |-------------|-----------------------------------------------------------|
+//! | `parseMs`   | `DOMParser.parseFromString` on the response               |
+//! | `applyMs`   | parse → `rdrs:swap-complete`: skip check, morph, insertion |
+//! | `handlerMs` | the synchronous `rdrs:swap-complete` hooks                |
 //!
 //! ```text
 //! cd e2e && cargo run --bin dom-bench -- [--entries 200] [--iterations 40] [--profile]
 //! ```
 //!
-//! Reports p50/p90/mean per phase. With `--profile` it also runs a CDP CPU
-//! profile over the same loop and prints the top functions by self time, which
-//! is what attributes a phase to a specific function.
+//! Reports p50/p90/mean per phase; `--profile` adds a CDP CPU profile's top
+//! functions by self time.
 
 use std::collections::HashMap;
 
@@ -31,8 +28,7 @@ use rdrs_e2e::wait::eventually;
 use serde::Deserialize;
 use thirtyfour::prelude::*;
 
-/// Wraps `DOMParser.parseFromString` and `document.dispatchEvent` so each swap
-/// records its own timings, without touching `app.js`.
+/// Wraps `DOMParser.parseFromString` and `document.dispatchEvent` to time each swap.
 const INSTRUMENT: &str = r"
 (() => {
   window.__bench = { swaps: [], current: null };
@@ -41,7 +37,7 @@ const INSTRUMENT: &str = r"
     const t0 = performance.now();
     const doc = OrigParser.apply(this, args);
     const t1 = performance.now();
-    // The last parse before a dispatch is the one that produced the swap.
+    // The last parse before a dispatch produced the swap.
     window.__bench.current = { parseMs: t1 - t0, parsedAt: t1, bytes: (args[0] || '').length };
     return doc;
   };
@@ -64,16 +60,14 @@ const INSTRUMENT: &str = r"
 })();
 ";
 
-/// What each iteration does — the interaction whose swap is being measured.
+/// The interaction whose swap is measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// `j`: a reading-pane swap.
     Nav,
-    /// Load More: appends a page of rows to a list that keeps growing — the
-    /// path where a per-swap sweep of the whole document compounds.
+    /// Load More: appends to a growing list, where per-swap document sweeps compound.
     LoadMore,
-    /// Mark Above: re-renders the whole `[data-entries-list]` container, so the
-    /// morph runs over every rendered row.
+    /// Mark Above: re-renders `[data-entries-list]`, morphing every row.
     MarkAbove,
 }
 
@@ -100,10 +94,7 @@ struct Options {
     mode: Mode,
 }
 
-/// Reads one option at the field's own type.
-///
-/// Parsing straight to `usize` or `u32` rather than through `f64` is what
-/// keeps a count from arriving negative or fractional.
+/// Parses to the field's own type, so counts cannot be negative or fractional.
 fn parse<T>(raw: Option<&str>, name: &str, fallback: T) -> Result<T>
 where
     T: std::str::FromStr,
@@ -117,7 +108,7 @@ where
 }
 
 impl Options {
-    /// Parses `--name value` pairs, the same shape the old script accepted.
+    /// Parses `--name value` pairs.
     fn from_args() -> Result<Self> {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let value = |name: &str| -> Option<&str> {
@@ -195,8 +186,7 @@ async fn run(browser: &Browser, base: &str, user: &str, options: &Options) -> Re
         bail!("no entry rows rendered — seeding failed");
     }
 
-    // Grow the rendered list: the swap cost that matters is the one a reader
-    // pays after paging a long backlog into the DOM, not the first 50 rows.
+    // Grow the list: the cost that matters is after paging a long backlog in.
     while options.rows > rows {
         if driver.test_id_opt("load-more-btn").await?.is_none() {
             break;
@@ -220,8 +210,7 @@ async fn run(browser: &Browser, base: &str, user: &str, options: &Options) -> Re
             .await?;
     }
 
-    // Open the first entry so `j` becomes a reading-pane swap rather than a
-    // pure cursor move, which is the interaction being measured.
+    // Open the first entry so `j` swaps the reading pane.
     driver.css("[data-entry-row]").await?.click().await?;
     eventually("the first swap to be recorded", || async {
         Ok(swap_count(driver).await? >= 1)
@@ -308,9 +297,7 @@ fn stats(values: &[f64]) -> Stats {
     }
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
-    // Taken as a ratio of the length in integers — the same index the old
-    // script's `Math.floor(p * len)` produced, without a float conversion that
-    // has to be reasoned about for sign or range.
+    // Integer index, matching `Math.floor(p * len)` without float casts.
     let quantile = |numerator: usize, denominator: usize| {
         let index = sorted.len() * numerator / denominator;
         sorted[index.min(sorted.len() - 1)]
@@ -429,8 +416,7 @@ fn report_profile(profile: &Profile) {
     for id in &profile.samples {
         let Some(node) = by_id.get(id) else { continue };
         *self_time.entry(label(node)).or_default() += 1;
-        // Attribute native frames (querySelector, replaceState…) to the nearest
-        // app-level caller — self time alone cannot say which hook paid for it.
+        // Attribute native frames to the nearest app-level caller.
         let mut current = Some(*node);
         while let Some(node) = current
             && !is_app(node)

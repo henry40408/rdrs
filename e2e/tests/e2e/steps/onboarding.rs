@@ -1,5 +1,4 @@
-//! The landing page's getting-started guide and the app settings page — a port
-//! of `onboarding.steps.js`.
+//! The landing page's getting-started guide and the app settings page.
 
 use anyhow::{Result, ensure};
 use cucumber::{then, when};

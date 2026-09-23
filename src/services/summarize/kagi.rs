@@ -4,19 +4,18 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::services::http::{EXTERNAL_API_TIMEOUT, RetryConfig, send_with_retry_on_error};
 
-/// Kagi Universal Summarizer configuration
+/// Kagi Universal Summarizer configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KagiConfig {
-    /// Session token extracted from Kagi session link
+    /// Session token extracted from a Kagi session link.
     pub session_token: String,
-    /// Target language for summary (optional, e.g., "ZH-HANT", "EN")
+    /// Target language (optional, e.g. "ZH-HANT", "EN").
     #[serde(default)]
     pub language: Option<String>,
 }
 
 impl KagiConfig {
-    /// The session token is the only required field; everything else has a
-    /// working default.
+    /// Only the session token is required.
     pub fn is_configured(&self) -> bool {
         !self.session_token.is_empty()
     }
@@ -48,8 +47,8 @@ const KAGI_API_BASE: &str = "https://kagi.com";
 
 /// Summarize a URL using Kagi Universal Summarizer
 pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<SummarizeResult> {
-    // `RDRS_KAGI_API_BASE` env redirects the endpoint to a local stub for tests/E2E.
-    // It is NEVER set in production — the default is the real Kagi host.
+    // `RDRS_KAGI_API_BASE` points at a local stub for tests/E2E; NEVER set in
+    // production.
     let base = std::env::var("RDRS_KAGI_API_BASE").unwrap_or_else(|_| KAGI_API_BASE.to_string());
     summarize_url_with_base(&base, config, url).await
 }
@@ -231,7 +230,7 @@ mod tests {
             session_token: String::new(),
             language: None,
         };
-        // No mock server needed — the not-configured early return fires before any HTTP call
+        // Not-configured returns before any HTTP call.
         let result = summarize_url_with_base("http://unused.invalid", &config, "https://x.com/a")
             .await
             .unwrap();
@@ -361,9 +360,6 @@ mod tests {
             session_token: "tok".into(),
             language: None,
         };
-        // `set_var`/`remove_var` are `unsafe` in this toolchain (process-global
-        // mutation); the `unsafe` blocks are required. cargo-nextest runs each
-        // test in its own process, so this env mutation cannot race other tests.
         // Test-only env mutation; nextest isolates each test in its own process.
         #[allow(unsafe_code)]
         unsafe {

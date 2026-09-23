@@ -22,22 +22,12 @@ pub const FEED_SYNC_TIMEOUT: Duration = Duration::from_secs(90);
 /// Timeout for enqueuing background jobs from HTTP handlers (5s)
 pub const JOB_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
-// There is deliberately no process-wide client here any more.
-//
-// A `reqwest::Client` owns a connection pool, so one shared instance is still
-// what the fetchers use — but it now lives on `services::fetch::Fetcher`, which
-// builds it with the SSRF redirect and DNS guards attached. A bare
-// `SHARED_CLIENT` sitting in this module was too easy to reach for, and a caller
-// that reached for it silently opted out of those guards. Talking to an endpoint
-// the *user configured* (Linkding, Kagi) is the one case that builds its own
-// client, and those do it locally where the trust decision is visible.
-//
-// Per-request settings still ride on the `RequestBuilder`: the `User-Agent` as a
-// header, and a shorter timeout via `RequestBuilder::timeout` (e.g.
-// `ICON_TIMEOUT`). The client carries `DEFAULT_TIMEOUT` as the baseline so a
-// caller that sets neither is still bounded.
+// No process-wide client here on purpose: the shared pool lives on
+// `services::fetch::Fetcher` with the SSRF guards attached, so no caller can
+// silently bypass them. User-configured endpoints (Linkding, Kagi) build their
+// own clients locally. `DEFAULT_TIMEOUT` is the client baseline; per-request
+// settings go on the `RequestBuilder`.
 
-/// Configuration for retry behavior
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
     pub max_retries: u32,
@@ -56,8 +46,7 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    /// Fewer, shorter retries: a missing favicon is cosmetic, so it must not
-    /// hold a sync open the way an article fetch legitimately can.
+    /// Fewer, shorter retries: a missing favicon must not hold a sync open.
     pub fn icon() -> Self {
         Self {
             max_retries: 2,
@@ -67,18 +56,14 @@ impl RetryConfig {
     }
 }
 
-/// Outcome of a single attempt, used by the retry loop to decide whether to retry.
+/// Outcome of one attempt, deciding whether to retry.
 pub enum RetryOutcome<T, E> {
-    /// Request succeeded
     Success(T),
-    /// Transient error, safe to retry
     Transient(E),
-    /// Permanent error, do not retry
     Permanent(E),
 }
 
-/// Transient meaning safe to retry: the request never reached a decision, so
-/// replaying it cannot double an effect.
+/// Transient: the request never reached a decision, so replaying it is safe.
 pub fn is_transient_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || err.is_request()
 }
@@ -90,11 +75,8 @@ pub fn is_transient_status(status: StatusCode) -> bool {
         || status == StatusCode::REQUEST_TIMEOUT
 }
 
-/// Generic async retry function with exponential backoff.
-///
-/// `operation` is called on each attempt and must return a `RetryOutcome`.
-/// On `Transient`, the function sleeps with exponential backoff and retries.
-/// On `Permanent` or after exhausting retries, the error is returned.
+/// Retry `operation` with exponential backoff on `Transient`; return the error
+/// on `Permanent` or once retries are exhausted.
 pub async fn retry<T, E, Fut, F>(config: &RetryConfig, mut operation: F) -> Result<T, E>
 where
     F: FnMut() -> Fut,
@@ -127,14 +109,8 @@ where
     unreachable!("retry loop should return before reaching here")
 }
 
-/// Convenience wrapper: send an HTTP request with retry.
-///
-/// `build_request` is called on each attempt to produce a fresh `reqwest::RequestBuilder`.
-/// This is needed because `RequestBuilder` is consumed by `.send()`.
-///
-/// Returns the `Response` on success, or a `reqwest::Error` after retries are exhausted.
-/// Non-transient HTTP status codes (4xx except 408/429) are returned as successful responses
-/// for the caller to handle.
+/// Send with retry. `build_request` makes a fresh builder per attempt (`send`
+/// consumes it). Non-transient statuses come back as `Ok` responses.
 pub async fn send_with_retry_on_error<F>(
     config: &RetryConfig,
     mut build_request: F,
@@ -146,17 +122,8 @@ where
         let request = build_request();
         async {
             match request.send().await {
-                Ok(response) => {
-                    if is_transient_status(response.status()) {
-                        // Convert response to an error-like form for retry
-                        // but we still have the response, so wrap it
-                        RetryOutcome::Success(response)
-                        // Note: We return Success here because the caller may want
-                        // to inspect 5xx responses. The retry on status is handled below.
-                    } else {
-                        RetryOutcome::Success(response)
-                    }
-                }
+                // Statuses are retried by `send_with_retry_on_error_on_status`.
+                Ok(response) => RetryOutcome::Success(response),
                 Err(err) => {
                     if is_transient_error(&err) {
                         RetryOutcome::Transient(err)
@@ -170,10 +137,8 @@ where
     .await
 }
 
-/// Send with retry, also retrying on transient HTTP status codes (5xx, 429, 408).
-///
-/// `build_request` is called on each attempt to produce a fresh `reqwest::RequestBuilder`.
-/// Returns the final `Response` (which may be a non-retriable error status like 4xx).
+/// Like [`send_with_retry_on_error`] but also retries transient statuses (5xx, 429,
+/// 408); the final response may still be an error status.
 pub async fn send_with_retry_on_error_on_status<F>(
     config: &RetryConfig,
     mut build_request: F,
@@ -336,7 +301,7 @@ mod tests {
         .await;
 
         assert_eq!(result, Err("still failing"));
-        // 1 initial + 2 retries = 3 total attempts
+        // 1 initial + 2 retries
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
     }
 

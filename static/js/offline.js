@@ -1,52 +1,30 @@
 /**
  * Offline reading: mirror the reader's queue into the service worker's cache.
  *
- * The articles stored here are the *server's own* reading-pane markup, fetched
- * through the ordinary `GET /entries/{id}/fragment` route. Nothing is rendered
- * twice: offline, `app.js` performs the same swap it always does and the worker
- * answers the same request from cache. That is the whole design — this module
- * decides *what* to hold, never *how* it looks.
- *
- * ## Why this is opt-in
- *
- * Every signed-in response is `no-store`, and until this feature nothing
- * belonging to a reader was written to disk by the browser at all. Offline
- * reading trades that away, so it is off by default, bounded by a number the
- * reader chooses (`offline_keep`), and namespaced by an opaque per-user key so
- * one account's articles cannot outlive a sign-out into the next account's
- * session on a shared device.
- *
- * ## Why the cache is its own ledger
- *
- * There is no separate index of what is held: the cache keys *are* the list of
- * entries, and each stored response carries its `entry.updated_at` in an
- * `x-rdrs-offline-version` header. A ledger in `localStorage` would be a second
- * copy of the same truth, and the two would disagree the first time a write
- * failed halfway.
+ * Stores the server's own `GET /entries/{id}/fragment` markup, so offline
+ * swaps are identical; this module only decides *what* to hold. Opt-in,
+ * bounded by `offline_keep`, and namespaced per user so nothing survives a
+ * sign-out on a shared device. The cache keys are the ledger (no second index);
+ * each response carries its `updated_at` in `x-rdrs-offline-version`.
  */
 
 const CACHE_PREFIX = 'rdrs-offline-';
 const MANIFEST_URL = '/api/offline/manifest';
 const LIBRARY_URL = '/entries/offline';
 
-/** Where a stored entry's `updated_at` lives. See the module note. */
+/** Where a stored entry's `updated_at` lives. */
 const VERSION_HEADER = 'x-rdrs-offline-version';
 
 /**
- * Per-image and per-sync ceilings on what an article's pictures may cost.
- *
- * An entry with fifty full-bleed photographs is not worth a reader's disk, and
- * the budget is spent newest-entry-first, so the cap degrades by dropping the
- * images of the oldest articles rather than by failing the sync.
+ * Image ceilings. The budget is spent newest-first, so oldest articles lose
+ * their images rather than the sync failing.
  */
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_SYNC_IMAGE_BYTES = 48 * 1024 * 1024;
 
 /**
- * Fraction of the origin's storage quota above which the sync stops writing.
- * Browsers evict the *whole* origin when it runs out, which would take the
- * session's `sessionStorage` sidebar mirror with it, so the budget stays well
- * clear of the ceiling rather than discovering it.
+ * Fraction of quota above which sync stops writing: running out evicts the
+ * whole origin, sessionStorage included.
  */
 const QUOTA_HEADROOM = 0.8;
 
@@ -56,33 +34,24 @@ function fragmentPath(id) {
 }
 
 /**
- * The URL the *sync* fetches. `offline=1` is what stops mirroring the queue
- * from marking every entry in it read: opening an entry marks it read, and a
- * sync opens all of them. Stored under [`fragmentPath`] regardless, so the
- * reader's own click matches it.
+ * The URL the sync fetches; `offline=1` stops it marking every entry read.
+ * Stored under [`fragmentPath`] so the reader's own click matches.
  */
 function prefetchUrl(id) {
   return `${fragmentPath(id)}?offline=1`;
 }
 
 /**
- * The reader's cache key, as the server rendered it into the page.
- *
- * The budget lives beside it in `data-offline-keep`, but only the manifest's
- * copy is acted on: it is minted by the session that just answered, while the
- * document's may predate a change to the setting.
+ * The reader's cache key as rendered into the page. The manifest's budget wins
+ * over `data-offline-keep`, which may be stale.
  */
 function pageCacheKey() {
   return document.documentElement.dataset.offlineKey || '';
 }
 
 /**
- * Drop every offline cache that is not `key`'s.
- *
- * Runs before the first network call of every page load, which is the point:
- * signing in as someone else is only possible online, so this is the first
- * moment after a switch at which the previous account's articles can be
- * removed, and it does not wait for a round trip to do it.
+ * Drop every offline cache that is not `key`'s. Runs before the first network
+ * call of each page load, the earliest point after an account switch.
  */
 async function dropForeignCaches(key) {
   const mine = key ? CACHE_PREFIX + key : null;
@@ -93,16 +62,8 @@ async function dropForeignCaches(key) {
 }
 
 /**
- * Store `response` under `url`, rebuilt from its body rather than put as it
- * arrived.
- *
- * Three headers make a signed-in response unstorable as-is. `Vary: Cookie` is
- * honoured by `cache.match` while the worker's own `Request` carries no cookie
- * header at all, so a stored copy may never match again. `Set-Cookie` would put
- * a session cookie in a cache the worker replays from. `Cache-Control: no-store`
- * is ignored by the Cache API but keeping it around invites the next reader of
- * this code to believe it did something. Rebuilding drops all three by
- * construction, which no denylist of header names could promise.
+ * Store `response` rebuilt from its body, dropping `Vary: Cookie` (would never
+ * match the worker's cookieless request), `Set-Cookie` and `Cache-Control`.
  */
 async function put(cache, url, response, version) {
   const body = await response.blob();
@@ -113,7 +74,7 @@ async function put(cache, url, response, version) {
   await cache.put(url, new Response(body, { status: 200, statusText: 'OK', headers }));
 }
 
-/** Whether the origin still has room to spend. See [`QUOTA_HEADROOM`]. */
+/** Whether the origin still has room. See [`QUOTA_HEADROOM`]. */
 async function hasHeadroom() {
   if (!navigator.storage?.estimate) return true;
   try {
@@ -124,12 +85,7 @@ async function hasHeadroom() {
   }
 }
 
-/**
- * Same-origin image URLs an entry's markup references: proxied article images
- * and the feed's favicon. Both are signed or id-addressed and cookie-free, and
- * an article whose pictures are all broken frames is not the offline reading
- * anyone asked for.
- */
+/** Same-origin images an entry references: proxied images and the feed favicon. */
 function imageUrls(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const urls = new Set();
@@ -138,8 +94,7 @@ function imageUrls(html) {
       const url = new URL(img.getAttribute('src'), location.origin);
       if (url.origin === location.origin) urls.add(url.pathname + url.search);
     } catch {
-      // A `src` that will not parse cannot be fetched either; the browser will
-      // render it as broken whether we look at it here or not.
+      // Unparseable `src`: unfetchable anyway.
     }
   }
   return urls;
@@ -167,27 +122,15 @@ async function cacheImage(cache, url, remaining) {
 }
 
 /**
- * Extensions the static handler actually serves.
- *
- * [`referencesIn`] reads *source text*, so it cannot tell a real import from a
- * mention of one in a comment — this module's own prose about `url(…)` being
- * the first casualty, which turned into a 404 for `/static/js/...` on every
- * sync. Demanding a real asset extension is what keeps an example in a comment
- * from becoming a request.
+ * Asset extensions the static handler serves. [`referencesIn`] scans source
+ * text, so this stops mentions in comments becoming requests.
  */
 const ASSET_EXTENSION = /\.(?:js|css|woff2?|png|svg|ico|webmanifest)$/i;
 
 /**
- * Same-origin `/static/` URLs referenced from inside a fetched asset: a
- * stylesheet's `url(…)` targets, a module's import specifiers. Resolved against
- * `from`, because a module's specifier may be relative to itself
- * (`'./utils.js'`).
- *
- * Each pattern is applied only to the kind of file it belongs to. Running the
- * stylesheet one over JavaScript matched the tail of `bufferToBase64url(buffer)`
- * and sent the sync looking for `/static/js/buffer` — a reminder that these are
- * substring matches over source text, not parses of it. [`ASSET_EXTENSION`] is
- * the backstop for whatever the next such coincidence turns out to be.
+ * Same-origin `/static/` URLs referenced by an asset (CSS `url(…)`, JS imports),
+ * resolved against `from`. Substring matches, not parses: each pattern runs only
+ * on its own file type, and [`ASSET_EXTENSION`] is the backstop.
  */
 function referencesIn(text, from, isStylesheet) {
   const base = new URL(from, location.origin);
@@ -209,28 +152,17 @@ function referencesIn(text, from, isStylesheet) {
         found.add(url.pathname + url.search);
       }
     } catch {
-      // A `data:` URL, or something that is not a URL at all. Neither is ours.
+      // A `data:` URL or not a URL at all.
     }
   }
   return found;
 }
 
 /**
- * Store the `/static/` assets a saved page needs to render and to be usable,
- * and report which ones those are.
- *
- * Saving the markup is not enough on its own: the library page is ordinary
- * server-rendered HTML that needs `app.css` to look like the app and `app.js`
- * to open an entry at all — without the latter a click is a real navigation to
- * a fragment URL, which offline resolves to nothing. They are version-stamped
- * and public, and the worker only falls back to these copies once the network
- * has failed, so a stale one can never reach an online reader.
- *
- * The walk is transitive and starts from the live document rather than from a
- * list kept here, so neither a module added to `app_layout.html` nor one
- * `import`ed by a module already in it needs a second list to stay in step.
- * That matters twice over: fonts are named only inside the stylesheet, and
- * `app.js` pulls in `utils.js` through an import the document never mentions.
+ * Store the `/static/` assets a saved page needs (app.css to look right,
+ * app.js to open entries) and return them. Walked transitively from the live
+ * document so fonts and nested imports need no second list. The worker only
+ * uses these after the network fails, so online readers never see stale copies.
  */
 async function cacheShellAssets(cache) {
   const pending = [];
@@ -243,7 +175,7 @@ async function cacheShellAssets(cache) {
         pending.push(url.pathname + url.search);
       }
     } catch {
-      // Not a URL this browser will fetch either.
+      // Not fetchable either.
     }
   }
 
@@ -261,14 +193,12 @@ async function cacheShellAssets(cache) {
         await put(cache, url, response);
         stored = await cache.match(url);
       } catch {
-        // Nothing to do but try again next sync.
+        // Retry next sync.
         continue;
       }
     }
 
-    // Only stylesheets and modules can name anything. Reading a woff2 as text
-    // would decode a hundred kilobytes into mojibake to find no references in
-    // it, once per font, on every sync.
+    // Only stylesheets and modules can reference anything; skip decoding fonts.
     const type = stored?.headers.get('content-type') || '';
     if (!/javascript|css/.test(type)) continue;
     const references = referencesIn(await stored.text(), url, type.includes('css'));
@@ -278,8 +208,8 @@ async function cacheShellAssets(cache) {
 }
 
 /**
- * Bring the cache in line with the manifest: fetch what is missing or stale,
- * drop what has left the set, and re-store the library page that lists it.
+ * Bring the cache in line with the manifest: fetch missing/stale entries, drop
+ * departed ones, and re-store the library page.
  */
 async function sync() {
   if (!('caches' in window)) return;
@@ -295,16 +225,13 @@ async function sync() {
     manifest = await response.json();
     setOffline(false);
   } catch {
-    // Offline, or the session ended under us. Either way the cache we already
-    // hold is the reader's own and stays exactly as it is. This request is also
-    // the app's connection probe — see [`setOffline`].
+    // Offline or signed out: keep the cache as is. Also the connection probe;
+    // see [`setOffline`].
     setOffline(true);
     return;
   }
 
-  // The manifest's key wins over the page's: the document may have been
-  // rendered before a masquerade started or ended, and this one was minted for
-  // the session that just answered.
+  // Manifest key wins: the page may predate a masquerade start/stop.
   if (manifest.cache_key !== pageKey) await dropForeignCaches(manifest.cache_key);
 
   const name = CACHE_PREFIX + manifest.cache_key;
@@ -316,8 +243,7 @@ async function sync() {
   const cache = await caches.open(name);
   const wanted = new Map(manifest.entries.map((e) => [fragmentPath(e.id), e.updated_at]));
 
-  // Evict first, so the budget checks below are made against what the cache
-  // will actually hold rather than against a peak it passes through.
+  // Evict first so budget checks see the final size, not a peak.
   const held = await cache.keys();
   const heldPaths = new Set();
   for (const request of held) {
@@ -327,8 +253,7 @@ async function sync() {
       heldPaths.add(path);
       continue;
     }
-    // Images are reconciled below against the entries that survive, so
-    // anything not in `wanted` and not an entry fragment is left for that pass.
+    // Images are reconciled in a later pass against surviving entries.
     if (/^\/entries\/\d+\/fragment$/.test(path)) await cache.delete(request);
   }
 
@@ -353,8 +278,7 @@ async function sync() {
       html = await response.clone().text();
       await put(cache, path, response, version);
     } else if (cached) {
-      // No room to refresh it, but a stale article still reads better than a
-      // missing one, so it keeps its place and its images.
+      // No room to refresh; a stale article beats a missing one.
       html = await cached.text();
     } else {
       continue;
@@ -370,10 +294,8 @@ async function sync() {
 
   for (const url of await cacheShellAssets(cache)) referenced.add(url);
 
-  // Images and assets whose entry — or whose build — has left the set. Done
-  // after the loop so a picture shared by two entries is only dropped once
-  // neither of them wants it, and so a `?v=` bump evicts the previous build's
-  // scripts rather than accumulating one copy per deploy.
+  // After the loop, so shared images are dropped only when unused and old-build
+  // assets are evicted rather than accumulating per deploy.
   for (const request of await cache.keys()) {
     const url = new URL(request.url);
     const path = url.pathname + url.search;
@@ -381,24 +303,18 @@ async function sync() {
     if (!referenced.has(path)) await cache.delete(request);
   }
 
-  // Last, so the page listing the entries is only stored once they are all
-  // actually there.
+  // Last, so the library page only lists entries that are stored.
   try {
     const response = await fetch(LIBRARY_URL, { credentials: 'same-origin' });
     if (response.ok) await put(cache, LIBRARY_URL, response, manifest.cache_key);
   } catch {
-    // Nothing to do: the previous copy, if any, is still a truthful list of
-    // what the cache holds.
+    // Keep the previous copy; it is still accurate.
   }
 }
 
 /**
- * Serialise and rate-limit [`sync`].
- *
- * `rdrs:sidebar-stale` fires on every mark-as-read, and two syncs running at
- * once would race each other's evictions — one deciding an entry has left the
- * set while the other is still writing it. The trailing delay also lets a burst
- * of triage settle into a single pass over the queue.
+ * Serialise and debounce [`sync`]: concurrent syncs would race each other's
+ * evictions, and `rdrs:sidebar-stale` fires on every mark-as-read.
  */
 const SYNC_DEBOUNCE_MS = 3000;
 let syncing = null;
@@ -408,10 +324,7 @@ function scheduleSync(delay = 0) {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
     if (syncing) {
-      // Fold into the run in flight rather than queueing behind it: its
-      // manifest fetch has not happened yet often enough to matter, and a chain
-      // of catch-up syncs is how a busy triage session ends up refetching the
-      // same queue five times.
+      // Fold into the in-flight run rather than chaining catch-up syncs.
       syncing = syncing.then(() => sync()).catch(() => {});
       return;
     }
@@ -424,11 +337,8 @@ function scheduleSync(delay = 0) {
 }
 
 /**
- * The reader's own cache, or `null` when offline reading is off.
- *
- * `caches.open` would *create* the cache, so its absence is checked first —
- * an account with the feature off must not end up owning an empty cache named
- * after them.
+ * The reader's own cache, or `null` when off. Checked first because
+ * `caches.open` would create an empty one.
  */
 async function readerCache() {
   const key = pageCacheKey();
@@ -438,20 +348,10 @@ async function readerCache() {
 }
 
 /**
- * The saved reading pane for `url`, or `null`.
- *
- * Published on `window` for `performSwap`, which owns the fetch that fails and
- * so is the only place that can substitute this for it — the same arrangement
- * as `window.flash`. Doing it here rather than in the service worker keeps the
- * request page-originated: a worker that re-issued it would make the fetch
- * invisible to everything watching the page's network, the test harness
- * included.
- *
- * Matched on the path alone, because the stored key is the canonical
- * `/entries/{id}/fragment` — the URL the reader's own click produces. The one
- * casualty is `?view=original`, which offline hands back the same saved pane
- * instead of what the feed published; storing both views of every article to
- * fix that would double the library for a toggle.
+ * The saved reading pane for `url`, or `null`, exposed on `window` for
+ * `performSwap`. Done in the page, not the worker, so the request stays visible
+ * to network observers (including tests). Matched on path only, so offline
+ * `?view=original` returns the same saved pane.
  */
 async function savedFragment(url) {
   const cache = await readerCache();
@@ -466,32 +366,22 @@ function flash(level, message) {
 }
 
 /**
- * What still works with no connection, as a selector.
- *
- * Stated this way round because it is the short, stable half: opening a saved
- * entry, and the two destinations the service worker answers from the cache.
- * Everything else on a page — every form, every other link, the selects that
- * submit themselves — reaches the server. Enumerating *those* would be a list
- * of dozens that silently falls behind the next control someone adds.
+ * What still works offline, as a selector — the short, stable half; everything
+ * else reaches the server.
  */
 const WORKS_OFFLINE = 'a[data-swap="#reading-pane"], a[href="/"], a[href="/entries/offline"]';
 
 /**
- * Controls that reach the server. `form` covers the GET ones too — Load More
- * and the search box are `method="get"`, and offline they fail exactly as a
- * mutation does; an earlier version of this guard checked for POST and let the
- * reader click Load More into a dead end.
+ * Server-bound controls. All forms, including GET ones like Load More and search.
  */
 const SERVER_BOUND = 'form, a[href], select[data-mark-read-scope], select[data-status-select]';
 
-/** Flag every server-bound control for the CSS and for [`blockOffline`]. */
+/** Flag server-bound controls for the CSS and [`blockOffline`]. */
 function markServerBound() {
   for (const el of document.querySelectorAll(SERVER_BOUND)) {
     const disable = offlineNow && !el.matches(WORKS_OFFLINE);
     el.toggleAttribute('data-offline-disabled', disable);
-    // `disabled` is deliberately not set: `setFormBusy` in app.js owns that
-    // property on these same controls, and two owners of one attribute is how
-    // a button ends up stuck greyed out after the connection returns.
+    // Not `disabled`: `setFormBusy` in app.js owns that, and two owners get stuck.
     if (disable) {
       el.setAttribute('aria-disabled', 'true');
     } else if (el.getAttribute('aria-disabled') === 'true') {
@@ -501,13 +391,9 @@ function markServerBound() {
 }
 
 /**
- * Swallow an activation of something that cannot work, and say why.
- *
- * The CSS gives these `pointer-events: none`, so a mouse never gets here — this
- * is for the keyboard, and for the shortcuts in `app.js` that submit a form
- * programmatically. Capture phase, so neither the swap helper nor a native
- * submit sees it; same-node listeners still run, which leaves `csrf.js` free to
- * do its (now pointless, and harmless) token rewrite.
+ * Swallow activations that cannot work, and say why. CSS already blocks the
+ * mouse; this catches keyboard and programmatic submits. Capture phase so the
+ * swap helper and native submit never see it.
  */
 function blockOffline(event) {
   if (!offlineNow) return;
@@ -519,13 +405,8 @@ function blockOffline(event) {
 }
 
 /**
- * Keep the disabled state true as the page changes under it.
- *
- * Every swap replaces markup wholesale and `<rdrs-sidebar>` rebuilds its own
- * `innerHTML`, so a single pass at the moment the connection drops goes stale
- * immediately. An observer rather than a list of hooks because there is no one
- * event that covers all of them — and it only runs while offline, which is a
- * state the reader is not in for most of the session.
+ * Re-mark controls as swaps and the sidebar replace markup. Only observes
+ * while offline.
  */
 let offlineObserver = null;
 
@@ -541,43 +422,24 @@ function stopWatching() {
 }
 
 /**
- * How long to wait before probing again while offline.
- *
- * There has to be a poll, because the only reliable evidence that the
- * connection is back is a request that succeeds, and the `online` event cannot
- * be relied on to prompt one — see [`setOffline`]. One request per interval,
- * failing immediately, is what that costs.
+ * Poll interval while offline; only a successful request proves the
+ * connection is back (see [`setOffline`]).
  */
 const RECHECK_MS = 30000;
 
 /**
- * Whether the app believes it cannot reach the server.
- *
- * Starts optimistic rather than seeded from `navigator.onLine`. The flag is
- * unreliable in *both* directions and the false one is the expensive one: a
- * headless browser in a container reports `false` at startup often enough to
- * have disabled the whole app across a third of a CI run, each time in a
- * different place. Being briefly wrong the other way costs one request that
- * fails and then says so — which is the design here anyway.
+ * Whether the app believes it cannot reach the server. Starts optimistic:
+ * `navigator.onLine` is unreliable and a false `false` (common in headless CI)
+ * disables the whole app.
  */
 let offlineNow = false;
 let recheckTimer = 0;
 
 /**
- * Move [`offlineNow`], and everything that hangs off it, to `next`.
- *
- * The state is deliberately *not* `navigator.onLine`. That flag is a statement
- * about having a network interface, not about anything answering on it: it
- * stays true behind a captive portal, and Chrome leaves it true under DevTools'
- * own offline emulation, so a UI driven by it is disabled in neither case. What
- * this tracks instead is evidence — a request that threw, or one that came
- * back — which is the same thing the reader is judging by.
- *
- * `data-offline` on the root element is the whole published interface: the CSS
- * greys out the controls marked below, and the sidebar's connection lamp reads
- * the same attribute. Losing a connection used to raise a toast as well, which
- * put a banner over the list on every blink — a state that comes and goes on
- * its own belongs in a light that is always there, not in a message.
+ * Set [`offlineNow`]. Driven by request evidence, not `navigator.onLine`, which
+ * stays true behind captive portals and in Chrome's DevTools offline mode.
+ * `data-offline` on the root is the whole interface (CSS + sidebar lamp); no
+ * toast, which would flash on every blink.
  */
 function setOffline(next) {
   if (next === offlineNow) return offlineNow;
@@ -596,10 +458,8 @@ function setOffline(next) {
 
 /** Stop the controls that need a server, and say so. */
 function installOfflineGuards() {
-  // The events are still worth listening to — a browser reporting the
-  // *transition* is the fastest signal there is, and far better founded than
-  // the same flag read cold at startup. They are just not the only signal.
-  // Going "online" only schedules a sync; that request is what decides.
+  // Online/offline events are a fast hint, not proof: going online only
+  // schedules a sync, and that request decides.
   window.addEventListener('online', () => scheduleSync());
   window.addEventListener('offline', () => setOffline(true));
 
@@ -609,19 +469,14 @@ function installOfflineGuards() {
 }
 
 if ('serviceWorker' in navigator && 'caches' in window) {
-  // `performSwap` owns the fetch that fails first when a connection drops
-  // mid-session, so it reports that here rather than waiting for the next sync
-  // to notice. Same arrangement as `window.flash`.
+  // `performSwap` reports a failed fetch here immediately.
   window.rdrsOffline = { fragment: savedFragment, networkFailed: () => setOffline(true) };
   installOfflineGuards();
-  // After paint, and after `pwa.js` has had its chance to register the worker:
-  // a sync that beats the registration writes a cache nothing is yet able to
-  // read from.
+  // After paint and after pwa.js registers the worker, or the cache is unreadable.
   window.addEventListener('load', () => {
     scheduleSync();
   });
-  // A mark-as-read or a feed refresh changes what belongs in the set, and this
-  // signal is already raised for every one of them.
+  // Raised for every mark-as-read and feed refresh.
   document.addEventListener('rdrs:sidebar-stale', () => {
     scheduleSync(SYNC_DEBOUNCE_MS);
   });

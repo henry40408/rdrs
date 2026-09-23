@@ -50,16 +50,12 @@ pub async fn tag_list(
     Ok(Json(TagListResponse { tags }))
 }
 
-/// Bust the sidebar cache and push the change to open tabs. Busting alone
-/// only helps the next request that renders chrome: a `GReader` client's write
-/// never passes through the browser, so without the event an open tab keeps
-/// showing the pre-change counts until something else reloads it.
+/// Bust the sidebar cache and notify open tabs, which a `GReader` client's
+/// write would otherwise leave stale.
 fn sidebar_changed(state: &AppState, user_id: i64) {
     state.sidebar_cache.bust(user_id);
     state.events.emit_sidebar(user_id);
 }
-
-// --- edit-tag ---
 
 /// `POST /reader/api/0/edit-tag`
 ///
@@ -69,7 +65,6 @@ pub async fn edit_tag(
     State(state): State<AppState>,
     Form(raw_form): Form<Vec<(String, String)>>,
 ) -> AppResult<([(&'static str, String); 1], String)> {
-    // Extract repeated `i` params and other fields
     let mut item_ids: Vec<String> = Vec::new();
     let mut add_tag: Option<String> = None;
     let mut remove_tag: Option<String> = None;
@@ -89,7 +84,6 @@ pub async fn edit_tag(
         return Err(AppError::Validation("No item IDs provided".into()));
     }
 
-    // Parse item IDs
     let entry_ids: Vec<i64> = item_ids
         .iter()
         .map(|s| item_id_to_entry_id(s))
@@ -97,16 +91,10 @@ pub async fn edit_tag(
 
     let user_id = auth.user.id;
 
-    // Determine the operation based on add/remove tags
     let add_stream = add_tag.as_deref().map(StreamId::parse).transpose()?;
     let remove_stream = remove_tag.as_deref().map(StreamId::parse).transpose()?;
 
-    // Batch mark-as-read: verify ownership, then use efficient bulk operation.
-    //
-    // The count these bulk updates return is the number of rows that actually
-    // changed, which is what gets reported to the user — not `entry_ids.len()`.
-    // Re-marking 40 already-read entries changed nothing, and saying "marked
-    // 40" there would be a lie the UI used to tell by counting DOM rows.
+    // Report rows actually changed, not `entry_ids.len()`.
     let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
     if found.len() != entry_ids.len() {
         return Err(AppError::EntryNotFound);
@@ -114,9 +102,7 @@ pub async fn edit_tag(
     let affected = if matches!(add_stream, Some(StreamId::Read)) {
         entry::mark_read_by_ids(&state.db, user_id, &entry_ids).await?
     } else {
-        // Other operations: apply the tag changes as bulk UPDATEs inside a
-        // single transaction (instead of a per-entry read + UPDATE + re-read
-        // loop, untransacted).
+        // Other operations: bulk UPDATEs in a single transaction.
         let mut tx = state.db.begin().await?;
         let mut changed = 0_i64;
 
@@ -151,8 +137,6 @@ pub async fn edit_tag(
     sidebar_changed(&state, user_id);
     Ok(super::ok_with_affected(affected))
 }
-
-// --- mark-all-as-read ---
 
 #[derive(Debug, Deserialize)]
 pub struct MarkAllReadForm {
@@ -214,11 +198,9 @@ pub async fn mark_all_as_read(
     Ok(super::ok_with_affected(affected))
 }
 
-// --- disable-tag ---
-
 #[derive(Debug, Deserialize)]
 pub struct DisableTagForm {
-    /// Tag to disable (e.g., "user/-/label/<name>")
+    /// Tag to disable (e.g., `user/-/label/<name>`)
     pub s: Option<String>,
     pub t: Option<String>,
     /// POST token
@@ -252,8 +234,6 @@ pub async fn disable_tag(
     sidebar_changed(&state, user_id);
     Ok("OK".to_string())
 }
-
-// --- rename-tag ---
 
 #[derive(Debug, Deserialize)]
 pub struct RenameTagForm {

@@ -13,8 +13,7 @@
         {% call macros::flash(flash_messages) %}{% endcall %}
         <h1>rdrs</h1>
         <p class="muted">Create the administrator account for this instance. Everyone else is added from the admin panel afterwards.</p>
-        {# Shared by both paths, like the login page: filled in server-side
-           after a failed native POST, written by setup.js on the fetch path. #}
+        {# Filled server-side after a failed native POST, or by setup.js on the fetch path. #}
         <div id="error" class="error"{% if error.is_none() %} hidden{% endif %} data-testid="setup-error">{% if let Some(err) = error %}{{ err }}{% endif %}</div>
         <form id="setup-form" method="post" action="/setup" data-testid="setup-form">
             {% call macros::csrf_field(csrf_token) %}{% endcall %}

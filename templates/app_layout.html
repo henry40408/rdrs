@@ -1,11 +1,8 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
 
-{# `data-offline-*` is on the root element rather than in a bootstrap
-   `<script type="application/json">` because `offline.js` reads it before its
-   first network call, to wipe any cache belonging to a different account. Two
-   attributes cost ~45 bytes; the sidebar's JSON bootstrap pays for itself by
-   replacing a round trip, and this would not. #}
+{# On the root element because `offline.js` reads it before its first network
+   call, to wipe another account's cache. #}
 {% block html_attrs %}{% if let Some(t) = layout.theme %} data-theme="{{ t }}"{% endif %} data-offline-key="{{ layout.offline_key }}" data-offline-keep="{{ layout.offline_keep }}"{% endblock %}
 
 {% block title %}{{ title }} - RDRS{% endblock %}
@@ -17,45 +14,22 @@
     <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ layout.git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-sidebar.js?v={{ layout.git_version }}"></script>
     <script type="module" src="/static/js/app.js?v={{ layout.git_version }}"></script>
-    {# Delegated handlers for the `data-confirm` / `data-submit-on-change` /
-       `data-hide-on-error` attributes that replaced inline `on*` handlers when
-       the strict CSP landed. #}
+    {# Delegated handlers replacing inline `on*` handlers (strict CSP). #}
     <script type="module" src="/static/js/behaviors.js?v={{ layout.git_version }}"></script>
-    {# Service-worker registration. Here rather than in base.html so /login and
-       /setup never register one — see static/js/pwa.js. No modulepreload: it
-       runs on `load` and must not compete with the modules that paint. #}
+    {# Not in base.html so /login and /setup never register a worker. No
+       modulepreload: it must not compete with the modules that paint. #}
     <script type="module" src="/static/js/pwa.js?v={{ layout.git_version }}"></script>
-    {# Offline reading: mirrors the reader's queue into the worker's cache and
-       blocks the actions that cannot work without a connection. Like pwa.js it
-       runs after paint and carries no modulepreload. #}
+    {# Offline reading; runs after paint, no modulepreload. #}
     <script type="module" src="/static/js/offline.js?v={{ layout.git_version }}"></script>
     {% block page_script %}{% endblock %}
 {% endblock %}
 
 {% block body %}
     <script type="application/json" id="rdrs-sidebar-bootstrap">{{ layout.sidebar_bootstrap_json|safe }}</script>
-    {# Navigation for a reader without JavaScript. `<rdrs-sidebar>` renders
-       nothing until `rdrs-sidebar.js` mounts, which leaves a scriptless reader
-       with no way out of whatever page they are on.
-
-       Server-rendering the *real* sidebar was measured and rejected (see that
-       file's header): its markup is ~3.5x the bootstrap JSON it would replace,
-       and logged-in responses are `no-store`, so the difference is paid on every
-       load. These bytes ship to everyone too, which is why this is destinations
-       only — no icons, no per-category tree. Categories and feeds are reachable
-       through their own index pages, so they are listed rather than expanded.
-
-       Measured in situ rather than guessed: this block costs 711 B raw and
-       **158 B gzipped** on the landing page (6952 vs 6241 raw, 2144 vs 1986
-       gzip -9). Compressing it on its own suggests ~530 B, which is wrong by
-       3.4x — it shares `<a href="/…` prefixes with the rest of the document.
-       158 B is under the 180 B the bootstrap JSON itself costs, and well under
-       the ~473 B delta that sank full SSR. Re-measure before adding icons or a
-       category tree here; that is what changes the answer.
-
-       Inside `<noscript>` the browser does not parse this as elements when
-       scripting is on, so `:has(.nav-fallback)` never matches there and the CSR
-       layout is untouched. #}
+    {# No-JS navigation, since `<rdrs-sidebar>` renders nothing without script.
+       Destinations only, to keep bytes low (measured 158 B gzipped); re-measure
+       before adding icons or a category tree. Inside `<noscript>` it isn't
+       parsed when scripting is on, so `:has(.nav-fallback)` never matches. #}
     <noscript>
         <nav class="nav-fallback" aria-label="Main navigation">
             <a class="nav-fallback-brand" href="/">rdrs</a>
@@ -63,8 +37,7 @@
             <a href="/entries">All</a>
             <a href="/entries/starred">Starred</a>
             <a href="/entries/summarized">Summarized</a>
-            {# Only for readers who turned offline reading on, which also keeps
-               this off the byte budget measured above for everyone else. #}
+            {# Only for readers with offline reading on. #}
             {% if layout.offline_keep > 0 %}<a href="/entries/offline">Offline</a>{% endif %}
             <a href="/categories">Categories</a>
             <a href="/feeds">Feeds</a>
@@ -74,8 +47,7 @@
             <a href="/user-settings">Preferences</a>
             <a href="/settings">Settings</a>
             {% if layout.is_admin %}<a href="/admin">Admin</a>{% endif %}
-            {# The scripted sign-out is a `fetch` DELETE behind an `href="#"`,
-               which a form cannot reproduce — hence `POST /logout`. #}
+            {# The scripted sign-out is a fetch DELETE; a form needs `POST /logout`. #}
             <form method="post" action="/logout" class="nav-fallback-logout">
                 {% call macros::csrf_field(layout.csrf_token) %}{% endcall %}
                 <button type="submit" data-testid="nav-fallback-logout">Sign out</button>

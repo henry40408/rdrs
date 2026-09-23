@@ -36,11 +36,8 @@ pub fn url_to_bucket(url: &str) -> u8 {
     (hasher.finish() % 60) as u8
 }
 
-/// Parameters for creating a new feed.
-///
-/// `Default` is for test fixtures, which only care about a field or two.
-/// Production call sites spell every field out, so adding one forces each of
-/// them to decide on it rather than silently inheriting `None`.
+/// Parameters for creating a new feed. `Default` is for test fixtures only;
+/// production sites spell out every field.
 #[derive(Default)]
 pub struct CreateFeedParams<'a> {
     pub category_id: i64,
@@ -187,8 +184,7 @@ pub async fn list_by_category(db: &Db, category_id: i64) -> AppResult<Vec<Feed>>
 pub async fn update_feed(db: &Db, params: &UpdateFeedParams<'_>) -> AppResult<Feed> {
     let bucket = url_to_bucket(params.url) as i64;
     let now = Utc::now();
-    // `RETURNING` + `fetch_optional`: `None` means no row matched (id/category
-    // mismatch) → `FeedNotFound`.
+    // `None` means no row matched → `FeedNotFound`.
     match query_opt!(
         db,
         Feed,
@@ -231,7 +227,6 @@ pub async fn delete_feed(db: &Db, id: i64, category_id: i64) -> AppResult<()> {
         return Err(AppError::FeedNotFound);
     }
 
-    // Clean up associated image
     image::delete_by_entity(db, image::ENTITY_FEED, id).await?;
 
     Ok(())
@@ -263,9 +258,7 @@ pub async fn update_fetch_result(
     Ok(())
 }
 
-/// Transactional sibling of [`update_fetch_result`] for the feed-sync unit of
-/// work, which upserts a whole feed's entries and records the fetch result in
-/// one transaction so the read side never observes a half-applied feed.
+/// Transactional [`update_fetch_result`], so readers never see a half-applied feed sync.
 pub async fn update_fetch_result_tx(
     tx: &mut Tx<'_>,
     id: i64,
@@ -292,8 +285,7 @@ pub async fn update_fetch_result_tx(
     Ok(())
 }
 
-/// Distinct owning user ids for the given feeds (a feed belongs to one
-/// category, which belongs to one user). Empty input → empty output.
+/// Distinct owning user ids for the given feeds.
 pub async fn owner_user_ids_for_feeds(db: &Db, feed_ids: &[i64]) -> AppResult<Vec<i64>> {
     if feed_ids.is_empty() {
         return Ok(Vec::new());
@@ -610,7 +602,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Feed should be deleted too
         assert!(find_by_id(&db, feed.id).await.unwrap().is_none());
     }
 
@@ -665,7 +656,6 @@ mod tests {
         let other_id = create_test_user(&db, "other").await;
         let category_id = create_test_category(&db, user_id, "Tech").await;
 
-        // No feeds yet.
         assert_eq!(count_by_user(&db, user_id).await.unwrap(), 0);
 
         for url in [

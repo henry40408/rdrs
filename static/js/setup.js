@@ -1,8 +1,4 @@
-// static/js/setup.js — the one-time /setup form, extracted from an inline
-// <script> so the page survives a strict `script-src 'self'`.
-//
-// This page exists only while the instance has no accounts; every later account
-// is created by an admin through /invite/{token}, a plain server-rendered form.
+// One-time /setup form (external module for `script-src 'self'`).
 
 const form = document.getElementById('setup-form');
 if (form) {

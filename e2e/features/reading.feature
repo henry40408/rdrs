@@ -90,8 +90,7 @@ Feature: Reading entries
     And I click "Load more"
     Then I see more than 30 entries in the entry list
 
-  # Entry 30 is the last row of the default page, so `j` from it is the first
-  # keystroke that needs the page after it.
+  # Entry 30 ends the default page, so `j` needs the next page.
   Scenario: Reading past the loaded page pulls the list forward and moves the selection
     Given the feed has 60 entries
     When I open the inbox
@@ -169,8 +168,7 @@ Feature: Reading entries
     When I press the "f" key
     Then I see a success flash "Marked as unread"
 
-  # Uses the All view so reading an entry doesn't drop it from the list —
-  # neighbour membership stays stable while we step through it.
+  # The All view keeps read entries in the list, so neighbours stay stable.
   Scenario: Reading pane Next and Previous open adjacent entries
     When I open the all entries page
     And I click the entry titled "Test Entry 3"
@@ -191,10 +189,8 @@ Feature: Reading entries
     When I press the "k" key
     Then the reading pane shows the title "Test Entry 2"
 
-  # Unread navigation uses snapshot semantics: entries read *during* this
-  # page view stay reachable (so "Previous" can return to the entry just
-  # read), while entries already read when the page loaded are skipped —
-  # the same set the list rendered.
+  # Snapshot semantics: entries read during this page view stay reachable;
+  # entries already read at load are skipped.
   Scenario: Unread navigation returns to the entry just read
     When I open the inbox
     And I click the entry titled "Test Entry 3"
@@ -230,12 +226,8 @@ Feature: Reading entries
     Then the reading-pane "Previous" button is enabled
     And the reading-pane "Next" button is disabled
 
-  # Regression: Fetch Full Content re-renders the pane for the *same* entry,
-  # resetting prev/next to their default disabled state. The neighbour
-  # re-resolve skipped re-enabling them because the entry id was unchanged,
-  # so the freshly-rendered buttons stayed disabled forever. Disabled buttons
-  # swallow taps, killing mobile navigation permanently (desktop j/k bypasses
-  # the buttons, which is why the breakage was mobile-only).
+  # Regression: Fetch Full Content re-rendered prev/next disabled for the same
+  # entry and never re-enabled them, breaking mobile navigation.
   @mobile
   Scenario: Reading-pane navigation survives Fetch Full Content on mobile
     Given I am viewing on a mobile screen
@@ -249,10 +241,8 @@ Feature: Reading entries
     When I navigate to the "Next" entry in the reading pane
     Then the reading pane shows the title "Test Entry 4"
 
-  # Regression: cancelPaneImages() used to drop `src` on every pane image,
-  # including the meta-row favicon, blanking it on the still-visible outgoing
-  # pane for the whole fragment fetch — a visible favicon flash on each switch.
-  # It must now only cancel the slow .reading-pane-article content images.
+  # Regression: cancelPaneImages() must only cancel article images, not blank
+  # the meta-row favicon during the fetch.
   Scenario: Switching entries does not blank the reading-pane favicon mid-load
     Given the "Reading Feed" feed has a favicon
     When I open the inbox
@@ -264,11 +254,8 @@ Feature: Reading entries
     When the delayed fragment response has settled
     Then the reading pane shows the title "Test Entry 2"
 
-  # Regression: every open sends the row's marker form back, and once the entry
-  # is read that fragment is byte-identical to what is already there. Replacing
-  # it anyway repaints the whole grid row — favicon included, which WebKit
-  # re-rasterizes — so the icons blinked on repeated clicks with nothing about
-  # the row actually changing. An identical row fragment is now skipped.
+  # Regression: replacing an identical row fragment made WebKit re-rasterize the
+  # favicon; identical fragments are now skipped.
   Scenario: Re-opening an entry that is already read leaves its row untouched
     Given the "Reading Feed" feed has a favicon
     When I open the inbox
@@ -303,9 +290,8 @@ Feature: Reading entries
     And I press the "?" key
     Then the help overlay descriptions are aligned
 
-  # The overlay's Shadow DOM stylesheet references design tokens with no
-  # fallback values, so a token renamed in app.css would silently render it
-  # unstyled — every other help assertion here would still pass.
+  # The overlay's Shadow DOM uses tokens without fallbacks, so a renamed token
+  # would silently unstyle it.
   Scenario: Help overlay picks up the document's design tokens
     When I open the inbox
     And I press the "?" key
