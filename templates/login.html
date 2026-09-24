@@ -9,7 +9,7 @@
 
 {% block body %}
 <div class="auth-layout">
-    <div class="auth-card">
+    <div class="auth-card"{% if let Some(n) = next %} data-next="{{ n }}"{% endif %}>
         {% call macros::flash(flash_messages) %}{% endcall %}
         <h1>rdrs</h1>
         {# Filled server-side after a failed native POST, or by login.js on the fetch path. #}
@@ -28,6 +28,7 @@
         {# Real action/method so a no-JS submit never puts the password in a GET URL. #}
         <form id="login-form" method="post" action="/login" data-testid="login-form">
             {% call macros::csrf_field(csrf_token) %}{% endcall %}
+            {% if let Some(n) = next %}<input type="hidden" name="next" value="{{ n }}">{% endif %}
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autocomplete="username" data-testid="username-input">

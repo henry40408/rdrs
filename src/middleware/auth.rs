@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use axum::{
     extract::{ConnectInfo, FromRequestParts, OptionalFromRequestParts, Request, State},
-    http::{HeaderValue, header, request::Parts},
+    http::{HeaderValue, Method, header, request::Parts},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -13,6 +13,7 @@ use time::Duration;
 
 use crate::AppState;
 use crate::error::AppError;
+use crate::handlers::return_to;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
@@ -328,12 +329,38 @@ pub struct PageAuthUser {
     pub csrf_token: String,
 }
 
-/// Redirect response for unauthorized page access
-pub struct LoginRedirect;
+/// Redirect to `/login` for unauthorized page access, remembering the page to
+/// return to after sign-in as `?next=`.
+#[derive(Debug, Default)]
+pub struct LoginRedirect {
+    next: Option<String>,
+}
+
+impl LoginRedirect {
+    /// Remembers `parts`' URL, if it is a page GET worth coming back to.
+    fn returning_to(parts: &Parts) -> Self {
+        let next = (parts.method == Method::GET)
+            .then(|| parts.uri.path_and_query())
+            .flatten()
+            .map(axum::http::uri::PathAndQuery::as_str)
+            .filter(|pq| *pq != "/")
+            .and_then(|pq| return_to::safe_return_to(pq, return_to::is_login_destination));
+        Self { next }
+    }
+}
 
 impl IntoResponse for LoginRedirect {
     fn into_response(self) -> Response {
-        FlashRedirect::warning("/login", "Please log in to continue.").into_response()
+        let location = match self.next {
+            Some(next) => format!(
+                "/login?{}",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("next", &next)
+                    .finish()
+            ),
+            None => "/login".to_string(),
+        };
+        FlashRedirect::warning(location, "Please log in to continue.").into_response()
     }
 }
 
@@ -344,19 +371,26 @@ impl FromRequestParts<AppState> for PageAuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let jar = CookieJar::from_request_parts(parts, state)
-            .await
-            .map_err(|_e| LoginRedirect)?;
+        match Self::authenticate(parts, state).await {
+            Some(user) => Ok(user),
+            None => Err(LoginRedirect::returning_to(parts)),
+        }
+    }
+}
 
-        let token = session_token_from_jar(&jar, &state.config.secret).ok_or(LoginRedirect)?;
+impl PageAuthUser {
+    async fn authenticate(parts: &mut Parts, state: &AppState) -> Option<Self> {
+        let jar = CookieJar::from_request_parts(parts, state).await.ok()?;
+
+        let token = session_token_from_jar(&jar, &state.config.secret)?;
 
         let Ok(Some(mut session)) = session::find_by_token(&state.db, &token).await else {
-            return Err(LoginRedirect);
+            return None;
         };
         if session.is_expired() {
             let _ = session::delete_session(&state.db, &token).await;
             audit::session_destroyed(&state.config.secret, &token, session.user_id, "expired");
-            return Err(LoginRedirect);
+            return None;
         }
         if let Ok(Some(new_expires_at)) = session::refresh_if_needed(&state.db, &session).await {
             audit::session_renewed(
@@ -370,10 +404,10 @@ impl FromRequestParts<AppState> for PageAuthUser {
         }
         let _ = session::touch_last_seen(&state.db, &session).await;
         let Ok(Some(user)) = user::find_by_id(&state.db, session.user_id).await else {
-            return Err(LoginRedirect);
+            return None;
         };
         if user.is_disabled() {
-            return Err(LoginRedirect);
+            return None;
         }
 
         let peer_ip = parts
@@ -387,7 +421,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
         )
         .is_some();
 
-        Ok(PageAuthUser {
+        Some(PageAuthUser {
             user,
             session,
             via_forward_auth,
@@ -471,20 +505,21 @@ impl FromRequestParts<AppState> for PageAdminUser {
         let page_auth_user =
             <PageAuthUser as FromRequestParts<AppState>>::from_request_parts(parts, state).await?;
 
+        // No `next` below: coming back would just be refused again.
         if page_auth_user.session.is_masquerading() {
             if let Some(original_user_id) = page_auth_user.session.original_user_id {
                 let Ok(Some(original_user)) = user::find_by_id(&state.db, original_user_id).await
                 else {
-                    return Err(LoginRedirect);
+                    return Err(LoginRedirect::default());
                 };
                 if !original_user.is_admin() {
-                    return Err(LoginRedirect);
+                    return Err(LoginRedirect::default());
                 }
             } else {
-                return Err(LoginRedirect);
+                return Err(LoginRedirect::default());
             }
         } else if !page_auth_user.user.is_admin() {
-            return Err(LoginRedirect);
+            return Err(LoginRedirect::default());
         }
 
         Ok(PageAdminUser {

@@ -294,6 +294,15 @@ async fn perform_login(
     ))
 }
 
+/// `POST /login` body: the credentials plus the page to land on afterwards.
+#[derive(Debug, Deserialize)]
+pub struct LoginForm {
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub next: Option<String>,
+}
+
 /// `POST /login` — no-JS form variant of [`login`]; failures re-render the
 /// form (200) with the same generic message as the JSON endpoint.
 pub async fn login_form(
@@ -301,13 +310,21 @@ pub async fn login_form(
     jar: CookieJar,
     headers: HeaderMap,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
-    axum::Form(req): axum::Form<LoginRequest>,
+    axum::Form(form): axum::Form<LoginForm>,
 ) -> Response {
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     // Read before `jar` is moved; a failed attempt re-renders the form.
     let csrf_token = crate::middleware::csrf_token_from_jar(&jar, &state.config.secret);
+    let next = crate::handlers::pages::login_next(form.next.as_deref());
+    let req = LoginRequest {
+        username: form.username,
+        password: form.password,
+    };
     match perform_login(&state, jar, &headers, peer, &req, "POST /login").await {
-        Ok((jar, _)) => (jar, Redirect::to("/")).into_response(),
+        Ok((jar, _)) => {
+            let location = next.as_deref().unwrap_or("/");
+            (jar, Redirect::to(location)).into_response()
+        }
         Err(e) => {
             let setup_available = user::count(&state.db)
                 .await
@@ -319,6 +336,7 @@ pub async fn login_form(
                 local_auth_enabled: !state.config.disable_local_auth,
                 csrf_token,
                 error: Some(login_error_message(&e)),
+                next,
             }
             .into_response()
         }

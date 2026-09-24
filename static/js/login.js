@@ -27,6 +27,13 @@ function bufferToBase64url(buffer) {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
+// Where to land after sign-in; the server validated it, this re-checks it is
+// a same-origin path before navigating.
+function nextPage() {
+    const next = document.querySelector('.auth-card')?.dataset.next || '';
+    return next.startsWith('/') && !next.startsWith('//') && !next.includes('\\') ? next : '/';
+}
+
 const loginForm = document.getElementById('login-form');
 if (loginForm) loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -44,7 +51,7 @@ if (loginForm) loginForm.addEventListener('submit', async (e) => {
         });
 
         if (response.ok) {
-            window.location.href = '/';
+            window.location.href = nextPage();
         } else {
             const data = await response.json();
             errorDiv.textContent = data.error || 'Login failed';
@@ -107,7 +114,7 @@ document.getElementById('passkey-login-btn')?.addEventListener('click', async ()
         });
 
         if (finishResponse.ok) {
-            window.location.href = '/';
+            window.location.href = nextPage();
         } else {
             const data = await finishResponse.json();
             throw new Error(data.error || 'Authentication failed');
