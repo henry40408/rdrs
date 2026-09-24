@@ -991,6 +991,131 @@ async fn test_search_page_with_results() {
     assert!(!body.contains("Other Topic"));
 }
 
+/// `admin` with `n` entries titled "Wombat {i}"; search pages hold 50.
+async fn app_with_wombats(n: usize) -> TestApp {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Cat"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "https://example.com/wombats.xml",
+        "Wombat Feed"
+    )
+    .unwrap();
+    for i in 0..n {
+        rdrs::db_execute!(
+            &app.db,
+            "INSERT INTO entry (feed_id, guid, title, content) VALUES ($1, $2, $3, $4)",
+            1_i64,
+            format!("wombat-{i}"),
+            format!("Wombat {i}"),
+            "<p>Burrowing.</p>"
+        )
+        .unwrap();
+    }
+    login(&mut app.server, "admin").await;
+    app
+}
+
+/// Entry ids linked from a search page or fragment, in order; nav links such
+/// as `/entries/read` are skipped.
+fn result_ids(html: &str) -> Vec<i64> {
+    html.split(r#"href="/entries/"#)
+        .skip(1)
+        .filter_map(|rest| rest[..rest.find('"')?].parse().ok())
+        .collect()
+}
+
+/// The Load More cursor, URL-encoded for the next request.
+fn load_more_after(html: &str) -> Option<String> {
+    let marker = r#"name="after" value=""#;
+    let start = html.find(marker)? + marker.len();
+    let raw = &html[start..start + html[start..].find('"')?];
+    Some(url::form_urlencoded::byte_serialize(raw.as_bytes()).collect())
+}
+
+#[tokio::test]
+async fn test_search_pages_through_every_match_once() {
+    let app = app_with_wombats(125).await;
+
+    let page = common::get_ok(&app.server, "/search?q=Wombat").await;
+    let mut ids = result_ids(&page);
+    assert_eq!(ids.len(), 50);
+    assert!(page.contains(r#"<li id="search-load-more""#));
+    // Scriptless submits must reach the page, so the markup leaves `fragment` to JS.
+    assert!(page.contains("data-swap-fragment"));
+    assert!(!page.contains(r#"name="fragment""#));
+
+    let mut after = load_more_after(&page);
+    while let Some(cursor) = after {
+        let fragment = common::get_ok(
+            &app.server,
+            &format!("/search?q=Wombat&fragment=1&after={cursor}"),
+        )
+        .await;
+        assert!(fragment.contains(r##"<template data-swap-target="#search-load-more">"##));
+        ids.extend(result_ids(&fragment));
+        after = load_more_after(&fragment);
+    }
+    let mut unique = ids.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(ids.len(), 125, "every match once: {ids:?}");
+    assert_eq!(unique.len(), 125, "no duplicates: {ids:?}");
+}
+
+#[tokio::test]
+async fn test_search_fragment_modes_and_document_navigation() {
+    let app = app_with_wombats(3).await;
+
+    // Live search: the whole results region, no layout.
+    let live = common::get_ok(&app.server, "/search?q=Wombat&fragment=1").await;
+    assert!(live.contains(r#"<template data-swap-target="[data-search-results]">"#));
+    assert!(!live.contains("<h1>Search</h1>"));
+    assert_eq!(result_ids(&live).len(), 3);
+
+    // Cleared field: back to the empty state.
+    let cleared = common::get_ok(&app.server, "/search?q=&fragment=1").await;
+    assert!(cleared.contains("Search your library"));
+
+    // A bookmarked or scriptless fragment URL still gets the page.
+    let document = app
+        .server
+        .get("/search?q=Wombat&fragment=1")
+        .add_header(
+            header::HeaderName::from_static("sec-fetch-dest"),
+            header::HeaderValue::from_static("document"),
+        )
+        .await;
+    document.assert_status_ok();
+    let document = document.text();
+    assert!(document.contains("<h1>Search</h1>"));
+    assert!(!document.contains("<template"));
+}
+
+#[tokio::test]
+async fn test_search_load_more_without_script_renders_the_next_page() {
+    let app = app_with_wombats(55).await;
+
+    let page = common::get_ok(&app.server, "/search?q=Wombat").await;
+    let cursor = load_more_after(&page).expect("a second page");
+    let next = common::get_ok(&app.server, &format!("/search?q=Wombat&after={cursor}")).await;
+    assert!(next.contains("<h1>Search</h1>"));
+    let first = result_ids(&page);
+    let second = result_ids(&next);
+    assert_eq!(second.len(), 5);
+    assert!(second.iter().all(|id| !first.contains(id)));
+    assert!(!next.contains(r#"id="search-load-more""#));
+}
+
 #[tokio::test]
 async fn test_search_page_no_results() {
     let (app, _) = app_signed_in_as("admin").await;

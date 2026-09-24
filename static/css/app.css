@@ -2380,6 +2380,11 @@ td input[type="text"] {
     max-width: none;
 }
 
+/* Results carry no list-pane inset, so neither does their Load More. */
+.search-load-more .load-more-form {
+    padding: 0;
+}
+
 /* Search-term highlight: gold wash + accent underline. */
 mark {
     background: linear-gradient(transparent 55%, var(--color-accent-subtle) 55%);

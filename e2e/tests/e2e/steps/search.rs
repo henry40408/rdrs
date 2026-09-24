@@ -3,7 +3,7 @@
 use anyhow::{Result, ensure};
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
-use rdrs_e2e::browser::{Viewport, WAIT_INTERVAL, WAIT_TIMEOUT};
+use rdrs_e2e::browser::Viewport;
 use rdrs_e2e::dom::{Dom, TextContent};
 use rdrs_e2e::first_column;
 use rdrs_e2e::seed::NewEntry;
@@ -34,6 +34,36 @@ async fn feed_with_titles(world: &mut RdrsWorld, step: &Step) -> Result<()> {
                 .link(format!("https://example.com/{username}/{i}"))
                 .content(format!("<p>{title}</p>"))
                 .published_offset(format!("-{} hours", i + 1))
+        })
+        .collect();
+    world.seeded_entries = seed.insert_entries(&entries).await?;
+    Ok(())
+}
+
+/// `count` entries titled "`title` N", newest first, in their own feed.
+#[given(expr = "I have {int} entries titled {string}")]
+async fn many_entries_titled(world: &mut RdrsWorld, count: usize, title: String) -> Result<()> {
+    let username = world.user.username.clone();
+    let user_id = world.user_id().await?;
+    let seed = world.seed().clone();
+    let category_id = seed.create_category(user_id, "Bulk Category").await?;
+    let feed_id = seed
+        .create_feed(
+            category_id,
+            &format!("https://example.com/{username}-bulk.xml"),
+            Some("Bulk Feed"),
+        )
+        .await?;
+    let entries: Vec<_> = (0..count)
+        .map(|i| {
+            NewEntry::new(
+                feed_id,
+                &format!("{username}-bulk-{i}"),
+                &format!("{title} {i}"),
+            )
+            .link(format!("https://example.com/{username}/bulk/{i}"))
+            .content(format!("<p>{title} {i}</p>"))
+            .published_offset(format!("-{} minutes", i + 1))
         })
         .collect();
     world.seeded_entries = seed.insert_entries(&entries).await?;
@@ -72,25 +102,59 @@ async fn narrow_viewport(world: &mut RdrsWorld) -> Result<()> {
     world.resize(Viewport::new(360, 720)).await
 }
 
-/// Enter is a full navigation; wait for the old document to go so assertions
-/// do not run against the previous page.
+/// Enter swaps the results in place; the address bar takes the query only
+/// once the swap has landed, so wait for that before asserting.
 #[when(expr = "I search for {string}")]
 async fn search_for(world: &mut RdrsWorld, term: String) -> Result<()> {
     let driver = world.driver()?;
     let field = driver.test_id("search-input").await?;
     field.clear().await?;
     field.send_keys(&term).await?;
-
-    let document = driver.find(By::Tag("html")).await?;
     // Sent to the field, not the focused element, so a stray re-render cannot
     // swallow the Enter.
     field.send_keys(Key::Enter).await?;
-    document
-        .wait_until()
-        .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
-        .stale()
-        .await?;
+    eventually_eq("the searched query in the URL", Some(term), || async {
+        let url = driver.current_url().await?;
+        Ok(url
+            .query_pairs()
+            .find(|(key, _)| key == "q")
+            .map(|(_, value)| value.into_owned()))
+    })
+    .await
+}
+
+/// Searches on a debounce; later assertions retry long enough.
+#[when(expr = "I type {string} into the search box")]
+async fn type_into_search(world: &mut RdrsWorld, term: String) -> Result<()> {
+    world.driver()?.fill("search-input", &term).await
+}
+
+/// Uses backspace: `WebDriver`'s Element Clear dispatches no `input`, so the
+/// debounced listener would never run.
+#[when("I clear the search box")]
+async fn clear_search(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    let field = driver.test_id("search-input").await?;
+    let value = field.prop("value").await?.unwrap_or_default();
+    field.click().await?;
+    field.send_keys(Key::End).await?;
+    for _ in 0..value.chars().count() {
+        field.send_keys(Key::Backspace).await?;
+    }
     Ok(())
+}
+
+#[when("I load more search results")]
+async fn load_more_results(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.click("search-load-more-btn").await
+}
+
+#[then("I see the search prompt")]
+async fn search_prompt(world: &mut RdrsWorld) -> Result<()> {
+    world
+        .driver()?
+        .expect_text_somewhere("Search your library")
+        .await
 }
 
 #[then("I see search results:")]

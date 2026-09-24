@@ -1,0 +1,12 @@
+{# The last item of the results list, so a Load More swap inserts the next
+   page's items inside the `<ul>`. JS adds `fragment=1` (`data-swap-fragment`);
+   without it the form navigates to the next page as a whole document. #}
+{% if let Some(after) = search.next_cursor %}
+<li id="search-load-more" class="search-load-more">
+    <form method="get" action="/search" data-swap="#search-load-more" data-swap-fragment class="load-more-form">
+        <input type="hidden" name="q" value="{{ search.q }}">
+        <input type="hidden" name="after" value="{{ after }}">
+        <button type="submit" data-testid="search-load-more-btn">Load More</button>
+    </form>
+</li>
+{% endif %}

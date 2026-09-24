@@ -1,0 +1,6 @@
+{# Search Load More response: the items (and the next Load More, if any) are
+   inserted before the old `#search-load-more`, which is then removed. #}
+<template data-swap-target="#search-load-more">
+{% for r in search.results %}{% include "_search_result.html" %}{% endfor %}
+{% include "_search_load_more.html" %}
+</template>

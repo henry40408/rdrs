@@ -11,9 +11,11 @@
             <div class="page-content page-content-full">
                 <h1>Search</h1>
 
-                <form method="get" action="/search">
+                {# Outside the swapped results, so typing keeps focus and caret. No
+                   `required`: clearing the field searches too, back to the empty state. #}
+                <form method="get" action="/search" data-swap="[data-search-results]" data-swap-fragment data-swap-latest data-sync-q data-live-search="300" data-live-search-min="2">
                     <div class="search-form-row">
-                        <input type="text" id="search-q" name="q" value="{{ q }}" placeholder="Find entries by title or content" aria-label="Search keywords" autofocus required data-testid="search-input">
+                        <input type="text" id="search-q" name="q" value="{{ search.q }}" placeholder="Find entries by title or content" aria-label="Search keywords" autocomplete="off" autofocus data-testid="search-input">
                         <button type="submit" data-testid="search-btn">Search</button>
                     </div>
                 </form>
@@ -32,38 +34,9 @@
                     </div>
                 </details>
 
-                {% if let Some(err) = error %}
-                    <div class="search-error" role="alert" data-testid="search-error">{{ err }}</div>
-                {% else if q.is_empty() %}
-                    <div class="empty-state">
-                        <h2 class="empty-state-title">Search your library</h2>
-                        <p class="empty-state-text">Type a keyword and press <kbd class="empty-state-kbd">Enter</kbd> to find entries by title or content.</p>
-                    </div>
-                {% else if results.is_empty() %}
-                    <div class="empty-state" data-testid="search-empty">
-                        <h2 class="empty-state-title">No matches</h2>
-                        <p class="empty-state-text">Nothing matched &ldquo;{{ q }}&rdquo;. Try another keyword or check the spelling.</p>
-                    </div>
-                {% else %}
-                    <ul class="search-results" data-testid="search-results">
-                        {% for r in results %}
-                            <li class="search-result">
-                                <a href="/entries/{{ r.entry_id }}" class="search-result-title">{{ r.title_html|safe }}</a>
-                                <div class="search-result-meta">
-                                    <span class="muted">{{ r.feed_title }}</span>
-                                    {% if !r.published_relative.is_empty() %}
-                                        <span class="muted">&middot;
-                                            {% if !r.published_at_iso.is_empty() %}<time datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>{% else %}{{ r.published_relative }}{% endif %}
-                                        </span>
-                                    {% endif %}
-                                </div>
-                                {% if !r.snippet_html.is_empty() %}
-                                    <p class="search-result-snippet">{{ r.snippet_html|safe }}</p>
-                                {% endif %}
-                            </li>
-                        {% endfor %}
-                    </ul>
-                {% endif %}
+                <div class="search-results-region" data-search-results>
+                    {% include "_search_results.html" %}
+                </div>
             </div>
         </main>
     </div>

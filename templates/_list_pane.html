@@ -8,9 +8,8 @@
     <div id="search-drawer" class="search-drawer{% if entries_layout.search.is_some() %} is-open{% endif %}" data-search-drawer>
         <div class="search-drawer-clip">
             <div class="search-drawer-row">
-                <form class="entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-entries-search>
+                <form class="entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-swap-fragment data-swap-latest data-sync-q data-live-search="250" data-entries-search>
                     {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
-                    <input type="hidden" name="fragment" value="1">
                     <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
                 </form>
                 <button type="button" class="filter-chip-btn" data-search-close data-testid="scoped-search-close" aria-label="Close search">{% call icons::close() %}{% endcall %}</button>

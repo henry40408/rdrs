@@ -8,6 +8,7 @@ use axum::{
 use crate::{
     AppState,
     error::{AppError, AppResult},
+    handlers::is_document_navigation,
     handlers::pages::{EntryRowView, ReadingPaneView, format_relative_time, row_view_from},
     handlers::return_to::path_and_query,
     middleware::auth::PageAuthUser,
@@ -122,12 +123,6 @@ fn referring_entry_list(headers: &HeaderMap) -> Option<url::Url> {
     let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok())?;
     let url = url::Url::parse(referer).ok()?;
     is_entry_list_path(url.path()).then_some(url)
-}
-
-/// A top-level navigation rather than a swap-helper `fetch()`; fragments here
-/// render blank as documents, so these must redirect instead.
-fn is_document_navigation(headers: &HeaderMap) -> bool {
-    headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document")
 }
 
 /// A prefetch/prerender, which must not mark the entry read. `Sec-Purpose`
