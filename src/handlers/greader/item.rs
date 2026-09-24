@@ -91,24 +91,18 @@ pub async fn stream_contents(
         effective_filter.category_id = Some(cat.id);
     }
 
-    let entries =
-        entry::list_by_user_with_continuation(&state.db, user_id, &effective_filter, &pagination)
-            .await?;
+    let rows = entry::list_by_user_with_continuation_ts(
+        &state.db,
+        user_id,
+        &effective_filter,
+        &pagination,
+    )
+    .await?;
 
-    let has_more = entries.len() as i64 > count;
     #[allow(clippy::cast_sign_loss, reason = "`count` is clamped to >= 0 upstream")]
-    let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
-
-    let continuation = if has_more {
-        match entries.last() {
-            Some(e) => entry::fetch_sort_ts(&state.db, e.entry.id, sort_order)
-                .await?
-                .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
-            None => None,
-        }
-    } else {
-        None
-    };
+    let count = count as usize;
+    let continuation = entry::next_continuation(&rows, count, |e| e.entry.id);
+    let entries: Vec<_> = rows.into_iter().take(count).map(|(e, _)| e).collect();
 
     let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
     let db_statuses =

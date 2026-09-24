@@ -188,6 +188,21 @@ async fn pg_dialect_smoke() {
         sort_ts, "2026-07-07 12:00:00",
         "cursor ts must be %Y-%m-%d %H:%M:%S"
     );
+    // The in-query `sort_ts` (`to_char` on PG) must match it exactly.
+    let listed = entry::list_by_user_with_continuation_ts(
+        &db,
+        user_id,
+        &filter,
+        &ContinuationParams {
+            oldest_first: false,
+            limit: 1,
+            sort_order: EntrySortOrder::PublishedAt,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed[0].1.as_deref(), Some(sort_ts.as_str()));
 
     let page2 = entry::list_by_user_with_continuation(
         &db,
