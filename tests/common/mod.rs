@@ -114,9 +114,19 @@ pub async fn app_signed_in_as(username: &str) -> (TestApp, (i64, i64)) {
 /// performs more than five *failed* attempts against one `AppState` needs its
 /// own disabled limiter (`RateLimiter::new(0, 60)`) instead of sharing this
 /// one.
+///
+/// Its buckets for `127.0.0.1` (and the `testuser` account) each get their own
+/// slot, so a test exhausting one bucket can assert another is untouched; a
+/// default limiter shares a slot with probability 1/16384 per pair.
 #[allow(dead_code)]
 pub fn test_rate_limiter() -> std::sync::Arc<rdrs::middleware::RateLimiter> {
-    std::sync::Arc::new(rdrs::middleware::RateLimiter::default())
+    let localhost = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    loop {
+        let limiter = rdrs::middleware::RateLimiter::default();
+        if limiter.separates_buckets(localhost, "testuser") {
+            return std::sync::Arc::new(limiter);
+        }
+    }
 }
 
 /// Echo the server-set `csrf_token` cookie back as a default `X-CSRF-Token`
