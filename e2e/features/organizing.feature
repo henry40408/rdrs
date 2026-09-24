@@ -52,8 +52,19 @@ Feature: Organizing feeds and categories
     And I am on the feeds page
     When I edit the feed "Old Feed" and set its title to "New Feed Name"
     Then I see a success flash "Feed updated."
-    When I am on the feeds page
-    Then the feeds table contains "New Feed Name"
+    And the feeds table contains "New Feed Name"
+
+  Scenario: Saving a feed edit returns to the filtered feeds list
+    Given I have a category named "Other Category"
+    And I have a feed "Cat A Feed" in category "My Category"
+    And I have a feed "Cat B Feed" in category "Other Category"
+    And I am on the feeds page
+    When I filter feeds by category "Other Category"
+    And I edit the feed "Cat B Feed" and set its title to "Renamed B"
+    Then I see a success flash "Feed updated."
+    And the feeds list is still filtered by category
+    And the feeds table contains "Renamed B"
+    And the feeds table does not contain "Cat A Feed"
 
   Scenario: Deleting a feed removes it from the feeds table
     Given I have a feed "Doomed Feed" in category "My Category"

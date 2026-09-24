@@ -1137,6 +1137,17 @@ pub async fn feeds_page(
     let cat_param = active_category
         .map(|c| format!("category={c}&"))
         .unwrap_or_default();
+    // This exact view, for row forms and the edit link to come back to.
+    let return_to = {
+        let mut q = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(c) = active_category {
+            q.append_pair("category", &c.to_string());
+        }
+        q.append_pair("sort", &active_sort);
+        q.append_pair("filter", &active_filter);
+        format!("/feeds?{}", q.finish())
+    };
+    let edit_query = crate::handlers::return_to::return_to_query(&return_to);
     let filter_links = vec![
         FeedFilterLink {
             label: "All",
@@ -1169,6 +1180,8 @@ pub async fn feeds_page(
             active_sort,
             active_category_id: active_category,
             filter_links,
+            return_to,
+            edit_query,
             fresh_max_days: time_format::FRESH_MAX_DAYS,
             warning_max_days: time_format::WARNING_MAX_DAYS,
             open_rate_shown,
@@ -1177,14 +1190,22 @@ pub async fn feeds_page(
     )
 }
 
+/// `?return_to=` on pages reached from a filtered list.
+#[derive(serde::Deserialize)]
+pub struct ReturnToQuery {
+    pub return_to: Option<String>,
+}
+
 /// `GET /feeds/{id}/edit`.
 pub async fn feed_edit_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
     Path(id): Path<i64>,
+    Query(query): Query<ReturnToQuery>,
 ) -> Result<Response, AppError> {
     let user_id = auth_user.user.id;
+    let return_to = crate::handlers::return_to::feeds_list(query.return_to.as_deref());
 
     let lookup = async {
         let f = feed::find_by_id(&state.db, id)
@@ -1245,6 +1266,7 @@ pub async fn feed_edit_page(
             csrf_token: auth_user.csrf_token.clone(),
             feed: feed_view,
             categories: cats,
+            return_to,
             user_agent_suggestions: crate::config::CUSTOM_USER_AGENT_SUGGESTIONS,
         },
     )
@@ -2548,6 +2570,10 @@ pub struct FeedsTemplate {
     pub active_sort: String,
     pub active_category_id: Option<i64>,
     pub filter_links: Vec<FeedFilterLink>,
+    /// This filtered view, posted back by row forms as `return_to`.
+    pub return_to: String,
+    /// `return_to` as a query string for the edit links.
+    pub edit_query: String,
     /// Thresholds `compute_freshness` applies, shown in the help text.
     pub fresh_max_days: i64,
     pub warning_max_days: i64,
@@ -2607,6 +2633,8 @@ pub struct FeedEditTemplate {
     pub csrf_token: String,
     pub feed: FeedEditView,
     pub categories: Vec<FeedCategoryOption>,
+    /// The list Save and Cancel return to; see [`crate::handlers::return_to`].
+    pub return_to: String,
     /// User-agent `<datalist>` options.
     pub user_agent_suggestions: &'static [&'static str],
 }

@@ -16,6 +16,7 @@
 
                 <form method="post" action="/feeds">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
+                    <input type="hidden" name="return_to" value="{{ return_to }}">
                     <div class="form-group">
                         <label for="url">Feed URL</label>
                         <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required data-testid="feed-url-input">
@@ -124,11 +125,13 @@
                                     <a href="/feeds/{{ feed.id }}/entries">entries</a>
                                     <form method="post" action="/feeds/{{ feed.id }}/refresh" class="form-inline">
                                         {% call macros::csrf_field(csrf_token) %}{% endcall %}
+                                        <input type="hidden" name="return_to" value="{{ return_to }}">
                                         <button type="submit" class="action-link">refresh</button>
                                     </form>
-                                    <a href="/feeds/{{ feed.id }}/edit">edit</a>
+                                    <a href="/feeds/{{ feed.id }}/edit?{{ edit_query }}">edit</a>
                                     <form method="post" action="/feeds/{{ feed.id }}/delete" class="form-inline" data-confirm="Delete this feed? This cannot be undone.">
                                         {% call macros::csrf_field(csrf_token) %}{% endcall %}
+                                        <input type="hidden" name="return_to" value="{{ return_to }}">
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 </td>

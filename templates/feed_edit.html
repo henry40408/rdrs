@@ -11,6 +11,7 @@
 
                 <form method="post" action="/feeds/{{ feed.id }}/edit">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
+                    <input type="hidden" name="return_to" value="{{ return_to }}">
                     <div class="form-group">
                         <label for="url">Feed URL</label>
                         <input type="text" id="url" name="url" value="{{ feed.url }}" required data-testid="feed-edit-url-input">
@@ -67,7 +68,7 @@
                     </details>
                     <div class="modal-actions">
                         <button type="submit" data-testid="feed-edit-save-btn">Save</button>
-                        <a href="/feeds" class="btn btn-secondary">Cancel</a>
+                        <a href="{{ return_to }}" class="btn btn-secondary">Cancel</a>
                     </div>
                 </form>
 
@@ -75,6 +76,7 @@
 
                 <form method="post" action="/feeds/{{ feed.id }}/fetch-metadata" data-confirm="Re-fetch metadata from the feed URL? This will overwrite current title/description/site URL.">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
+                    <input type="hidden" name="return_to" value="{{ return_to }}">
                     <button type="submit" class="btn-secondary">Re-fetch Metadata</button>
                 </form>
             </div>

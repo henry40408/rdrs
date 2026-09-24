@@ -167,6 +167,17 @@ async fn filter_feeds_by_category(world: &mut RdrsWorld, name: String) -> Result
     .await
 }
 
+/// A saved edit lands on the list it was opened from, not the edit page.
+#[then("the feeds list is still filtered by category")]
+async fn feeds_list_still_filtered(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    eventually("the filtered feeds list", || async {
+        let url = driver.current_url().await?;
+        Ok(url.path() == "/feeds" && url.query_pairs().any(|(key, _)| key == "category"))
+    })
+    .await
+}
+
 #[then(expr = "the feeds table contains {string}")]
 async fn feeds_table_contains(world: &mut RdrsWorld, text: String) -> Result<()> {
     world.driver()?.expect_text("feeds-table", &text).await

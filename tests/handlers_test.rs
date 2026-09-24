@@ -3451,10 +3451,7 @@ async fn test_edit_feed_form_succeeds() {
         .await;
 
     response.assert_status(StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.header(header::LOCATION),
-        format!("/feeds/{feed_id}/edit")
-    );
+    assert_eq!(response.header(header::LOCATION), "/feeds");
 
     let title: String = rdrs::query_scalar!(
         &app.db,
@@ -3472,6 +3469,93 @@ async fn test_edit_feed_form_succeeds() {
     .unwrap();
     assert_eq!(title, "Renamed Feed");
     assert_eq!(description, "New description");
+}
+
+#[tokio::test]
+async fn edit_feed_form_returns_to_the_filtered_list() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+    let (cat_id, feed_id) =
+        insert_test_feed(&app, "Tech", "https://return-to.example.com/feed.xml").await;
+    let back = format!("/feeds?category={cat_id}&sort=unread&filter=all");
+    let edit = |url: &str, return_to: &str| {
+        app.server
+            .post(&format!("/feeds/{feed_id}/edit"))
+            .form(&json!({
+                "url": url,
+                "category_id": cat_id,
+                "return_to": return_to,
+            }))
+    };
+
+    // Success lands on the list the edit link came from.
+    let response = edit("https://return-to.example.com/feed.xml", &back).await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), back.as_str());
+
+    // An error stays on the edit page, still carrying the list.
+    let response = edit("", &back).await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!(
+            "/feeds/{feed_id}/edit?return_to=%2Ffeeds%3Fcategory%3D{cat_id}%26sort%3Dunread%26filter%3Dall"
+        )
+    );
+
+    // Off-site or off-list targets fall back to the bare list.
+    for evil in [
+        "https://evil.example/feeds",
+        "//evil.example/feeds",
+        "/admin",
+    ] {
+        let response = edit("https://return-to.example.com/feed.xml", evil).await;
+        assert_eq!(response.header(header::LOCATION), "/feeds", "{evil}");
+    }
+}
+
+#[tokio::test]
+async fn feed_row_forms_return_to_the_filtered_list() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+    let (cat_id, feed_id) =
+        insert_test_feed(&app, "Tech", "https://row-forms.example.com/feed.xml").await;
+
+    let page = app
+        .server
+        .get(&format!("/feeds?category={cat_id}&sort=unread&filter=all"))
+        .await
+        .text();
+    let back = format!("/feeds?category={cat_id}&#38;sort=unread&#38;filter=all");
+    assert!(
+        page.contains(&format!(r#"name="return_to" value="{back}""#)),
+        "row forms carry the filtered view"
+    );
+    assert!(page.contains(&format!(
+        "/feeds/{feed_id}/edit?return_to=%2Ffeeds%3Fcategory%3D{cat_id}%26sort%3Dunread%26filter%3Dall"
+    )));
+
+    let edit_page = app
+        .server
+        .get(&format!(
+            "/feeds/{feed_id}/edit?return_to=%2Ffeeds%3Fcategory%3D{cat_id}%26sort%3Dunread%26filter%3Dall"
+        ))
+        .await
+        .text();
+    assert!(edit_page.contains(&format!(
+        r#"<a href="{back}" class="btn btn-secondary">Cancel</a>"#
+    )));
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{feed_id}/delete"))
+        .form(&json!({ "return_to": format!("/feeds?category={cat_id}&filter=errors") }))
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("/feeds?category={cat_id}&filter=errors")
+    );
 }
 
 #[tokio::test]
@@ -5110,10 +5194,7 @@ async fn test_edit_feed_form_blank_http_settings_clear_them() {
         .await;
 
     response.assert_status(StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.header(header::LOCATION),
-        format!("/feeds/{feed_id}/edit")
-    );
+    assert_eq!(response.header(header::LOCATION), "/feeds");
 
     let ua: Option<String> = rdrs::query_scalar!(
         &app.db,
