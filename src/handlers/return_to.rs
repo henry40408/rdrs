@@ -45,6 +45,18 @@ pub fn feeds_list(raw: Option<&str>) -> String {
         .unwrap_or_else(|| FEEDS_LIST.to_string())
 }
 
+/// Where sign-in may send the user: any page except the signed-out flows and
+/// the machine endpoints, which would loop or render nothing useful.
+pub fn is_login_destination(path: &str) -> bool {
+    const EXCLUDED: [&str; 7] = [
+        "/login", "/logout", "/setup", "/invite", "/api", "/reader", "/static",
+    ];
+    !EXCLUDED.iter().any(|prefix| {
+        path.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,6 +114,31 @@ mod tests {
             feeds_list(Some("/feeds?filter=stale")),
             "/feeds?filter=stale"
         );
+    }
+
+    #[test]
+    fn login_destinations_exclude_signed_out_and_machine_routes() {
+        for path in [
+            "/",
+            "/feeds",
+            "/entries/starred",
+            "/admin",
+            "/loginfo",
+            "/apis",
+        ] {
+            assert!(is_login_destination(path), "{path}");
+        }
+        for path in [
+            "/login",
+            "/logout",
+            "/setup",
+            "/invite/abc",
+            "/api/session",
+            "/reader/api/0/stream/contents",
+            "/static/js/app.js",
+        ] {
+            assert!(!is_login_destination(path), "{path}");
+        }
     }
 
     #[test]

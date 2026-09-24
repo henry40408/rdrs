@@ -2754,7 +2754,11 @@ async fn test_unknown_route_logged_out_redirects_to_login() {
 
     let response = app.server.get("/this-page-does-not-exist").await;
     response.assert_status_see_other();
-    assert_eq!(response.header(axum::http::header::LOCATION), "/login");
+    // Remembered like any page: after sign-in the reader sees the real 404.
+    assert_eq!(
+        response.header(axum::http::header::LOCATION),
+        "/login?next=%2Fthis-page-does-not-exist"
+    );
 }
 
 #[tokio::test]

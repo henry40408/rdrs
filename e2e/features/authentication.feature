@@ -9,6 +9,13 @@ Feature: Authentication
     When I sign in with my credentials
     Then I land on the unread inbox
 
+  Scenario: Signing in returns to the page I originally asked for
+    Given I am a registered user
+    When I visit "/entries/starred"
+    Then I am redirected to "/login?next=%2Fentries%2Fstarred"
+    When I sign in with my credentials
+    Then the browser is on "/entries/starred"
+
   Scenario: Sign-in with the wrong password shows an error
     Given I am a registered user
     When I sign in with the wrong password

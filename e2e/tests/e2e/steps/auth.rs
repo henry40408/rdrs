@@ -172,6 +172,12 @@ async fn sidebar_cache_cleared(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
+/// Exact path and query, e.g. a login URL carrying `?next=`.
+#[then(expr = "I am redirected to {string}")]
+async fn redirected_to(world: &mut RdrsWorld, path: String) -> Result<()> {
+    world.expect_path(&path).await
+}
+
 #[then("I am redirected to the login page")]
 async fn redirected_to_login(world: &mut RdrsWorld) -> Result<()> {
     world.expect_path("/login").await

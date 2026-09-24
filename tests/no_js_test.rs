@@ -136,6 +136,102 @@ async fn failed_login_re_renders_the_form_with_an_error() {
     );
 }
 
+/// Sign in through `/login?next=…` as a native form, returning the response.
+async fn login_with_next(server: &TestServer, login_url: &str) -> axum_test::TestResponse {
+    let html = server.get(login_url).await.text();
+    let next = html
+        .split(r#"name="next" value=""#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .map(|v| v.replace("&#38;", "&"));
+    let mut fields = vec![
+        ("_csrf", csrf_field(&html)),
+        ("username", "testuser".to_string()),
+        ("password", "vulture-mango-77-quilt".to_string()),
+    ];
+    if let Some(next) = next {
+        fields.push(("next", next));
+    }
+    server.post("/login").form(&fields).await
+}
+
+#[tokio::test]
+async fn signing_in_returns_to_the_page_that_asked_for_it() {
+    let server = create_test_server(default_test_config()).await;
+    setup_account(&server).await;
+
+    let refused = server.get("/feeds?category=3&filter=stale").await;
+    refused.assert_status(StatusCode::SEE_OTHER);
+    let login_url = refused.header(header::LOCATION);
+    assert_eq!(
+        login_url,
+        "/login?next=%2Ffeeds%3Fcategory%3D3%26filter%3Dstale"
+    );
+
+    let signed_in = login_with_next(&server, login_url.to_str().unwrap()).await;
+    signed_in.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        signed_in.header(header::LOCATION),
+        "/feeds?category=3&filter=stale"
+    );
+}
+
+#[tokio::test]
+async fn login_redirect_remembers_only_page_gets() {
+    let server = create_test_server(default_test_config()).await;
+    setup_account(&server).await;
+
+    // The home page is the default anyway.
+    assert_eq!(server.get("/").await.header(header::LOCATION), "/login");
+    // A POST can't be replayed as a GET.
+    let post = server
+        .post("/feeds/1/refresh")
+        .form(&[("_csrf", "x")])
+        .await;
+    assert_ne!(post.status_code(), StatusCode::OK);
+    if let Some(location) = post.maybe_header(header::LOCATION) {
+        assert_eq!(location, "/login");
+    }
+}
+
+#[tokio::test]
+async fn login_ignores_a_next_that_leaves_the_app() {
+    let mut server = create_test_server(default_test_config()).await;
+    setup_account(&server).await;
+
+    for evil in [
+        "https://evil.example/",
+        "//evil.example/",
+        "/\\evil.example/",
+        "/login",
+        "/api/session",
+    ] {
+        let login_url = format!(
+            "/login?{}",
+            url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("next", evil)
+                .finish()
+        );
+        let html = server.get(&login_url).await.text();
+        assert!(!html.contains(r#"name="next""#), "{evil} rendered");
+        assert!(!html.contains("data-next"), "{evil} rendered");
+
+        // Posted directly, it is still refused.
+        let login_page = server.get("/login").await.text();
+        let signed_in = server
+            .post("/login")
+            .form(&[
+                ("_csrf", csrf_field(&login_page)),
+                ("username", "testuser".to_string()),
+                ("password", "vulture-mango-77-quilt".to_string()),
+                ("next", evil.to_string()),
+            ])
+            .await;
+        assert_eq!(signed_in.header(header::LOCATION), "/", "{evil}");
+        server.clear_cookies();
+    }
+}
+
 #[tokio::test]
 async fn logged_in_mutation_succeeds_with_only_the_form_field() {
     let server = create_test_server(default_test_config()).await;

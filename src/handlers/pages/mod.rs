@@ -468,6 +468,21 @@ pub struct LoginTemplate {
     pub csrf_token: String,
     /// Sign-in error for the no-JS path.
     pub error: Option<String>,
+    /// Validated page to land on after sign-in; see [`login_next`].
+    pub next: Option<String>,
+}
+
+/// `/login?next=` (and the form's `next` field) when it is a safe, same-origin
+/// page; see [`crate::middleware::auth::LoginRedirect`].
+pub fn login_next(raw: Option<&str>) -> Option<String> {
+    use crate::handlers::return_to::{is_login_destination, safe_return_to};
+    raw.and_then(|r| safe_return_to(r, is_login_destination))
+}
+
+/// `/login` query.
+#[derive(serde::Deserialize)]
+pub struct LoginQuery {
+    pub next: Option<String>,
 }
 
 pub async fn login_page(
@@ -475,7 +490,9 @@ pub async fn login_page(
     State(state): State<AppState>,
     jar: axum_extra::extract::CookieJar,
     flash: Flash,
+    Query(query): Query<LoginQuery>,
 ) -> Response {
+    // Not `next`: a signed-in user sent here was refused a page (e.g. admin).
     if auth.is_some() {
         return Redirect::to("/").into_response();
     }
@@ -493,6 +510,7 @@ pub async fn login_page(
             local_auth_enabled: !state.config.disable_local_auth,
             csrf_token: crate::middleware::csrf_token_from_jar(&jar, &state.config.secret),
             error: None,
+            next: login_next(query.next.as_deref()),
         },
     )
         .into_response()
