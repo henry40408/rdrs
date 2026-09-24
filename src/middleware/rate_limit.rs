@@ -187,6 +187,27 @@ impl RateLimiter {
     pub fn release_account(&self, bucket: Bucket, username: &str) {
         self.per_account.release((bucket, username));
     }
+
+    /// Test support: whether every [`Bucket`] of `ip`, and of `account`, has a
+    /// slot to itself. Keys share a slot with probability 1/`SLOTS` by design
+    /// (only an over-throttle), which would flake a test asserting that one
+    /// bucket's exhaustion leaves another untouched.
+    #[doc(hidden)]
+    pub fn separates_buckets(&self, ip: IpAddr, account: &str) -> bool {
+        const ALL: [Bucket; 4] = [
+            Bucket::Login,
+            Bucket::AccountSetup,
+            Bucket::PasskeyProbe,
+            Bucket::PasswordChange,
+        ];
+        let distinct = |slots: [usize; 4]| {
+            let mut slots = slots;
+            slots.sort_unstable();
+            slots.windows(2).all(|pair| pair[0] != pair[1])
+        };
+        distinct(ALL.map(|bucket| self.per_ip.slot_index((bucket, ip))))
+            && distinct(ALL.map(|bucket| self.per_account.slot_index((bucket, account))))
+    }
 }
 
 impl Default for RateLimiter {
@@ -210,6 +231,34 @@ mod tests {
         decision == Decision::Allowed
     }
 
+    fn distinct_slots<K: Hash + Copy>(window: &Window, keys: &[K]) -> bool {
+        let mut slots: Vec<usize> = keys.iter().map(|k| window.slot_index(*k)).collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots.len() == keys.len()
+    }
+
+    /// A limiter whose keys under test land in distinct slots. Slots come from a
+    /// per-process random hash, so any two keys collide with probability
+    /// 1/`SLOTS` — by design only an over-throttle, but enough to flake a test
+    /// asserting that a second key is still free. Each `new` draws fresh hash
+    /// keys, so this almost always returns the first limiter.
+    fn separated(
+        max_attempts: u32,
+        window_secs: u64,
+        ips: &[(Bucket, IpAddr)],
+        accounts: &[(Bucket, &str)],
+    ) -> RateLimiter {
+        loop {
+            let limiter = RateLimiter::new(max_attempts, window_secs);
+            if distinct_slots(&limiter.per_ip, ips)
+                && distinct_slots(&limiter.per_account, accounts)
+            {
+                return limiter;
+            }
+        }
+    }
+
     #[test]
     fn allows_up_to_max_then_blocks() {
         let limiter = RateLimiter::new(5, 60);
@@ -231,9 +280,9 @@ mod tests {
 
     #[test]
     fn distinct_ips_have_independent_buckets() {
-        let limiter = RateLimiter::new(1, 60);
         let v4: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 3));
         let v6: IpAddr = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 3));
+        let limiter = separated(1, 60, &[(Bucket::Login, v4), (Bucket::Login, v6)], &[]);
 
         assert!(allowed(limiter.try_acquire(Bucket::Login, v4)));
         assert!(!allowed(limiter.try_acquire(Bucket::Login, v4)));
@@ -344,8 +393,13 @@ mod tests {
 
     #[test]
     fn password_change_has_its_own_budget() {
-        let limiter = RateLimiter::new(1, 60);
         let ip = ipv4(13);
+        let limiter = separated(
+            1,
+            60,
+            &[(Bucket::PasswordChange, ip), (Bucket::Login, ip)],
+            &[],
+        );
 
         assert!(allowed(limiter.try_acquire(Bucket::PasswordChange, ip)));
         assert!(!allowed(limiter.try_acquire(Bucket::PasswordChange, ip)));
@@ -356,8 +410,13 @@ mod tests {
     #[test]
     fn separate_buckets_do_not_share_budget() {
         // A refused registration must never spend the login budget.
-        let limiter = RateLimiter::new(5, 60);
         let ip = ipv4(6);
+        let limiter = separated(
+            5,
+            60,
+            &[(Bucket::AccountSetup, ip), (Bucket::Login, ip)],
+            &[],
+        );
 
         for _ in 0..5 {
             assert!(allowed(limiter.try_acquire(Bucket::AccountSetup, ip)));
@@ -369,8 +428,13 @@ mod tests {
 
     #[test]
     fn release_only_refunds_its_own_bucket() {
-        let limiter = RateLimiter::new(1, 60);
         let ip = ipv4(7);
+        let limiter = separated(
+            1,
+            60,
+            &[(Bucket::Login, ip), (Bucket::AccountSetup, ip)],
+            &[],
+        );
 
         assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
         limiter.release(Bucket::Login, ip);
@@ -430,8 +494,13 @@ mod tests {
 
     #[test]
     fn accounts_and_addresses_do_not_share_a_budget() {
-        let limiter = RateLimiter::new(1, 60);
         let ip = ipv4(21);
+        let limiter = separated(
+            1,
+            60,
+            &[],
+            &[(Bucket::Login, "alice"), (Bucket::Login, "bob")],
+        );
 
         for _ in 0..ACCOUNT_ATTEMPT_MULTIPLIER {
             assert!(allowed(limiter.try_acquire_account(Bucket::Login, "alice")));
@@ -447,7 +516,12 @@ mod tests {
     #[test]
     fn account_keys_are_case_sensitive_like_the_lookup() {
         // Must match `user::find_by_username`, or varying case would bypass it.
-        let limiter = RateLimiter::new(1, 60);
+        let limiter = separated(
+            1,
+            60,
+            &[],
+            &[(Bucket::Login, "admin"), (Bucket::Login, "Admin")],
+        );
 
         for _ in 0..ACCOUNT_ATTEMPT_MULTIPLIER {
             assert!(allowed(limiter.try_acquire_account(Bucket::Login, "admin")));
@@ -470,7 +544,12 @@ mod tests {
 
     #[test]
     fn account_buckets_are_independent_of_each_other() {
-        let limiter = RateLimiter::new(1, 60);
+        let limiter = separated(
+            1,
+            60,
+            &[],
+            &[(Bucket::Login, "admin"), (Bucket::PasswordChange, "admin")],
+        );
 
         for _ in 0..ACCOUNT_ATTEMPT_MULTIPLIER {
             assert!(allowed(limiter.try_acquire_account(Bucket::Login, "admin")));
@@ -483,6 +562,35 @@ mod tests {
         assert!(allowed(
             limiter.try_acquire_account(Bucket::PasswordChange, "admin")
         ));
+    }
+
+    /// What [`separated`] steers around: keys sharing a slot share a budget.
+    /// That may over-throttle the innocent key, never under-throttle either.
+    #[test]
+    fn colliding_keys_only_over_throttle() {
+        let limiter = RateLimiter::new(1, 60);
+        let alice = limiter.per_account.slot_index((Bucket::Login, "alice"));
+        // 1M names miss a 1/16384 slot with probability ~e^-61.
+        let twin = (0u32..1_000_000)
+            .map(|i| format!("user{i}"))
+            .find(|name| {
+                limiter
+                    .per_account
+                    .slot_index((Bucket::Login, name.as_str()))
+                    == alice
+            })
+            .expect("some name shares alice's slot");
+
+        for _ in 0..ACCOUNT_ATTEMPT_MULTIPLIER {
+            assert!(allowed(limiter.try_acquire_account(Bucket::Login, "alice")));
+        }
+        assert!(!allowed(
+            limiter.try_acquire_account(Bucket::Login, "alice")
+        ));
+        assert!(
+            !allowed(limiter.try_acquire_account(Bucket::Login, &twin)),
+            "a colliding key is throttled along with alice"
+        );
     }
 
     #[test]
