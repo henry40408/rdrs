@@ -164,6 +164,15 @@ struct EntryWithFeedRow {
     custom_referrer: Option<String>,
 }
 
+/// [`EntryWithFeedRow`] plus its continuation-cursor timestamp, selected as
+/// `sort_ts` in the same query so the next cursor needs no second lookup.
+#[derive(sqlx::FromRow)]
+struct EntryWithFeedTsRow {
+    #[sqlx(flatten)]
+    row: EntryWithFeedRow,
+    sort_ts: Option<String>,
+}
+
 impl From<EntryWithFeedRow> for EntryWithFeed {
     fn from(r: EntryWithFeedRow) -> Self {
         EntryWithFeed {
@@ -244,6 +253,35 @@ async fn fetch_entries_with_feed(
         }
     };
     Ok(rows.into_iter().map(EntryWithFeed::from).collect())
+}
+
+async fn fetch_entries_with_feed_ts(
+    db: &Db,
+    sql: String,
+    binds: Vec<Bind>,
+) -> Result<Vec<(EntryWithFeed, Option<String>)>, sqlx::Error> {
+    let rows = match db.inner() {
+        DbInner::Sqlite(pool) => {
+            bind_all!(
+                sqlx::query_as::<sqlx::Sqlite, EntryWithFeedTsRow>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        DbInner::Postgres(pool) => {
+            bind_all!(
+                sqlx::query_as::<sqlx::Postgres, EntryWithFeedTsRow>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_all(pool)
+            .await?
+        }
+    };
+    Ok(rows
+        .into_iter()
+        .map(|r| (EntryWithFeed::from(r.row), r.sort_ts))
+        .collect())
 }
 
 async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
@@ -386,20 +424,24 @@ pub async fn find_by_id_for_user(
 }
 
 /// Sort-field value as the exact cursor TEXT; `None` if the entry doesn't exist.
+/// The column a sort order pages by, over the `entry e` alias.
+fn sort_column(sort_order: EntrySortOrder) -> &'static str {
+    match sort_order {
+        EntrySortOrder::ReadAt => "e.read_at",
+        EntrySortOrder::StarredAt => "e.starred_at",
+        EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
+    }
+}
+
 pub async fn fetch_sort_ts(
     db: &Db,
     entry_id: i64,
     sort_order: EntrySortOrder,
 ) -> AppResult<Option<String>> {
-    let column_expr = match sort_order {
-        EntrySortOrder::ReadAt => "read_at",
-        EntrySortOrder::StarredAt => "starred_at",
-        EntrySortOrder::PublishedAt => "COALESCE(published_at, created_at)",
-    };
     // Must match the WHERE predicate's form: raw TEXT on SQLite, `to_char` on PG.
     // See `Dialect::cursor_ts`.
-    let ts_expr = Dialect::from_db(db).cursor_ts(column_expr);
-    let sql = format!("SELECT {ts_expr} FROM entry WHERE id = $1");
+    let ts_expr = Dialect::from_db(db).cursor_ts(sort_column(sort_order));
+    let sql = format!("SELECT {ts_expr} FROM entry e WHERE e.id = $1");
     let r = match db.inner() {
         DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
@@ -1212,13 +1254,15 @@ pub async fn list_ids_by_user(
         .map_err(AppError::Database)
 }
 
-/// List entries with continuation-based pagination (for Google Reader stream/contents).
-pub async fn list_by_user_with_continuation(
+/// SQL and binds for a continuation page; `extra_select` is appended to the
+/// SELECT list.
+fn continuation_query(
     db: &Db,
     user_id: i64,
     filter: &EntryFilter,
     pagination: &ContinuationParams,
-) -> AppResult<Vec<EntryWithFeed>> {
+    extra_select: &str,
+) -> (String, Vec<Bind>) {
     let dialect = Dialect::from_db(db);
     let mut conditions = vec!["c.user_id = $1".to_string()];
     let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
@@ -1263,7 +1307,7 @@ pub async fn list_by_user_with_continuation(
 
     let limit_idx = binds.len() + 1;
     let sql = format!(
-        "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN} \
+        "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}{extra_select} \
          FROM entry e{entry_hint} \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
@@ -1274,9 +1318,56 @@ pub async fn list_by_user_with_continuation(
     );
 
     binds.push(Bind::Int(pagination.limit));
+    (sql, binds)
+}
+
+/// List entries with continuation-based pagination (for Google Reader stream/contents).
+pub async fn list_by_user_with_continuation(
+    db: &Db,
+    user_id: i64,
+    filter: &EntryFilter,
+    pagination: &ContinuationParams,
+) -> AppResult<Vec<EntryWithFeed>> {
+    let (sql, binds) = continuation_query(db, user_id, filter, pagination, "");
     fetch_entries_with_feed(db, sql, binds)
         .await
         .map_err(AppError::Database)
+}
+
+/// As [`list_by_user_with_continuation`], each row paired with its cursor
+/// timestamp (what [`fetch_sort_ts`] would return for it).
+pub async fn list_by_user_with_continuation_ts(
+    db: &Db,
+    user_id: i64,
+    filter: &EntryFilter,
+    pagination: &ContinuationParams,
+) -> AppResult<Vec<(EntryWithFeed, Option<String>)>> {
+    let ts_expr = Dialect::from_db(db).cursor_ts(sort_column(pagination.sort_order));
+    let (sql, binds) = continuation_query(
+        db,
+        user_id,
+        filter,
+        pagination,
+        &format!(", {ts_expr} AS sort_ts"),
+    );
+    fetch_entries_with_feed_ts(db, sql, binds)
+        .await
+        .map_err(AppError::Database)
+}
+
+/// The next continuation cursor for a page fetched with `page_size + 1` rows:
+/// from the last kept row, or `None` when the look-ahead row is absent.
+pub fn next_continuation<T>(
+    rows: &[(T, Option<String>)],
+    page_size: usize,
+    id: impl Fn(&T) -> i64,
+) -> Option<String> {
+    if rows.len() <= page_size {
+        return None;
+    }
+    let (last, ts) = rows.get(page_size.checked_sub(1)?)?;
+    ts.as_deref()
+        .map(|ts| ContinuationCursor::encode_composite(ts, id(last)))
 }
 
 /// Mark a feed's unread entries read, optionally only those older than
@@ -3527,6 +3618,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ts.as_deref(), Some("2026-04-03 12:00:00"));
+    }
+
+    /// The in-query `sort_ts` must be byte-identical to [`fetch_sort_ts`], or a
+    /// cursor built from it would skip or repeat rows at the page boundary.
+    #[tokio::test]
+    async fn listed_sort_ts_matches_fetch_sort_ts_for_every_order() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
+        for (guid, published) in [("g1", Some("2026-04-01 08:00:00")), ("g2", None)] {
+            crate::db_execute!(
+                &db,
+                "INSERT INTO entry (feed_id, guid, published_at, read_at, starred_at) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                feed_id,
+                guid,
+                published,
+                "2026-04-03 12:00:00",
+                "2026-04-02 09:30:00"
+            )
+            .unwrap();
+        }
+
+        for sort_order in [
+            EntrySortOrder::PublishedAt,
+            EntrySortOrder::ReadAt,
+            EntrySortOrder::StarredAt,
+        ] {
+            let params = ContinuationParams {
+                limit: 10,
+                sort_order,
+                ..Default::default()
+            };
+            let rows =
+                list_by_user_with_continuation_ts(&db, user_id, &EntryFilter::default(), &params)
+                    .await
+                    .unwrap();
+            assert_eq!(rows.len(), 2);
+            for (e, ts) in &rows {
+                let expected = fetch_sort_ts(&db, e.entry.id, sort_order).await.unwrap();
+                assert!(ts.is_some(), "{sort_order:?}");
+                assert_eq!(*ts, expected, "{sort_order:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn next_continuation_uses_the_last_kept_row() {
+        let rows = [
+            (1_i64, Some("t1".to_string())),
+            (2, Some("t2".to_string())),
+            (3, None),
+        ];
+        assert_eq!(
+            next_continuation(&rows, 2, |id| *id).as_deref(),
+            Some("t2|2")
+        );
+        // No look-ahead row: no next page.
+        assert_eq!(next_continuation(&rows, 3, |id| *id), None);
+        assert_eq!(next_continuation(&rows[..0], 0, |id| *id), None);
     }
 
     #[tokio::test]

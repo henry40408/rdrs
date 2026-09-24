@@ -257,25 +257,20 @@ pub(crate) async fn build_entries_page(
             nt: None,
             sort_order: sort,
         };
-        let rows =
-            entry::list_by_user_with_continuation(&state.db, user_id, &filter, &params).await?;
+        let mut rows =
+            entry::list_by_user_with_continuation_ts(&state.db, user_id, &filter, &params)
+                .await?;
         #[allow(
             clippy::cast_sign_loss,
             reason = "`entries_page_size` clamps to MIN..=MAX_ENTRIES_PER_PAGE, so this is small and positive"
         )]
-        let kept_len = rows.len().min(page_size as usize);
+        let page_size = page_size as usize;
         // Cursor from the last kept row, not the dropped sentinel.
-        let next = if rows.len() as i64 > page_size {
-            match rows.iter().take(kept_len).next_back() {
-                Some(e) => entry::fetch_sort_ts(&state.db, e.entry.id, sort)
-                    .await?
-                    .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
-                None => None,
-            }
-        } else {
-            None
-        };
-        let ids: Vec<i64> = rows.iter().take(kept_len).map(|e| e.entry.id).collect();
+        let next = entry::next_continuation(&rows, page_size, |e| e.entry.id);
+        rows.truncate(page_size);
+        let rows: Vec<entry::EntryWithFeed> = rows.into_iter().map(|(e, _)| e).collect();
+        let kept_len = rows.len();
+        let ids: Vec<i64> = rows.iter().map(|e| e.entry.id).collect();
         let statuses = entry_summary::get_statuses_for_entries(&state.db, user_id, &ids).await?;
         Ok::<_, AppError>((rows, kept_len, next, statuses))
     }
