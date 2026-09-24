@@ -9,6 +9,7 @@ use crate::{
     AppState,
     error::{AppError, AppResult},
     handlers::pages::{EntryRowView, ReadingPaneView, format_relative_time, row_view_from},
+    handlers::return_to::path_and_query,
     middleware::auth::PageAuthUser,
     middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
@@ -121,13 +122,6 @@ fn referring_entry_list(headers: &HeaderMap) -> Option<url::Url> {
     let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok())?;
     let url = url::Url::parse(referer).ok()?;
     is_entry_list_path(url.path()).then_some(url)
-}
-
-fn path_and_query(url: &url::Url) -> String {
-    match url.query() {
-        Some(q) => format!("{}?{}", url.path(), q),
-        None => url.path().to_string(),
-    }
 }
 
 /// A top-level navigation rather than a swap-helper `fetch()`; fragments here

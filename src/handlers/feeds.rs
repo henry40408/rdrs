@@ -1,6 +1,6 @@
 use axum::{
     Form,
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, State, rejection::FormRejection},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
+use crate::handlers::return_to::{FEEDS_LIST, feeds_list, return_to_query};
 use crate::middleware::AuthUser;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::{category, feed};
@@ -15,11 +16,37 @@ use crate::services::{feed_discovery, feed_sync, opml};
 use url::Url;
 
 // Form-POST endpoints for the SSR /feeds page, answered with FlashRedirect.
+// Each lands back on the filtered list it came from (`return_to`).
+
+/// A form whose only field besides `_csrf` is where to land afterwards.
+#[derive(Debug, Deserialize)]
+pub struct ReturnToForm {
+    #[serde(default)]
+    pub return_to: Option<String>,
+}
+
+/// `return_to` from a bodyless-tolerant form: a POST without a form body (an
+/// API client, a test) still lands on the bare list.
+fn back_from(form: Result<Form<ReturnToForm>, FormRejection>) -> String {
+    let raw = form.ok().and_then(|Form(f)| f.return_to);
+    feeds_list(raw.as_deref())
+}
+
+/// `/feeds/{id}/edit`, carrying `back` unless it is the bare list.
+fn edit_path(id: i64, back: &str) -> String {
+    if back == FEEDS_LIST {
+        format!("/feeds/{id}/edit")
+    } else {
+        format!("/feeds/{id}/edit?{}", return_to_query(back))
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateFeedForm {
     pub url: String,
     pub category_id: i64,
+    #[serde(default)]
+    pub return_to: Option<String>,
 }
 
 pub async fn create_feed_form(
@@ -27,9 +54,10 @@ pub async fn create_feed_form(
     auth_user: AuthUser,
     Form(req): Form<CreateFeedForm>,
 ) -> impl IntoResponse {
+    let back = feeds_list(req.return_to.as_deref());
     let url = req.url.trim().to_string();
     if url.is_empty() {
-        return FlashRedirect::error("/feeds", "Feed URL cannot be empty").into_response();
+        return FlashRedirect::error(back, "Feed URL cannot be empty").into_response();
     }
     let user_id = auth_user.user.id;
     let category_id = req.category_id;
@@ -39,13 +67,13 @@ pub async fn create_feed_form(
         .await
         .is_ok_and(|c| c.is_some());
     if !owned {
-        return FlashRedirect::error("/feeds", "Invalid category").into_response();
+        return FlashRedirect::error(back, "Invalid category").into_response();
     }
 
     let discovered = match feed_discovery::discover_feed(&url, &user_agent, &state.fetcher).await {
         Ok(d) => d,
         Err(e) => {
-            return FlashRedirect::error("/feeds", format!("Failed to discover feed: {e}"))
+            return FlashRedirect::error(back, format!("Failed to discover feed: {e}"))
                 .into_response();
         }
     };
@@ -82,13 +110,13 @@ pub async fn create_feed_form(
     match result {
         Ok(()) => {
             state.sidebar_cache.bust(user_id);
-            FlashRedirect::success("/feeds", "Feed added.").into_response()
+            FlashRedirect::success(back, "Feed added.").into_response()
         }
         Err(AppError::FeedExists) => {
-            FlashRedirect::error("/feeds", "Feed already subscribed").into_response()
+            FlashRedirect::error(back, "Feed already subscribed").into_response()
         }
-        Err(AppError::Validation(msg)) => FlashRedirect::error("/feeds", msg).into_response(),
-        _ => FlashRedirect::error("/feeds", "Failed to add feed").into_response(),
+        Err(AppError::Validation(msg)) => FlashRedirect::error(back, msg).into_response(),
+        _ => FlashRedirect::error(back, "Failed to add feed").into_response(),
     }
 }
 
@@ -110,6 +138,8 @@ pub struct EditFeedForm {
     pub custom_referrer: Option<String>,
     #[serde(default)]
     pub http2_disabled: Option<String>,
+    #[serde(default)]
+    pub return_to: Option<String>,
 }
 
 /// Absent keeps `stored`; blank clears; anything else wins after trimming.
@@ -133,7 +163,9 @@ pub async fn edit_feed_form(
     Path(id): Path<i64>,
     Form(req): Form<EditFeedForm>,
 ) -> impl IntoResponse {
-    let edit_path = format!("/feeds/{id}/edit");
+    // Success returns to the list; errors stay here, still carrying `back`.
+    let back = feeds_list(req.return_to.as_deref());
+    let edit_path = edit_path(id, &back);
     let new_url = req.url.trim().to_string();
     if new_url.is_empty() {
         return FlashRedirect::error(edit_path, "Feed URL cannot be empty").into_response();
@@ -202,13 +234,10 @@ pub async fn edit_feed_form(
     match result {
         Ok(()) => {
             state.sidebar_cache.bust(user_id);
-            FlashRedirect::success(format!("/feeds/{id}/edit"), "Feed updated.").into_response()
+            FlashRedirect::success(back, "Feed updated.").into_response()
         }
-        Err(AppError::Validation(msg)) => {
-            FlashRedirect::error(format!("/feeds/{id}/edit"), msg).into_response()
-        }
-        _ => FlashRedirect::error(format!("/feeds/{id}/edit"), "Failed to update feed")
-            .into_response(),
+        Err(AppError::Validation(msg)) => FlashRedirect::error(edit_path, msg).into_response(),
+        _ => FlashRedirect::error(edit_path, "Failed to update feed").into_response(),
     }
 }
 
@@ -216,7 +245,9 @@ pub async fn delete_feed_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
     Path(id): Path<i64>,
+    form: Result<Form<ReturnToForm>, FormRejection>,
 ) -> impl IntoResponse {
+    let back = back_from(form);
     let user_id = auth_user.user.id;
     let result: AppResult<()> = async {
         let f = feed::find_by_id(&state.db, id)
@@ -232,12 +263,12 @@ pub async fn delete_feed_form(
     match result {
         Ok(()) => {
             state.sidebar_cache.bust(user_id);
-            FlashRedirect::success("/feeds", "Feed deleted.").into_response()
+            FlashRedirect::success(back, "Feed deleted.").into_response()
         }
         Err(AppError::FeedNotFound) => {
-            FlashRedirect::error("/feeds", "Feed not found.").into_response()
+            FlashRedirect::error(back, "Feed not found.").into_response()
         }
-        _ => FlashRedirect::error("/feeds", "Failed to delete feed.").into_response(),
+        _ => FlashRedirect::error(back, "Failed to delete feed.").into_response(),
     }
 }
 
@@ -245,7 +276,9 @@ pub async fn refresh_feed_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
     Path(id): Path<i64>,
+    form: Result<Form<ReturnToForm>, FormRejection>,
 ) -> impl IntoResponse {
+    let back = back_from(form);
     let user_id = auth_user.user.id;
     let owned = async {
         let Some(f) = feed::find_by_id(&state.db, id).await? else {
@@ -260,7 +293,7 @@ pub async fn refresh_feed_form(
     .await
     .unwrap_or(false);
     if !owned {
-        return FlashRedirect::error("/feeds", "Feed not found").into_response();
+        return FlashRedirect::error(back, "Feed not found").into_response();
     }
     match feed_sync::refresh_feed(
         state.db.clone(),
@@ -275,7 +308,7 @@ pub async fn refresh_feed_form(
                 state.sidebar_cache.bust(user_id);
             }
             FlashRedirect::success(
-                "/feeds",
+                back,
                 format!(
                     "Refreshed: {} new, {} updated.",
                     r.new_entries, r.updated_entries
@@ -283,7 +316,7 @@ pub async fn refresh_feed_form(
             )
             .into_response()
         }
-        Err(e) => FlashRedirect::error("/feeds", format!("Refresh failed: {e}")).into_response(),
+        Err(e) => FlashRedirect::error(back, format!("Refresh failed: {e}")).into_response(),
     }
 }
 
@@ -291,9 +324,11 @@ pub async fn fetch_metadata_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
     Path(id): Path<i64>,
+    form: Result<Form<ReturnToForm>, FormRejection>,
 ) -> impl IntoResponse {
     let user_id = auth_user.user.id;
-    let edit_path = format!("/feeds/{id}/edit");
+    let back = back_from(form);
+    let edit_path = edit_path(id, &back);
 
     let feed_owned = async {
         let Some(f) = feed::find_by_id(&state.db, id).await? else {
@@ -311,7 +346,8 @@ pub async fn fetch_metadata_form(
     .ok()
     .flatten();
     let Some(feed) = feed_owned else {
-        return FlashRedirect::error(edit_path, "Feed not found").into_response();
+        // No edit page to return to.
+        return FlashRedirect::error(back, "Feed not found").into_response();
     };
 
     let user_agent = state.config.user_agent.clone();
