@@ -38,32 +38,48 @@ function installSwap() {
         const target = form.getAttribute('data-swap');
         const method = (form.method || 'GET').toUpperCase();
         const init = { method };
-        const controller = form.hasAttribute('data-cancel-swap') ? new AbortController() : null;
+        const cancellable = form.hasAttribute('data-cancel-swap');
+        // `data-swap-latest`: a resubmit (search-as-you-type) supersedes the
+        // request in flight, so a slow earlier response can't land last.
+        const latest = form.hasAttribute('data-swap-latest');
+        if (latest) abortFormSwap(form);
+        const controller = cancellable || latest ? new AbortController() : null;
         if (controller) {
             init.signal = controller.signal;
             formSwapAborts.set(form, controller);
         }
         let url = form.action;
+        let options;
         if (method === 'GET') {
             // Otherwise hidden inputs (e.g. Load More's `after=`) are dropped.
             const params = new URLSearchParams(new FormData(form));
             const sep = url.includes('?') ? '&' : '?';
+            // `data-swap-fragment`: the markup leaves `fragment=1` out so a
+            // scriptless submit gets the page; errors fall back to that page too.
+            if (form.hasAttribute('data-swap-fragment')) {
+                options = { fallbackUrl: url + sep + params.toString() };
+                params.set('fragment', '1');
+            }
             url = url + sep + params.toString();
         } else {
             init.body = new FormData(form);
         }
-        setFormBusy(form, { cancellable: !!controller });
+        const submittedQ = form.matches('[data-sync-q]') ? new FormData(form).get('q') : null;
+        setFormBusy(form, { cancellable });
         try {
-            await performSwap(url, init, target);
+            const swapped = await performSwap(url, init, target, options);
             // Mirror the search into the address bar so refresh/share reproduce it
             // and clearing removes a stale `?q=`.
-            if (form.matches('[data-entries-search]')) {
-                syncScopedSearchParam(form);
+            if (swapped !== false && submittedQ !== null) {
+                syncSearchParam(submittedQ);
             }
         } finally {
             // On a POST error the form is still mounted and gets its button back.
-            formSwapAborts.delete(form);
-            clearFormBusy(form);
+            // A superseded request leaves the busy state to its successor.
+            if (!controller || formSwapAborts.get(form) === controller) {
+                formSwapAborts.delete(form);
+                clearFormBusy(form);
+            }
         }
     });
 }
@@ -530,14 +546,15 @@ function setEntryParam(entryId, options) {
     });
 }
 
-// replaceState, never push: typing refines a filter, not history.
-function syncScopedSearchParam(form) {
-    const input = form.querySelector('input[name="q"]');
-    if (!input) return;
+// replaceState, never push: typing refines a filter, not history. Takes the
+// submitted value, which the input may have moved past; drops a stale `after`
+// from a scriptless Load More page.
+function syncSearchParam(submitted) {
     const u = new URL(window.location.href);
-    const q = input.value.trim();
+    const q = String(submitted).trim();
     if (q) u.searchParams.set('q', q);
     else u.searchParams.delete('q');
+    u.searchParams.delete('after');
     window.history.replaceState({}, '', u);
 }
 
@@ -1622,19 +1639,27 @@ function installSearchDrawer() {
 }
 installSearchDrawer();
 
-// The form sits outside the swapped list, so it keeps focus while typing;
-// `installSwap()` performs the actual swap.
-function installEntriesSearch() {
-    const form = document.querySelector('form[data-entries-search]');
-    if (!form || form.dataset.searchBound) return;
-    form.dataset.searchBound = '1';
-    const input = form.querySelector('input[name="q"]');
-    if (!input) return;
-    const submit = debounce(() => form.requestSubmit(), 250);
-    input.addEventListener('input', submit);
+// Search as you type for `form[data-live-search="<debounce ms>"]`. The form sits
+// outside the swapped results, so it keeps focus while typing; `installSwap()`
+// performs the actual swap. `data-live-search-min` holds back a too-short ASCII
+// query (one CJK character is already a word); clearing always submits.
+function installLiveSearch() {
+    for (const form of document.querySelectorAll('form[data-live-search]')) {
+        if (form.dataset.searchBound) continue;
+        form.dataset.searchBound = '1';
+        const input = form.querySelector('input[name="q"]');
+        if (!input) continue;
+        const min = Number(form.dataset.liveSearchMin) || 0;
+        const submit = debounce(() => {
+            const q = input.value.trim();
+            if (q && q.length < min && /^[\x00-\x7f]*$/.test(q)) return;
+            form.requestSubmit();
+        }, Number(form.dataset.liveSearch) || 250);
+        input.addEventListener('input', submit);
+    }
 }
-installEntriesSearch();
-document.addEventListener('rdrs:swap-complete', installEntriesSearch);
+installLiveSearch();
+document.addEventListener('rdrs:swap-complete', installLiveSearch);
 
 /// Re-render the current list in place from `?fragment=1` (page 1). Resolves
 /// `false` if there is nothing to swap, so callers can reload instead.

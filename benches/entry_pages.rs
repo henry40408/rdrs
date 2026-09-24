@@ -149,16 +149,24 @@ async fn main() {
             "category ?status=starred",
             format!("/categories/{category_id}/entries?status=starred"),
         ),
+        // Every title matches: a full page of highlighted results.
+        ("search", "/search?q=Entry".to_string()),
+        // Content-only match against the Lorem body, the LIKE-heavy case.
+        ("search content", "/search?q=adipiscing".to_string()),
+        // What search-as-you-type fetches per keystroke.
+        ("search live", "/search?q=Entry&fragment=1".to_string()),
     ];
     // Load More: page 2 of the busiest lists, through the cursor page 1 hands out.
     for (name, path) in [
         ("entries load-more", "/entries"),
         ("read load-more", "/entries/read"),
+        ("search load-more", "/search?q=Entry"),
     ] {
         let page = common::get_ok(&server, path).await;
         if let Some(after) = hidden_value(&page, "after") {
             let after: String = url::form_urlencoded::byte_serialize(after.as_bytes()).collect();
-            routes.push((name, format!("{path}?fragment=1&after={after}")));
+            let sep = if path.contains('?') { '&' } else { '?' };
+            routes.push((name, format!("{path}{sep}fragment=1&after={after}")));
         }
     }
 

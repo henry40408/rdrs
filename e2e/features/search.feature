@@ -16,6 +16,22 @@ Feature: Search
       | Rust Async Runtime     |
     And the result count is 2
 
+  Scenario: Typing searches without pressing Enter, and clearing resets
+    When I type "Rust" into the search box
+    Then the result count is 2
+    And the URL has the "q" query parameter set to "Rust"
+    When I clear the search box
+    Then I see the search prompt
+    And the URL has no "q" query parameter
+
+  Scenario: Load More appends the next page of results
+    Given I have 55 entries titled "Wombat"
+    And I am on the search page
+    When I search for "Wombat"
+    Then the result count is 50
+    When I load more search results
+    Then the result count is 55
+
   Scenario: Pressing the slash key focuses the search input
     When I press the "/" key
     Then the search input is focused

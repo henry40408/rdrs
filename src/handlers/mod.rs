@@ -20,6 +20,12 @@ pub mod static_assets;
 pub mod summarizer;
 pub mod user;
 
+/// A top-level navigation rather than a swap-helper `fetch()`. Fragments render
+/// blank as documents, so such a request must get a page or a redirect instead.
+pub(crate) fn is_document_navigation(headers: &axum::http::HeaderMap) -> bool {
+    headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document")
+}
+
 /// Implement `IntoResponse` for Askama templates the way every page and
 /// fragment answers: the rendered HTML, or a 500 carrying the render error.
 macro_rules! impl_html_response {
