@@ -87,14 +87,14 @@ Feature: Triage entries (star, mark-read, summarize)
     Then the reading-pane summarize toggle reads "Dismiss"
     When I click the reading-pane summarize toggle
     Then the reading pane summary is dismissed
-    And the reading-pane summarize toggle reads "Summarize"
+    And the reading-pane summarize toggle reads "Summary"
 
   Scenario: The summarize toggle is inert while a summary is in flight
     Given the user has Kagi configured
     And the entry titled "Test Entry 1" has a pending summary
     When I open the inbox
     And I click the entry titled "Test Entry 1"
-    Then the reading-pane summarize toggle reads "Summarize"
+    Then the reading-pane summarize toggle reads "Summary"
     And the reading-pane summarize toggle is disabled
     When I watch for summarize POST requests
     And I press the "a" key

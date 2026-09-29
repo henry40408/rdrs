@@ -2854,11 +2854,17 @@ summary {
         min-width: 0;
     }
 
+    /* Full text / Summary take the slack Star, Unread and Save leave; still a
+       fixed ratio, so a label swap never moves a slot. */
+    .reading-pane-actions > .rp-slot-wide {
+        flex-grow: 1.3;
+    }
+
     .reading-pane-actions form {
         display: flex;
     }
 
-    /* Stacked icon over label, ≥48px tall; no side padding so "Full content" fits. */
+    /* Stacked icon over label, ≥48px tall; no side padding so "Full text" fits. */
     .reading-pane-actions .rp-action {
         flex: 1 1 0;
         min-width: 0;
