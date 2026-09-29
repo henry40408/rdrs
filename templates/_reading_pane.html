@@ -43,20 +43,20 @@
             {% if let Some(link) = pane.link.as_ref() %}
             {% if pane.is_full_content %}
             {# `?view=original` is needed, else the stored fetched article comes back. #}
-            <a href="/entries/{{ pane.id }}/fragment?view=original" data-swap="#reading-pane" class="rp-action is-on" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span><kbd>d</kbd></a>
+            <a href="/entries/{{ pane.id }}/fragment?view=original" data-swap="#reading-pane" class="rp-action rp-slot-wide is-on" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span><kbd>d</kbd></a>
             {% else if pane.has_stored_full_content %}
             {# A plain link back, so undoing the toggle never re-fetches the origin server. #}
-            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action" aria-label="Show Full Content"><span class="action-icon" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-label">Full content</span><kbd>d</kbd></a>
+            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action rp-slot-wide" aria-label="Show Full Content"><span class="action-icon" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-label">Full text</span><kbd>d</kbd></a>
             {% else %}
-            <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane" data-cancel-swap>
+            <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" class="rp-slot-wide" data-swap="#reading-pane" data-cancel-swap>
                 {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                <button type="submit" class="rp-action" aria-label="Fetch Full Content" data-cancel-label="Cancel" data-cancel-aria-label="Cancel"><span class="action-icon action-icon-default" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-icon action-icon-cancel" aria-hidden="true" hidden>{% call icons::close() %}{% endcall %}</span><span class="action-label">Full content</span><kbd>d</kbd></button>
+                <button type="submit" class="rp-action" aria-label="Fetch Full Content" data-cancel-label="Cancel" data-cancel-aria-label="Cancel"><span class="action-icon action-icon-default" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-icon action-icon-cancel" aria-hidden="true" hidden>{% call icons::close() %}{% endcall %}</span><span class="action-label">Full text</span><kbd>d</kbd></button>
             </form>
             {% endif %}
             {% if pane.has_kagi || pane.summary_in_flight %}
-            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container" data-summary-toggle>
+            <form method="post" action="/entries/{{ pane.id }}/summarize" class="rp-slot-wide" data-swap="#rp-summary-container" data-summary-toggle>
                 {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                <button type="submit" class="rp-action" aria-label="{% if pane.summary_text.is_some() %}Dismiss summary{% else %}Summarize{% endif %}"{% if pane.summary_in_flight %} disabled{% endif %}><span class="action-icon action-icon-summarize" aria-hidden="true"{% if pane.summary_text.is_some() %} hidden{% endif %}>{% call icons::sparkle() %}{% endcall %}</span><span class="action-icon action-icon-dismiss" aria-hidden="true"{% if pane.summary_text.is_none() %} hidden{% endif %}>{% call icons::close() %}{% endcall %}</span><span class="action-label">{% if pane.summary_text.is_some() %}Dismiss{% else %}Summarize{% endif %}</span><kbd>a</kbd></button>
+                <button type="submit" class="rp-action" aria-label="{% if pane.summary_text.is_some() %}Dismiss summary{% else %}Summarize{% endif %}"{% if pane.summary_in_flight %} disabled{% endif %}><span class="action-icon action-icon-summarize" aria-hidden="true"{% if pane.summary_text.is_some() %} hidden{% endif %}>{% call icons::sparkle() %}{% endcall %}</span><span class="action-icon action-icon-dismiss" aria-hidden="true"{% if pane.summary_text.is_none() %} hidden{% endif %}>{% call icons::close() %}{% endcall %}</span><span class="action-label">{% if pane.summary_text.is_some() %}Dismiss{% else %}Summary{% endif %}</span><kbd>a</kbd></button>
             </form>
             {% endif %}
             {% if pane.has_save %}

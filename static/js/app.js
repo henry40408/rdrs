@@ -1420,7 +1420,7 @@ function syncSummarizeToggleLabel() {
     // Matches the server render; handler gates cover the gap.
     btn.disabled = summaryInFlight();
     const labelEl = btn.querySelector('.action-label');
-    if (labelEl) labelEl.textContent = showing ? 'Dismiss' : 'Summarize';
+    if (labelEl) labelEl.textContent = showing ? 'Dismiss' : 'Summary';
     btn.setAttribute('aria-label', showing ? 'Dismiss summary' : 'Summarize');
     const summarizeIcon = btn.querySelector('.action-icon-summarize');
     const dismissIcon = btn.querySelector('.action-icon-dismiss');
