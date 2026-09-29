@@ -1326,6 +1326,7 @@ struct EntriesTab {
     empty_detail: &'static str,
     mark_as_read_scope: Option<&'static str>,
     filter: entry::EntryFilter,
+    sort: entry::EntrySortOrder,
 }
 
 /// Renders an `/entries` tab, or its Load-More fragment with `?fragment=1`.
@@ -1347,15 +1348,8 @@ async fn entries_tab_page(
     } else {
         None
     };
-    let (entries, next_cursor) = build_entries_page(
-        &state,
-        user_id,
-        tab.filter,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        cursor,
-    )
-    .await;
+    let (entries, next_cursor) =
+        build_entries_page(&state, user_id, tab.filter, tab.sort, page_size, cursor).await;
 
     if fragment {
         return (
@@ -1415,6 +1409,7 @@ pub async fn entries_page(
         empty_detail: "Subscribe to a few feeds and their entries will gather here.",
         mark_as_read_scope: Some("user/-/state/com.google/reading-list"),
         filter: entry::EntryFilter::default(),
+        sort: entry::EntrySortOrder::PublishedAt,
     };
     entries_tab_page(tab, auth_user, state, flash, query).await
 }
@@ -1533,6 +1528,7 @@ pub async fn read_entries_page(
             read_only: true,
             ..Default::default()
         },
+        sort: entry::EntrySortOrder::PublishedAt,
     };
     entries_tab_page(tab, auth_user, state, flash, query).await
 }
@@ -1555,6 +1551,7 @@ pub async fn starred_entries_page(
             starred_only: true,
             ..Default::default()
         },
+        sort: entry::EntrySortOrder::PublishedAt,
     };
     entries_tab_page(tab, auth_user, state, flash, query).await
 }
@@ -1635,6 +1632,7 @@ pub async fn summarized_entries_page(
             has_summary: Some(true),
             ..Default::default()
         },
+        sort: entry::EntrySortOrder::SummarizedAt,
     };
     entries_tab_page(tab, auth_user, state, flash, query).await
 }

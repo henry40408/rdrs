@@ -24,6 +24,8 @@ pub enum EntrySortOrder {
     PublishedAt, // COALESCE(published_at, created_at) DESC
     ReadAt,    // read_at DESC
     StarredAt, // starred_at DESC
+    /// `entry_summary.created_at DESC`; queries join `entry_summary` via [`sort_join`].
+    SummarizedAt,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -430,7 +432,25 @@ fn sort_column(sort_order: EntrySortOrder) -> &'static str {
         EntrySortOrder::ReadAt => "e.read_at",
         EntrySortOrder::StarredAt => "e.starred_at",
         EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
+        EntrySortOrder::SummarizedAt => "es.created_at",
     }
+}
+
+/// The join a sort order's column needs, scoped to user `$1`; `SummarizedAt`
+/// also drops entries without a summary.
+fn sort_join(sort_order: EntrySortOrder) -> &'static str {
+    match sort_order {
+        EntrySortOrder::SummarizedAt => {
+            " INNER JOIN entry_summary es ON es.entry_id = e.id AND es.user_id = $1"
+        }
+        _ => "",
+    }
+}
+
+/// `ORDER BY` for a paged sort: the sort column, then `e.id` as tie-breaker.
+fn order_by(sort_order: EntrySortOrder, oldest_first: bool) -> String {
+    let dir = if oldest_first { "ASC" } else { "DESC" };
+    format!("{} {dir}, e.id {dir}", sort_column(sort_order))
 }
 
 pub async fn fetch_sort_ts(
@@ -441,7 +461,12 @@ pub async fn fetch_sort_ts(
     // Must match the WHERE predicate's form: raw TEXT on SQLite, `to_char` on PG.
     // See `Dialect::cursor_ts`.
     let ts_expr = Dialect::from_db(db).cursor_ts(sort_column(sort_order));
-    let sql = format!("SELECT {ts_expr} FROM entry e WHERE e.id = $1");
+    // `$1` is the entry id here, so join on it alone: an entry has one owner.
+    let join = match sort_order {
+        EntrySortOrder::SummarizedAt => " INNER JOIN entry_summary es ON es.entry_id = e.id",
+        _ => "",
+    };
+    let sql = format!("SELECT {ts_expr} FROM entry e{join} WHERE e.id = $1");
     let r = match db.inner() {
         DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
@@ -489,11 +514,8 @@ pub async fn list_by_user(
 
     let where_clause = conditions.join(" AND ");
 
-    let order_by = match sort_order {
-        EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at) DESC",
-        EntrySortOrder::ReadAt => "e.read_at DESC",
-        EntrySortOrder::StarredAt => "e.starred_at DESC",
-    };
+    let order_by = format!("{} DESC", sort_column(sort_order));
+    let sort_join = sort_join(sort_order);
 
     // Force the published-order index: SQLite otherwise walks
     // `category -> feed -> entry` and sorts every row. `index_hint` is a no-op on PG.
@@ -507,7 +529,7 @@ pub async fn list_by_user(
     let offset_idx = binds.len() + 2;
     let sql = format!(
         "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN} \
-         FROM entry e{entry_hint} \
+         FROM entry e{entry_hint}{sort_join} \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
          LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id \
@@ -1226,21 +1248,15 @@ pub async fn list_ids_by_user(
     );
 
     let where_clause = conditions.join(" AND ");
-    let order = match (pagination.sort_order, pagination.oldest_first) {
-        (EntrySortOrder::ReadAt, true) => "e.read_at ASC, e.id ASC",
-        (EntrySortOrder::ReadAt, false) => "e.read_at DESC, e.id DESC",
-        (EntrySortOrder::StarredAt, true) => "e.starred_at ASC, e.id ASC",
-        (EntrySortOrder::StarredAt, false) => "e.starred_at DESC, e.id DESC",
-        (_, true) => "COALESCE(e.published_at, e.created_at) ASC, e.id ASC",
-        (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
-    };
+    let order = order_by(pagination.sort_order, pagination.oldest_first);
+    let sort_join = sort_join(pagination.sort_order);
 
     let limit_idx = binds.len() + 1;
     // "No more pages" sentinel; epoch extraction dialect-forks.
     let epoch_us = dialect.epoch("COALESCE(e.published_at, e.created_at)");
     let sql = format!(
         "SELECT e.id, {epoch_us} * 1000000 \
-         FROM entry e \
+         FROM entry e{sort_join} \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
          WHERE {where_clause} \
@@ -1285,14 +1301,8 @@ fn continuation_query(
     );
 
     let where_clause = conditions.join(" AND ");
-    let order = match (pagination.sort_order, pagination.oldest_first) {
-        (EntrySortOrder::ReadAt, true) => "e.read_at ASC, e.id ASC",
-        (EntrySortOrder::ReadAt, false) => "e.read_at DESC, e.id DESC",
-        (EntrySortOrder::StarredAt, true) => "e.starred_at ASC, e.id ASC",
-        (EntrySortOrder::StarredAt, false) => "e.starred_at DESC, e.id DESC",
-        (_, true) => "COALESCE(e.published_at, e.created_at) ASC, e.id ASC",
-        (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
-    };
+    let order = order_by(pagination.sort_order, pagination.oldest_first);
+    let sort_join = sort_join(pagination.sort_order);
 
     // Page-0 only: without the hint the planner walks category->feed->entry and
     // sorts the whole corpus. With a continuation predicate the sort index is
@@ -1308,7 +1318,7 @@ fn continuation_query(
     let limit_idx = binds.len() + 1;
     let sql = format!(
         "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}{extra_select} \
-         FROM entry e{entry_hint} \
+         FROM entry e{entry_hint}{sort_join} \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
          LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id \
@@ -4207,6 +4217,86 @@ mod tests {
         uniq.sort_unstable();
         uniq.dedup();
         assert_eq!(uniq.len(), 5, "no duplicates across pages: {seen:?}");
+    }
+
+    #[tokio::test]
+    async fn test_summarized_at_pages_by_summary_creation() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "summarizer").await;
+        let category_id = create_test_category(&db, user_id, "C").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/sum.xml").await;
+        // Published oldest-to-newest g0..g4; summarized in the order g1, g3, g0,
+        // g2 (g2 and g0 in the same second), g4 never.
+        let mut ids = Vec::new();
+        for i in 0..5u32 {
+            let (e, _) = upsert_entry(
+                &db,
+                feed_id,
+                &format!("g{i}"),
+                Some(&format!("T{i}")),
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0)
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+            ids.push(e.id);
+        }
+        for (i, created_at) in [
+            (1, "2024-02-01 00:00:00"),
+            (3, "2024-02-02 00:00:00"),
+            (0, "2024-02-03 00:00:00"),
+            (2, "2024-02-03 00:00:00"),
+        ] {
+            crate::models::entry_summary::upsert_pending(&db, user_id, ids[i])
+                .await
+                .unwrap();
+            exec_dynamic(
+                &db,
+                "UPDATE entry_summary SET created_at = $1 WHERE entry_id = $2".into(),
+                vec![Bind::Text(created_at.into()), Bind::Int(ids[i])],
+            )
+            .await
+            .unwrap();
+        }
+
+        let filter = EntryFilter {
+            has_summary: Some(true),
+            ..Default::default()
+        };
+        let mut cursor: Option<ContinuationCursor> = None;
+        let mut seen: Vec<i64> = Vec::new();
+        loop {
+            let params = ContinuationParams {
+                limit: 3, // page size 2 + 1 sentinel
+                continuation: cursor.take(),
+                sort_order: EntrySortOrder::SummarizedAt,
+                ..Default::default()
+            };
+            let rows = list_by_user_with_continuation_ts(&db, user_id, &filter, &params)
+                .await
+                .unwrap();
+            for (e, ts) in rows.iter().take(2) {
+                let fetched = fetch_sort_ts(&db, e.entry.id, EntrySortOrder::SummarizedAt)
+                    .await
+                    .unwrap();
+                assert_eq!(&fetched, ts, "cursor ts must match fetch_sort_ts");
+                seen.push(e.entry.id);
+            }
+            let Some(next) = next_continuation(&rows, 2, |e| e.entry.id) else {
+                break;
+            };
+            cursor = ContinuationCursor::parse(&next);
+        }
+
+        // Newest summary first; the same-second tie falls back to id DESC.
+        assert_eq!(seen, vec![ids[2], ids[0], ids[3], ids[1]]);
     }
 
     #[tokio::test]

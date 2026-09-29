@@ -160,6 +160,7 @@ async fn main() {
     for (name, path) in [
         ("entries load-more", "/entries"),
         ("read load-more", "/entries/read"),
+        ("summarized load-more", "/entries/summarized"),
         ("search load-more", "/search?q=Entry"),
     ] {
         let page = common::get_ok(&server, path).await;
