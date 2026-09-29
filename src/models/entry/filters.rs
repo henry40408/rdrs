@@ -334,11 +334,7 @@ pub(super) fn apply_continuation_condition(
 
     match cursor {
         ContinuationCursor::Composite { sort_ts, id } => {
-            let sort_ts_expr = match sort_order {
-                EntrySortOrder::ReadAt => "e.read_at",
-                EntrySortOrder::StarredAt => "e.starred_at",
-                EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
-            };
+            let sort_ts_expr = super::sort_column(sort_order);
             // PG: bind `timestamptz` against the raw column (sargable); fall back
             // to `to_char` only for an unparseable cursor.
             let pg_ts = (dialect == Dialect::Postgres)
