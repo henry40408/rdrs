@@ -45,7 +45,7 @@ docker run -d \
   -p 8080:8080 \
   -v rdrs_data:/data \
   -e RDRS_SECRET="$(openssl rand -base64 32)" \
-  ghcr.io/henry40408/rdrs:latest
+  ghcr.io/henry40408/rdrs:main
 ```
 
 Open `http://localhost:8080` and create the administrator account on the
@@ -345,7 +345,7 @@ starred ones fill the rest, with images.
 ```yaml
 services:
   rdrs:
-    image: ghcr.io/henry40408/rdrs:latest
+    image: ghcr.io/henry40408/rdrs:main
     ports:
       - "8080:8080"
     volumes:
