@@ -9,5 +9,6 @@
 <template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
 {% endif %}
 {% if let Some(psf) = pane_star_form.as_ref() %}
-<template data-swap-target="#reading-pane-star-form-{{ psf.id }}">{% call macros::pane_star_form(psf.id, psf.is_starred, csrf_token) %}{% endcall %}</template>
+<template data-swap-target="#reading-pane-star-form-{{ psf.id }}">{% call macros::pane_star_form(psf.id, psf.is_starred, csrf_token, false) %}{% endcall %}</template>
+<template data-swap-target="#reading-pane-bar-star-form-{{ psf.id }}">{% call macros::pane_star_form(psf.id, psf.is_starred, csrf_token, true) %}{% endcall %}</template>
 {% endif %}

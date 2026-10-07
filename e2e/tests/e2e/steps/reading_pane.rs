@@ -15,8 +15,24 @@ use super::entries::{entry_id, entry_row};
 /// which collides with the summary box's own Dismiss.
 pub const SUMMARIZE_TOGGLE: &str = ".reading-pane-actions [data-summary-toggle] button";
 
-/// Scoped to the action bar; every row has a star with the same name.
-const PANE_STAR: &str = ".reading-pane-actions [id^='reading-pane-star-form-'] button";
+/// Above 1024px the star lives in the toolbar, below it in the action bar (the
+/// other copy is hidden); every row has a star with the same name.
+const PANE_STAR_TOOLBAR: &str = ".reading-pane-back [id^='reading-pane-bar-star-form-'] button";
+const PANE_STAR_ACTIONS: &str = ".reading-pane-actions [id^='reading-pane-star-form-'] button";
+
+/// The visible copy of the pane's star button.
+async fn pane_star(driver: &impl Dom) -> Result<&'static str> {
+    let wide = driver
+        .eval("return window.innerWidth > 1024;")
+        .await?
+        .as_bool()
+        .unwrap_or(true);
+    Ok(if wide {
+        PANE_STAR_TOOLBAR
+    } else {
+        PANE_STAR_ACTIONS
+    })
+}
 
 /// Long enough for a second click to land while the first is in flight.
 const HOLD: Duration = Duration::from_millis(600);
@@ -348,7 +364,8 @@ async fn click_button(world: &mut RdrsWorld, label: String) -> Result<()> {
 
 #[when("I click the reading-pane star button")]
 async fn click_pane_star(world: &mut RdrsWorld) -> Result<()> {
-    world.driver()?.click_css(PANE_STAR).await
+    let driver = world.driver()?;
+    driver.click_css(pane_star(driver).await?).await
 }
 
 /// The label flips with starred state, which affects layout.
@@ -356,8 +373,9 @@ async fn click_pane_star(world: &mut RdrsWorld) -> Result<()> {
 async fn pane_star_reads(world: &mut RdrsWorld, text: String) -> Result<()> {
     let driver = world.driver()?;
     eventually_eq("the star button's label", text, || async {
+        let star = pane_star(driver).await?;
         Ok(driver
-            .css(&format!("{PANE_STAR} .action-label"))
+            .css(&format!("{star} .action-label"))
             .await?
             .content_text()
             .await?

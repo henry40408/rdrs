@@ -825,6 +825,38 @@ async function resolveNeighbors(entryId) {
     } catch {}
 }
 
+// "12 / 48" beside prev/next. A separate request, so counting never delays
+// navigation; skipped under a scoped search, which the server ignores here.
+let positionState = { entryId: null, text: '' };
+
+// An action swap re-renders the pane with the slot empty; refill it.
+function applyPosition() {
+    const el = document.querySelector('#reading-pane [data-pane-pos]');
+    if (!el) return;
+    const show = positionState.entryId != null && positionState.entryId === currentPaneEntryId();
+    el.textContent = show ? positionState.text : '';
+    el.hidden = !show;
+}
+
+async function resolvePosition(entryId) {
+    positionState = { entryId: null, text: '' };
+    applyPosition();
+    if (document.querySelector('[data-entries-search] input[name="q"]')?.value) return;
+    const params = currentEntryFilterParams();
+    const url = `/api/entries/${entryId}/position${params ? `?${params}` : ''}`;
+    try {
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok || currentPaneEntryId() !== entryId) return;
+        const { position, total, limit } = await resp.json();
+        // The server stops counting at `limit`; deeper than that the place is
+        // unknown, and a capped total reads "1000+".
+        if (position > limit) return;
+        const totalText = total > limit ? `${limit}+` : String(total);
+        positionState = { entryId, text: `${position} / ${totalText}` };
+        applyPosition();
+    } catch {}
+}
+
 // Disabled up front so a slow fetch never leaves a stale direction.
 let lastResolvedPaneId = null;
 function maybeResolveNeighbors() {
@@ -833,6 +865,7 @@ function maybeResolveNeighbors() {
         // An action swap re-renders the buttons disabled; re-apply, or mobile
         // prev/next dies (disabled buttons swallow taps).
         applyNeighborButtons();
+        applyPosition();
         return;
     }
     lastResolvedPaneId = id;
@@ -843,6 +876,7 @@ function maybeResolveNeighbors() {
     }
     applyNeighborButtons();
     resolveNeighbors(id);
+    resolvePosition(id);
 }
 
 // Submit Load More once per cursor so the list catches up with the pane.
@@ -882,6 +916,33 @@ function doNavigateNeighbor(direction) {
     // Safe alongside the pane swap: different nodes, and only pane GETs are guarded.
     loadMoreOnce();
 }
+
+// ── Reading-pane toolbar: progress line + scrolled-title echo ────────
+// `scroll` doesn't bubble, so listen in the capture phase; the pane node is
+// replaced on every swap, hence no per-element listener.
+let paneBarFrame = 0;
+function updatePaneBar() {
+    paneBarFrame = 0;
+    const pane = document.getElementById('reading-pane');
+    const bar = pane?.querySelector('.reading-pane-back');
+    const title = pane?.querySelector('.reading-pane-title');
+    if (!bar || !title) return;
+    const max = pane.scrollHeight - pane.clientHeight;
+    bar.style.setProperty('--rp-progress', max > 0 ? Math.min(1, pane.scrollTop / max).toFixed(4) : '0');
+    bar.classList.toggle(
+        'is-scrolled',
+        title.getBoundingClientRect().bottom < bar.getBoundingClientRect().bottom
+    );
+}
+document.addEventListener('scroll', (event) => {
+    if (event.target?.id !== 'reading-pane' || paneBarFrame) return;
+    paneBarFrame = requestAnimationFrame(updatePaneBar);
+}, { capture: true, passive: true });
+
+// A new pane, a resize/rotation or late-loading images change the geometry
+// without a scroll event.
+document.addEventListener('rdrs:swap-complete', updatePaneBar);
+window.addEventListener('resize', updatePaneBar);
 
 function installNeighborNav() {
     document.addEventListener('click', (event) => {

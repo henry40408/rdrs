@@ -318,6 +318,10 @@ pub fn create_router(state: AppState) -> Router {
             "/api/entries/{id}/neighbors",
             get(handlers::entry::get_entry_neighbors),
         )
+        .route(
+            "/api/entries/{id}/position",
+            get(handlers::entry::get_entry_position),
+        )
         .route("/api/proxy/image", get(handlers::proxy::proxy_image))
         // Open-tracking pixel, authorised only by the HMAC in its path (fetchers
         // have no session). In the middleware skip lists as `/p/`.

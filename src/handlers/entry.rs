@@ -41,6 +41,31 @@ pub async fn get_entry_neighbors(
     Path(id): Path<i64>,
     Query(query): Query<NeighborsQuery>,
 ) -> AppResult<Json<entry::EntryNeighbors>> {
+    let (user_id, filter) = neighbors_filter(&auth_user, &state, id, query).await?;
+    let neighbors = entry::find_neighbors(&state.db, user_id, id, &filter).await?;
+    Ok(Json(neighbors))
+}
+
+/// "12 / 48" for the reading-pane toolbar; kept apart from `neighbors` so the
+/// counts never delay prev/next.
+pub async fn get_entry_position(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<NeighborsQuery>,
+) -> AppResult<Json<entry::EntryPosition>> {
+    let (user_id, filter) = neighbors_filter(&auth_user, &state, id, query).await?;
+    let position = entry::find_position(&state.db, user_id, id, &filter).await?;
+    Ok(Json(position))
+}
+
+/// Ownership check plus the list filter shared by `neighbors` and `position`.
+async fn neighbors_filter(
+    auth_user: &AuthUser,
+    state: &AppState,
+    id: i64,
+    query: NeighborsQuery,
+) -> AppResult<(i64, entry::EntryFilter)> {
     let user_id = auth_user.user.id;
     let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
         .await?
@@ -63,8 +88,7 @@ pub async fn get_entry_neighbors(
         read_after: query.read_after,
         ..Default::default()
     };
-    let neighbors = entry::find_neighbors(&state.db, user_id, id, &filter).await?;
-    Ok(Json(neighbors))
+    Ok((user_id, filter))
 }
 
 pub async fn fetch_full_content(

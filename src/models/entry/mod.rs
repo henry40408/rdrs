@@ -1621,6 +1621,97 @@ pub async fn find_neighbors(
     Ok(EntryNeighbors { prev_id, next_id })
 }
 
+/// Counting stops here, so the cost stays flat on huge lists.
+pub const POSITION_COUNT_LIMIT: i64 = 1000;
+
+/// 1-based place of an entry in a filtered list, and the list's size. Each is
+/// capped at `limit + 1`; a value above `limit` means "more than `limit`".
+#[derive(Debug, Clone, Serialize)]
+pub struct EntryPosition {
+    pub position: i64,
+    pub total: i64,
+    pub limit: i64,
+}
+
+/// Where `entry_id` sits in the `published DESC, id DESC` order under `filter`:
+/// the entries ahead of it (itself included), against the same sort key
+/// `find_neighbors` walks. Counts are capped at [`POSITION_COUNT_LIMIT`] + 1.
+pub async fn find_position(
+    db: &Db,
+    user_id: i64,
+    entry_id: i64,
+    filter: &EntryFilter,
+) -> AppResult<EntryPosition> {
+    let dialect = Dialect::from_db(db);
+
+    async fn count(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
+        match db.inner() {
+            DbInner::Sqlite(pool) => {
+                bind_all!(
+                    sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
+                    &binds
+                )
+                .fetch_one(pool)
+                .await
+            }
+            DbInner::Postgres(pool) => {
+                bind_all!(
+                    sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
+                    &binds
+                )
+                .fetch_one(pool)
+                .await
+            }
+        }
+    }
+
+    // `$1` is the user id and, when `by_entry`, `$2` the entry whose sort key
+    // `cmp` compares against; the filter's binds follow.
+    let capped_count = |by_entry: bool, cmp: &str| {
+        let mut conditions = Vec::new();
+        let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
+        if by_entry {
+            binds.push(Bind::Int(entry_id));
+        }
+        apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
+        let extra = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT COUNT(*) FROM ( \
+                 SELECT 1 FROM entry e \
+                 INNER JOIN feed f ON e.feed_id = f.id \
+                 INNER JOIN category c ON f.category_id = c.id \
+                 WHERE c.user_id = $1{cmp}{extra} \
+                 LIMIT {} \
+             ) capped",
+            POSITION_COUNT_LIMIT + 1
+        );
+        (sql, binds)
+    };
+
+    let ts = "COALESCE(e.published_at, e.created_at)";
+    let own_ts = "(SELECT COALESCE(s.published_at, s.created_at) FROM entry s WHERE s.id = $2)";
+
+    let (sql, binds) = capped_count(false, "");
+    let total = count(db, sql, binds).await.map_err(AppError::Database)?;
+
+    // Split the tie-break from the range so the sort index can serve the range
+    // half; an OR across both would force a scan.
+    let (sql, binds) = capped_count(true, &format!(" AND {ts} > {own_ts}"));
+    let ahead = count(db, sql, binds).await.map_err(AppError::Database)?;
+    let (sql, binds) = capped_count(true, &format!(" AND {ts} = {own_ts} AND e.id >= $2"));
+    let tied = count(db, sql, binds).await.map_err(AppError::Database)?;
+
+    Ok(EntryPosition {
+        position: (ahead + tied).min(POSITION_COUNT_LIMIT + 1),
+        total,
+        limit: POSITION_COUNT_LIMIT,
+    })
+}
+
 pub async fn mark_all_read_by_category(
     db: &Db,
     category_id: i64,
@@ -3338,6 +3429,95 @@ mod tests {
         // Empty input is a no-op
         assert_eq!(in_tx!(db, star_by_ids_tx(user_id, &[])), 0);
         assert_eq!(in_tx!(db, mark_unread_by_ids_tx(user_id, &[])), 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_position_counts_within_filter() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let mut entries = Vec::new();
+        for i in 0..5 {
+            let published = Utc::now() + chrono::Duration::seconds(i * 10);
+            let (entry, _) = upsert_entry(
+                &db,
+                feed_id,
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
+                None,
+                None,
+                None,
+                None,
+                Some(published),
+            )
+            .await
+            .unwrap();
+            entries.push(entry);
+        }
+
+        // Newest first: entry 4 is #1, entry 0 is #5.
+        let all = EntryFilter::default();
+        let newest = find_position(&db, user_id, entries[4].id, &all)
+            .await
+            .unwrap();
+        assert_eq!((newest.position, newest.total), (1, 5));
+        let oldest = find_position(&db, user_id, entries[0].id, &all)
+            .await
+            .unwrap();
+        assert_eq!((oldest.position, oldest.total), (5, 5));
+
+        // Starring 1 and 3 shrinks the list to two; entry 1 is then #2 of 2.
+        star_entry(&db, entries[1].id).await.unwrap();
+        star_entry(&db, entries[3].id).await.unwrap();
+        let starred = EntryFilter {
+            starred_only: true,
+            ..Default::default()
+        };
+        let second = find_position(&db, user_id, entries[1].id, &starred)
+            .await
+            .unwrap();
+        assert_eq!((second.position, second.total), (2, 2));
+    }
+
+    #[tokio::test]
+    async fn test_find_position_stops_counting_at_the_limit() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let n = POSITION_COUNT_LIMIT + 3;
+        let mut ids = Vec::new();
+        for i in 0..n {
+            let published = Utc::now() + chrono::Duration::seconds(i);
+            let (entry, _) = upsert_entry(
+                &db,
+                feed_id,
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
+                None,
+                None,
+                None,
+                None,
+                Some(published),
+            )
+            .await
+            .unwrap();
+            ids.push(entry.id);
+        }
+
+        let all = EntryFilter::default();
+        let newest = find_position(&db, user_id, ids[ids.len() - 1], &all)
+            .await
+            .unwrap();
+        assert_eq!(newest.position, 1);
+        // Past the limit the counts saturate at `limit + 1`.
+        assert_eq!(newest.total, POSITION_COUNT_LIMIT + 1);
+        let oldest = find_position(&db, user_id, ids[0], &all).await.unwrap();
+        assert_eq!(oldest.position, POSITION_COUNT_LIMIT + 1);
+        assert_eq!(oldest.limit, POSITION_COUNT_LIMIT);
     }
 
     #[tokio::test]
