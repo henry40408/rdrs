@@ -905,6 +905,11 @@ document.addEventListener('scroll', (event) => {
     paneBarFrame = requestAnimationFrame(updatePaneBar);
 }, { capture: true, passive: true });
 
+// A new pane, a resize/rotation or late-loading images change the geometry
+// without a scroll event.
+document.addEventListener('rdrs:swap-complete', updatePaneBar);
+window.addEventListener('resize', updatePaneBar);
+
 function installNeighborNav() {
     document.addEventListener('click', (event) => {
         if (event.button !== 0) return;

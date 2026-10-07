@@ -2852,11 +2852,16 @@ summary {
     .reading-pane-bar-actions { display: none; }
     .reading-pane-actions > .rp-bar-dup { display: flex; }
 
-    /* The scrolled title takes its own row under Back / prev / next. */
-    .reading-pane-back { flex-wrap: wrap; }
+    /* The scrolled title hangs under Back / prev / next as an overlay, so the
+       bar keeps its height and toggling it never shifts the article. */
     .reading-pane-bar-title {
-        order: 10;
-        flex: 1 0 100%;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        padding: var(--space-2) var(--space-4);
+        background: var(--color-bg);
+        border-bottom: 1px solid var(--color-border-light);
     }
     .reading-pane-bar-title-text {
         white-space: normal;
