@@ -243,8 +243,7 @@ async fn server_bound_controls_disabled(world: &mut RdrsWorld) -> Result<()> {
         Ok(offline)
     })
     .await?;
-    let leaked: Vec<String> = world
-        .driver()?
+    let leaked: Vec<String> = driver
         .execute(
             r##"
             const WORKS_OFFLINE = 'a[data-swap="#reading-pane"], a[href="/"], a[href="/entries/offline"]';
