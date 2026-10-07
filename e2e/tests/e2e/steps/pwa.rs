@@ -230,6 +230,19 @@ async fn no_unservable_static(world: &mut RdrsWorld) -> Result<()> {
 /// Asserts all of them, since `offline.js` allowlists what *does* work.
 #[then("every control that needs the server is disabled")]
 async fn server_bound_controls_disabled(world: &mut RdrsWorld) -> Result<()> {
+    // Offline is only declared once the retrying probe fails, so wait for it.
+    let driver = world.driver()?;
+    eventually("the page to be marked offline", || async {
+        let offline: bool = driver
+            .execute(
+                "return document.documentElement.hasAttribute('data-offline');",
+                Vec::new(),
+            )
+            .await?
+            .convert()?;
+        Ok(offline)
+    })
+    .await?;
     let leaked: Vec<String> = world
         .driver()?
         .execute(

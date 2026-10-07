@@ -226,8 +226,8 @@ async function sync() {
     setOffline(false);
   } catch {
     // Offline or signed out: keep the cache as is. Also the connection probe;
-    // see [`setOffline`].
-    setOffline(true);
+    // see [`setOffline`]. One failed request is not proof, so retry first.
+    await confirmOffline();
     return;
   }
 
@@ -456,12 +456,43 @@ function setOffline(next) {
   return offlineNow;
 }
 
+const PROBE_ATTEMPTS = 2;
+const PROBE_TIMEOUT_MS = 5000;
+const PROBE_GAP_MS = 300;
+
+/**
+ * Whether the server answers at all (any HTTP status counts). Retries so a
+ * request cut off by a navigation or a momentary blip is not mistaken for a
+ * dropped connection.
+ */
+async function serverReachable() {
+  for (let attempt = 0; attempt < PROBE_ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, PROBE_GAP_MS));
+    try {
+      await fetch(MANIFEST_URL, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+      return true;
+    } catch {
+      // Try again.
+    }
+  }
+  return false;
+}
+
+/** Go offline only once the probe fails too; a reachable server clears it. */
+async function confirmOffline() {
+  return setOffline(!(await serverReachable()));
+}
+
 /** Stop the controls that need a server, and say so. */
 function installOfflineGuards() {
   // Online/offline events are a fast hint, not proof: going online only
   // schedules a sync, and that request decides.
   window.addEventListener('online', () => scheduleSync());
-  window.addEventListener('offline', () => setOffline(true));
+  window.addEventListener('offline', () => confirmOffline());
 
   for (const type of ['click', 'submit', 'change']) {
     document.addEventListener(type, blockOffline, true);
@@ -470,7 +501,7 @@ function installOfflineGuards() {
 
 if ('serviceWorker' in navigator && 'caches' in window) {
   // `performSwap` reports a failed fetch here immediately.
-  window.rdrsOffline = { fragment: savedFragment, networkFailed: () => setOffline(true) };
+  window.rdrsOffline = { fragment: savedFragment, networkFailed: confirmOffline };
   installOfflineGuards();
   // After paint and after pwa.js registers the worker, or the cache is unreadable.
   window.addEventListener('load', () => {
