@@ -43,6 +43,18 @@ Feature: Responsive layout
     When I open the inbox
     Then the entry-row actions are vertically centered on the meta line
 
+  Scenario: The split view locks the document on desktop so an empty reading pane cannot be dragged
+    Given I am viewing on a desktop screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the document cannot scroll
+
+  Scenario: The entry list still scrolls with the document at tablet width
+    Given I am viewing on a tablet screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the document is not locked
+
   @mobile
   Scenario: Opening an entry on mobile reveals the reading pane as a full-screen overlay
     Given I am viewing on a mobile screen

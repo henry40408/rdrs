@@ -773,3 +773,40 @@ async fn checkbox_hints_start_on_their_own_line(world: &mut RdrsWorld) -> Result
     }
     Ok(())
 }
+
+/// `[html, body]` computed `overflow-y` and what a scroll attempt achieves.
+async fn document_scroll_probe(world: &RdrsWorld) -> Result<serde_json::Value> {
+    world
+        .driver()?
+        .eval(
+            "window.scrollTo(0, 500); \
+             return [getComputedStyle(document.documentElement).overflowY, \
+                     getComputedStyle(document.body).overflowY, \
+                     window.scrollY];",
+        )
+        .await
+}
+
+/// Above 1024px the split view fits the viewport; an empty reading pane has
+/// nothing to scroll, so a drag must not chain to the page (iPad).
+#[then("the document cannot scroll")]
+async fn document_cannot_scroll(world: &mut RdrsWorld) -> Result<()> {
+    let probe = document_scroll_probe(world).await?;
+    ensure!(
+        probe == serde_json::json!(["hidden", "hidden", 0]),
+        "the document can still scroll: [html overflow, body overflow, scrollY] = {probe}"
+    );
+    Ok(())
+}
+
+/// At ≤1024px the entry list scrolls with the document, so it must stay free.
+#[then("the document is not locked")]
+async fn document_is_not_locked(world: &mut RdrsWorld) -> Result<()> {
+    let probe = document_scroll_probe(world).await?;
+    let locked = probe[0] == "hidden" || probe[1] == "hidden";
+    ensure!(
+        !locked,
+        "the document is locked at tablet width: [html overflow, body overflow, scrollY] = {probe}"
+    );
+    Ok(())
+}

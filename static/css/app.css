@@ -283,6 +283,9 @@ code {
 .app-layout {
     display: flex;
     min-height: 100vh;
+    /* `dvh` tracks the visible height; on iOS `100vh` is the toolbars-hidden
+       height, which would make the document scrollable. */
+    min-height: 100dvh;
 }
 
 /* ===== Sidebar ===== */
@@ -662,6 +665,7 @@ body:has(.nav-fallback) .main-content {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh;
     overflow-y: auto;
     background: var(--color-panel);
 }
@@ -669,6 +673,18 @@ body:has(.nav-fallback) .main-content {
 /* With split view, main-content doesn't scroll; each pane scrolls itself. */
 .main-content:has(.split-view) {
     overflow: hidden;
+}
+
+/* Above 1024px the split view fits the viewport exactly, so lock the document
+   too: with nothing to scroll (an empty reading pane), a drag would otherwise
+   chain to the page and slide the whole layout. At ≤1024px the list scrolls
+   with the document, so this must not apply there. */
+@media (min-width: 1025px) {
+    html:has(.split-view),
+    body:has(.split-view) {
+        overflow: hidden;
+        overscroll-behavior: none;
+    }
 }
 
 /* Page content (non-split pages) — centered column; forms and prose capped below. */
