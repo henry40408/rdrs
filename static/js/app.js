@@ -378,7 +378,7 @@ async function performSwap(url, init, defaultTarget, options) {
         if (isPaneNav && navSeq !== paneNavSeq) return false;
         // A thrown request is the first real evidence of a dropped connection
         // (`navigator.onLine` is unreliable); tell offline.js.
-        const offline = window.rdrsOffline?.networkFailed?.() === true;
+        const offline = (await window.rdrsOffline?.networkFailed?.()) === true;
         // Saved offline pane, looked up here (not in the SW) so this stays a
         // page request. Absent without offline.js.
         response = method === 'GET' ? await savedFragment(url) : null;
