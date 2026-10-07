@@ -825,6 +825,34 @@ async function resolveNeighbors(entryId) {
     } catch {}
 }
 
+// "12 / 48" beside prev/next. A separate request, so counting never delays
+// navigation; skipped under a scoped search, which the server ignores here.
+let positionState = { entryId: null, text: '' };
+
+// An action swap re-renders the pane with the slot empty; refill it.
+function applyPosition() {
+    const el = document.querySelector('#reading-pane [data-pane-pos]');
+    if (!el) return;
+    const show = positionState.entryId != null && positionState.entryId === currentPaneEntryId();
+    el.textContent = show ? positionState.text : '';
+    el.hidden = !show;
+}
+
+async function resolvePosition(entryId) {
+    positionState = { entryId: null, text: '' };
+    applyPosition();
+    if (document.querySelector('[data-entries-search] input[name="q"]')?.value) return;
+    const params = currentEntryFilterParams();
+    const url = `/api/entries/${entryId}/position${params ? `?${params}` : ''}`;
+    try {
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok || currentPaneEntryId() !== entryId) return;
+        const { position, total } = await resp.json();
+        positionState = { entryId, text: `${position} / ${total}` };
+        applyPosition();
+    } catch {}
+}
+
 // Disabled up front so a slow fetch never leaves a stale direction.
 let lastResolvedPaneId = null;
 function maybeResolveNeighbors() {
@@ -833,6 +861,7 @@ function maybeResolveNeighbors() {
         // An action swap re-renders the buttons disabled; re-apply, or mobile
         // prev/next dies (disabled buttons swallow taps).
         applyNeighborButtons();
+        applyPosition();
         return;
     }
     lastResolvedPaneId = id;
@@ -843,6 +872,7 @@ function maybeResolveNeighbors() {
     }
     applyNeighborButtons();
     resolveNeighbors(id);
+    resolvePosition(id);
 }
 
 // Submit Load More once per cursor so the list catches up with the pane.

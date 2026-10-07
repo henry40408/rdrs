@@ -790,6 +790,17 @@ body:has(.nav-fallback) .main-content {
 .reading-pane-bar-actions .rp-action { padding: 4px 9px; font-size: 13.5px; gap: var(--space-1); }
 .reading-pane-actions > .rp-bar-dup { display: none; }
 
+/* "12 / 48"; hidden until the position resolves. */
+.reading-pane-bar-pos {
+    margin-left: auto;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--color-text-muted);
+}
+.reading-pane-bar-pos[hidden] { display: none; }
+@media (max-width: 640px) { .reading-pane-bar-pos { display: none; } }
+
 /* Headline echo, shown once the real one has scrolled under the bar. */
 .reading-pane-bar-title {
     flex: 1;

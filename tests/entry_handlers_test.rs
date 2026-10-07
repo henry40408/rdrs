@@ -732,6 +732,22 @@ async fn test_get_entry_neighbors() {
 }
 
 #[tokio::test]
+async fn test_get_entry_position() {
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
+
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/position", entry_ids[2]))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let position = body["position"].as_i64().expect("position");
+    let total = body["total"].as_i64().expect("total");
+    assert!((1..=total).contains(&position), "{position} of {total}");
+}
+
+#[tokio::test]
 async fn test_get_entry_neighbors_first_entry() {
     let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 
