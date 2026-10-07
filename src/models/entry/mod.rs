@@ -1621,16 +1621,21 @@ pub async fn find_neighbors(
     Ok(EntryNeighbors { prev_id, next_id })
 }
 
-/// 1-based place of an entry in a filtered list, and the list's size.
+/// Counting stops here, so the cost stays flat on huge lists.
+pub const POSITION_COUNT_LIMIT: i64 = 1000;
+
+/// 1-based place of an entry in a filtered list, and the list's size. Each is
+/// capped at `limit + 1`; a value above `limit` means "more than `limit`".
 #[derive(Debug, Clone, Serialize)]
 pub struct EntryPosition {
     pub position: i64,
     pub total: i64,
+    pub limit: i64,
 }
 
-/// Where `entry_id` sits in the `published DESC, id DESC` order under `filter`.
-/// `position` counts the entries ahead of it (itself included), against the
-/// same sort key `find_neighbors` walks.
+/// Where `entry_id` sits in the `published DESC, id DESC` order under `filter`:
+/// the entries ahead of it (itself included), against the same sort key
+/// `find_neighbors` walks. Counts are capped at [`POSITION_COUNT_LIMIT`] + 1.
 pub async fn find_position(
     db: &Db,
     user_id: i64,
@@ -1660,48 +1665,51 @@ pub async fn find_position(
         }
     }
 
-    // Total: $1=user_id
-    let mut conditions = Vec::new();
-    let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
-    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
-    let extra = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" AND {}", conditions.join(" AND "))
+    // `$1` is the user id and, when `by_entry`, `$2` the entry whose sort key
+    // `cmp` compares against; the filter's binds follow.
+    let capped_count = |by_entry: bool, cmp: &str| {
+        let mut conditions = Vec::new();
+        let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
+        if by_entry {
+            binds.push(Bind::Int(entry_id));
+        }
+        apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
+        let extra = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT COUNT(*) FROM ( \
+                 SELECT 1 FROM entry e \
+                 INNER JOIN feed f ON e.feed_id = f.id \
+                 INNER JOIN category c ON f.category_id = c.id \
+                 WHERE c.user_id = $1{cmp}{extra} \
+                 LIMIT {} \
+             ) capped",
+            POSITION_COUNT_LIMIT + 1
+        );
+        (sql, binds)
     };
-    let total_sql = format!(
-        "SELECT COUNT(*) FROM entry e \
-         INNER JOIN feed f ON e.feed_id = f.id \
-         INNER JOIN category c ON f.category_id = c.id \
-         WHERE c.user_id = $1{extra}"
-    );
-    let total = count(db, total_sql, binds)
-        .await
-        .map_err(AppError::Database)?;
 
-    // Position: $1=user_id, $2=entry_id; the sort key is read off the entry itself.
-    let mut conditions = Vec::new();
-    let mut binds: Vec<Bind> = vec![Bind::Int(user_id), Bind::Int(entry_id)];
-    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
-    let extra = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" AND {}", conditions.join(" AND "))
-    };
     let ts = "COALESCE(e.published_at, e.created_at)";
     let own_ts = "(SELECT COALESCE(s.published_at, s.created_at) FROM entry s WHERE s.id = $2)";
-    let position_sql = format!(
-        "SELECT COUNT(*) FROM entry e \
-         INNER JOIN feed f ON e.feed_id = f.id \
-         INNER JOIN category c ON f.category_id = c.id \
-         WHERE c.user_id = $1 \
-           AND ({ts} > {own_ts} OR ({ts} = {own_ts} AND e.id >= $2)){extra}"
-    );
-    let position = count(db, position_sql, binds)
-        .await
-        .map_err(AppError::Database)?;
 
-    Ok(EntryPosition { position, total })
+    let (sql, binds) = capped_count(false, "");
+    let total = count(db, sql, binds).await.map_err(AppError::Database)?;
+
+    // Split the tie-break from the range so the sort index can serve the range
+    // half; an OR across both would force a scan.
+    let (sql, binds) = capped_count(true, &format!(" AND {ts} > {own_ts}"));
+    let ahead = count(db, sql, binds).await.map_err(AppError::Database)?;
+    let (sql, binds) = capped_count(true, &format!(" AND {ts} = {own_ts} AND e.id >= $2"));
+    let tied = count(db, sql, binds).await.map_err(AppError::Database)?;
+
+    Ok(EntryPosition {
+        position: (ahead + tied).min(POSITION_COUNT_LIMIT + 1),
+        total,
+        limit: POSITION_COUNT_LIMIT,
+    })
 }
 
 pub async fn mark_all_read_by_category(
@@ -3471,6 +3479,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((second.position, second.total), (2, 2));
+    }
+
+    #[tokio::test]
+    async fn test_find_position_stops_counting_at_the_limit() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let n = POSITION_COUNT_LIMIT + 3;
+        let mut ids = Vec::new();
+        for i in 0..n {
+            let published = Utc::now() + chrono::Duration::seconds(i);
+            let (entry, _) = upsert_entry(
+                &db,
+                feed_id,
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
+                None,
+                None,
+                None,
+                None,
+                Some(published),
+            )
+            .await
+            .unwrap();
+            ids.push(entry.id);
+        }
+
+        let all = EntryFilter::default();
+        let newest = find_position(&db, user_id, ids[ids.len() - 1], &all)
+            .await
+            .unwrap();
+        assert_eq!(newest.position, 1);
+        // Past the limit the counts saturate at `limit + 1`.
+        assert_eq!(newest.total, POSITION_COUNT_LIMIT + 1);
+        let oldest = find_position(&db, user_id, ids[0], &all).await.unwrap();
+        assert_eq!(oldest.position, POSITION_COUNT_LIMIT + 1);
+        assert_eq!(oldest.limit, POSITION_COUNT_LIMIT);
     }
 
     #[tokio::test]

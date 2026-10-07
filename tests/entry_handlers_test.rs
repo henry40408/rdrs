@@ -745,6 +745,7 @@ async fn test_get_entry_position() {
     let position = body["position"].as_i64().expect("position");
     let total = body["total"].as_i64().expect("total");
     assert!((1..=total).contains(&position), "{position} of {total}");
+    assert_eq!(body["limit"], 1000);
 }
 
 #[tokio::test]

@@ -48,8 +48,9 @@ fn parse_args() -> Args {
     args
 }
 
-/// Returns the first feed and category, for the scoped pages to aim at.
-async fn seed(db: &Db, n: usize) -> (i64, i64) {
+/// Returns the first feed and category, for the scoped pages to aim at, and a
+/// mid-list entry for the per-entry routes.
+async fn seed(db: &Db, n: usize) -> (i64, i64, i64) {
     let user = common::seed_account(db, "bench", "vulture-mango-77-quilt", Role::Admin).await;
     let content = "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>".repeat(12);
 
@@ -75,6 +76,7 @@ async fn seed(db: &Db, n: usize) -> (i64, i64) {
 
     let now = chrono::Utc::now();
     let mut read = Vec::new();
+    let mut mid_entry = 0;
     for i in 0..n {
         let minutes = i64::try_from(i).unwrap();
         let (e, _) = entry::upsert_entry(
@@ -90,6 +92,9 @@ async fn seed(db: &Db, n: usize) -> (i64, i64) {
         )
         .await
         .unwrap();
+        if i == n / 2 {
+            mid_entry = e.id;
+        }
         if i % 3 == 0 {
             read.push(e.id);
         }
@@ -108,7 +113,7 @@ async fn seed(db: &Db, n: usize) -> (i64, i64) {
         }
     }
     entry::mark_read_by_ids(db, user.id, &read).await.unwrap();
-    (feeds[0], first_category.unwrap())
+    (feeds[0], first_category.unwrap(), mid_entry)
 }
 
 /// The first hidden input called `name`, as the Load-More form submits it.
@@ -127,7 +132,7 @@ fn micros(d: Duration) -> f64 {
 async fn main() {
     let args = parse_args();
     let state = common::test_state(common::default_test_config()).await;
-    let (feed_id, category_id) = seed(&state.db, args.entries).await;
+    let (feed_id, category_id, mid_entry) = seed(&state.db, args.entries).await;
     let mut server = TestServer::builder()
         .save_cookies()
         .build(create_router(state));
@@ -156,6 +161,25 @@ async fn main() {
         // What search-as-you-type fetches per keystroke.
         ("search live", "/search?q=Entry&fragment=1".to_string()),
     ];
+    // The reading pane and its toolbar lookups, for a mid-list entry. `position`
+    // (the "12 / 48" counts) has no counterpart before it existed.
+    routes.push(("pane fragment", format!("/entries/{mid_entry}/fragment")));
+    routes.push((
+        "neighbors (all)",
+        format!("/api/entries/{mid_entry}/neighbors"),
+    ));
+    routes.push((
+        "position (all)",
+        format!("/api/entries/{mid_entry}/position"),
+    ));
+    routes.push((
+        "neighbors (unread)",
+        format!("/api/entries/{mid_entry}/neighbors?unread_only=true"),
+    ));
+    routes.push((
+        "position (unread)",
+        format!("/api/entries/{mid_entry}/position?unread_only=true"),
+    ));
     // Load More: page 2 of the busiest lists, through the cursor page 1 hands out.
     for (name, path) in [
         ("entries load-more", "/entries"),

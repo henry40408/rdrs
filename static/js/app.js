@@ -847,8 +847,12 @@ async function resolvePosition(entryId) {
     try {
         const resp = await fetch(url, { credentials: 'same-origin' });
         if (!resp.ok || currentPaneEntryId() !== entryId) return;
-        const { position, total } = await resp.json();
-        positionState = { entryId, text: `${position} / ${total}` };
+        const { position, total, limit } = await resp.json();
+        // The server stops counting at `limit`; deeper than that the place is
+        // unknown, and a capped total reads "1000+".
+        if (position > limit) return;
+        const totalText = total > limit ? `${limit}+` : String(total);
+        positionState = { entryId, text: `${position} / ${totalText}` };
         applyPosition();
     } catch {}
 }
