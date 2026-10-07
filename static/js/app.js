@@ -883,6 +883,28 @@ function doNavigateNeighbor(direction) {
     loadMoreOnce();
 }
 
+// ── Reading-pane toolbar: progress line + scrolled-title echo ────────
+// `scroll` doesn't bubble, so listen in the capture phase; the pane node is
+// replaced on every swap, hence no per-element listener.
+let paneBarFrame = 0;
+function updatePaneBar() {
+    paneBarFrame = 0;
+    const pane = document.getElementById('reading-pane');
+    const bar = pane?.querySelector('.reading-pane-back');
+    const title = pane?.querySelector('.reading-pane-title');
+    if (!bar || !title) return;
+    const max = pane.scrollHeight - pane.clientHeight;
+    bar.style.setProperty('--rp-progress', max > 0 ? Math.min(1, pane.scrollTop / max).toFixed(4) : '0');
+    bar.classList.toggle(
+        'is-scrolled',
+        title.getBoundingClientRect().bottom < bar.getBoundingClientRect().bottom
+    );
+}
+document.addEventListener('scroll', (event) => {
+    if (event.target?.id !== 'reading-pane' || paneBarFrame) return;
+    paneBarFrame = requestAnimationFrame(updatePaneBar);
+}, { capture: true, passive: true });
+
 function installNeighborNav() {
     document.addEventListener('click', (event) => {
         if (event.button !== 0) return;
