@@ -76,7 +76,7 @@ mod tests {
     fn empty_config_has_no_service() {
         let cfg = SaveServicesConfig::from_json("{}").unwrap();
         assert!(!cfg.has_any_service());
-        assert!(cfg.configured_services().is_empty());
+        assert_eq!(cfg.configured_services(), [] as [&str; 0]);
     }
 
     #[test]

@@ -207,7 +207,7 @@ mod tests {
             parse_groups("admins, users ,, dev"),
             vec!["admins".to_string(), "users".to_string(), "dev".to_string()]
         );
-        assert!(parse_groups("   ").is_empty());
+        assert_eq!(parse_groups("   "), [] as [std::string::String; 0]);
     }
 
     #[test]

@@ -646,7 +646,10 @@ mod tests {
         let mut owners = owner_user_ids_for_feeds(&db, &[f1, f2]).await.unwrap();
         owners.sort_unstable();
         assert_eq!(owners, vec![u1, u2]);
-        assert!(owner_user_ids_for_feeds(&db, &[]).await.unwrap().is_empty());
+        assert_eq!(
+            owner_user_ids_for_feeds(&db, &[]).await.unwrap(),
+            [] as [i64; 0]
+        );
     }
 
     #[tokio::test]

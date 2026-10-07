@@ -696,7 +696,7 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "epp_sugg", Role::User).await;
 
-        assert!(!ENTRIES_PER_PAGE_SUGGESTIONS.is_empty());
+        assert_ne!(ENTRIES_PER_PAGE_SUGGESTIONS, [] as [i64; 0]);
         for &v in ENTRIES_PER_PAGE_SUGGESTIONS {
             let settings = upsert(&db, user.id, v)
                 .await

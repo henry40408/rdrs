@@ -501,7 +501,10 @@ async fn test_subscription_list_empty() {
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
-    assert!(body["subscriptions"].as_array().unwrap().is_empty());
+    assert_eq!(
+        body["subscriptions"].as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
 }
 
 #[tokio::test]
@@ -553,7 +556,10 @@ async fn test_subscription_edit_unsubscribe() {
 
     let response = app.server.get("/reader/api/0/subscription/list").await;
     let body: serde_json::Value = response.json();
-    assert!(body["subscriptions"].as_array().unwrap().is_empty());
+    assert_eq!(
+        body["subscriptions"].as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
 }
 
 #[tokio::test]
@@ -738,7 +744,7 @@ async fn test_stream_contents_starred_empty() {
 
     let body: serde_json::Value = response.json();
     let items = body["items"].as_array().unwrap();
-    assert!(items.is_empty());
+    assert_eq!(items.as_slice(), [] as [serde_json::Value; 0]);
 }
 
 // --- Stream Items IDs Tests ---
@@ -1075,7 +1081,7 @@ async fn test_unread_count_with_entries() {
     let counts = body["unreadcounts"].as_array().unwrap();
 
     // Should have counts for feed, category, and reading-list
-    assert!(!counts.is_empty());
+    assert_ne!(counts.as_slice(), [] as [serde_json::Value; 0]);
 
     let reading_list = counts
         .iter()
