@@ -278,7 +278,7 @@ pub async fn refresh_feed(
 
             let summary = item.summary.map(|s| s.content);
 
-            let author = item.authors.first().map(|a| a.name.clone());
+            let author = item.authors.first().and_then(|a| a.name.clone());
 
             // published, then updated, then feed timestamp; None falls back to created_at.
             let published_at = item
