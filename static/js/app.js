@@ -1763,6 +1763,7 @@ function installLiveSearch() {
             form.requestSubmit();
         }, Number(form.dataset.liveSearch) || 250);
         input.addEventListener('input', (e) => { if (!e.isComposing) submit(); });
+        input.addEventListener('compositionstart', submit.cancel);
         input.addEventListener('compositionend', submit);
     }
 }

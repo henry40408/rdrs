@@ -6,11 +6,13 @@ export function escapeHtml(text) {
     return div.innerHTML;
 }
 
-/** Delay `fn` until `ms` have elapsed since the last call. */
+/** Delay `fn` until `ms` have elapsed since the last call; `.cancel()` drops a pending call. */
 export function debounce(fn, ms) {
     let t;
-    return function (...args) {
+    const debounced = function (...args) {
         clearTimeout(t);
         t = setTimeout(() => fn.apply(this, args), ms);
     };
+    debounced.cancel = () => clearTimeout(t);
+    return debounced;
 }
