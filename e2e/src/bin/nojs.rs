@@ -274,6 +274,22 @@ async fn walk(
     if driver.css_opt(SEARCH_FORM).await?.is_none() {
         findings.note("search", "no search form");
     } else {
+        // The syntax help is a popover, so it opens without a script.
+        if driver.css_opt("[data-search-help]").await?.is_none() {
+            findings.note("search", "no syntax help button");
+        } else {
+            driver.click_css("[data-search-help]").await?;
+            let open = driver
+                .eval("return document.getElementById('search-syntax-popover').matches(':popover-open')")
+                .await?;
+            if open != true {
+                findings.note("search", "syntax help did not open");
+            }
+            // The popover is centered over the button; close it for the form below.
+            driver
+                .eval("document.getElementById('search-syntax-popover').hidePopover()")
+                .await?;
+        }
         driver.fill_css(SEARCH_FIELD, "test").await?;
         if driver.css_opt(SEARCH_SUBMIT).await?.is_none() {
             findings.note("search", "search form has no submit control");

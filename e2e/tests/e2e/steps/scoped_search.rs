@@ -276,3 +276,65 @@ async fn query_param(world: &RdrsWorld, key: &str) -> Result<Option<String>> {
         .find(|(name, _)| name == key)
         .map(|(_, value)| value.into_owned()))
 }
+
+#[when("I open the scoped search help")]
+async fn open_scoped_search_help(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.click("scoped-search-help").await
+}
+
+#[when("I open the search page help")]
+async fn open_search_page_help(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.click("search-help").await
+}
+
+#[then("the scoped search box reports a syntax error")]
+async fn scoped_search_reports_error(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    eventually("the syntax error banner under the search box", || async {
+        Ok(driver.is_visible("scoped-search-error").await?
+            && driver
+                .text_of("scoped-search-error")
+                .await?
+                .contains("Search syntax error"))
+    })
+    .await?;
+    // The input mirrors it, for assistive tech and the red border.
+    driver
+        .expect_attr(
+            "[data-testid='scoped-search-input']",
+            "aria-invalid",
+            Some("true"),
+        )
+        .await
+}
+
+/// The overlay's content is in a shadow root, which `WebDriver` selectors do
+/// not pierce, so it is probed by script.
+#[then("the help overlay shows the search syntax tab")]
+async fn help_shows_search_syntax(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    driver.expect_visible("kb-help").await?;
+    let probe = driver
+        .eval(
+            r"
+            const root = document.querySelector('rdrs-kb-help').shadowRoot;
+            return {
+              selected: root.getElementById('tab-syntax').getAttribute('aria-selected'),
+              visible: !root.getElementById('syntax').hidden,
+              text: root.getElementById('syntax').textContent,
+            };
+            ",
+        )
+        .await?;
+    ensure!(
+        probe["selected"] == "true" && probe["visible"] == true,
+        "the Search syntax tab is not the one showing: {probe}"
+    );
+    ensure!(
+        probe["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("is:starred")),
+        "the Search syntax tab lacks the syntax reference: {probe}"
+    );
+    Ok(())
+}

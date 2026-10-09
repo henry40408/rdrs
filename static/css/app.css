@@ -3812,7 +3812,7 @@ summary {
     }
 }
 
-/* ===== /search: query-syntax help panel + inline parse-error banner ===== */
+/* ===== /search: form row + parse-error banner (syntax help is <rdrs-kb-help>) ===== */
 /* Keyword input and submit share one row. */
 .search-form-row {
     display: flex;
@@ -3824,12 +3824,36 @@ summary {
     flex: 1;
     min-width: 0;
 }
-.search-form-row button {
+.search-form-row button[type="submit"] {
     padding-inline: var(--space-5);
 }
+.search-form-row .filter-chip-btn {
+    align-self: center;
+}
+.search-syntax-popover {
+    max-width: min(40rem, calc(100vw - 2rem));
+    padding: var(--space-4);
+    color: var(--color-text);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-md);
+}
+.search-syntax-popover h2 {
+    margin: 0 0 var(--space-3);
+    font-size: 1rem;
+}
+.search-syntax-popover dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+}
+.search-syntax-popover dd {
+    margin: 0;
+    color: var(--color-text-secondary);
+}
 
-/* Framed disclosure, mirroring .feed-http-settings so the three match. */
-.search-syntax-help,
+/* Framed disclosure, mirroring .feed-http-settings so the two match. */
 .feed-freshness-help {
     margin: 0 0 var(--space-4);
     border: 1px solid var(--color-border-light);
@@ -3837,23 +3861,27 @@ summary {
     padding: var(--space-3);
     font-size: var(--font-sm);
 }
-.search-syntax-help-body,
 .feed-freshness-help-body {
     margin-top: var(--space-3);
 }
-.search-syntax-help-body ul,
 .feed-freshness-help-body ul {
     margin: 0;
     padding-left: var(--space-5);
     color: var(--color-text-muted);
 }
-.search-syntax-help-body li,
 .feed-freshness-help-body li {
     margin: var(--space-1) 0;
 }
-.search-syntax-help-body code,
 .feed-freshness-help-body code {
     font-family: var(--font-mono);
+}
+/* Set from the swapped banner by syncSearchInvalid() / search.js. */
+input[aria-invalid="true"] {
+    border-color: var(--color-error);
+}
+/* Inside the inline-search drawer, right under the input row. */
+.search-error.search-drawer-error {
+    margin: 0 var(--space-4) var(--space-3);
 }
 .search-error {
     margin: var(--space-4) 0;

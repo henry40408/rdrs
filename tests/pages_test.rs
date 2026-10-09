@@ -1148,14 +1148,92 @@ async fn test_search_page_valid_structured_query_renders_without_error() {
     assert!(!body.contains("data-testid=\"search-error\""));
 }
 
+/// The syntax reference is the shared help dialog, opened from a button; the
+/// old `<details>` panel is gone.
 #[tokio::test]
-async fn test_search_page_has_syntax_help_panel() {
+async fn test_search_page_opens_syntax_help_from_a_button() {
     let (app, _) = app_signed_in_as("admin").await;
 
     let body = common::get_ok(&app.server, "/search").await;
-    assert!(body.contains("class=\"search-syntax-help\""));
-    assert!(body.contains("Search syntax"));
-    assert!(body.contains("is:unread"));
+    assert!(body.contains("data-search-help"));
+    assert!(!body.contains("search-syntax-help"));
+    // Without scripts the same button opens a server-rendered popover.
+    assert!(body.contains(r#"popovertarget="search-syntax-popover""#));
+    assert!(body.contains(r#"id="search-syntax-popover" class="search-syntax-popover" popover"#));
+    assert!(body.contains("<code>is:starred</code>"));
+}
+
+/// Every entries list takes the inline search drawer, with its help button.
+#[tokio::test]
+async fn test_list_pages_render_the_inline_search_drawer() {
+    let app = app_with_wombats(3).await;
+
+    for path in [
+        "/",
+        "/entries",
+        "/entries/read",
+        "/entries/starred",
+        "/entries/summarized",
+        "/categories/1/entries",
+        "/feeds/1/entries",
+    ] {
+        let body = common::get_ok(&app.server, path).await;
+        for marker in [
+            "data-search-drawer",
+            "data-search-toggle",
+            "data-search-help",
+            "data-search-error",
+        ] {
+            assert!(body.contains(marker), "{path}: missing {marker}");
+        }
+    }
+}
+
+/// The inline search speaks the `/search` syntax on every list, not a substring.
+#[tokio::test]
+async fn test_list_search_uses_search_syntax() {
+    let app = app_with_wombats(3).await;
+
+    for base in ["/", "/entries", "/categories/1/entries", "/feeds/1/entries"] {
+        let get = |q: &str| {
+            let q: String = url::form_urlencoded::byte_serialize(q.as_bytes()).collect();
+            let url = format!("{base}?fragment=1&q={q}");
+            let server = &app.server;
+            async move { common::get_ok(server, &url).await }
+        };
+
+        let exact = get("title:\"Wombat 1\"").await;
+        assert!(exact.contains("Wombat 1"), "{base}: title: term");
+        assert!(!exact.contains("Wombat 2"), "{base}: title: term narrows");
+
+        let excluded = get("Wombat -2").await;
+        assert!(excluded.contains("Wombat 1"), "{base}: -term keeps others");
+        assert!(!excluded.contains("Wombat 2"), "{base}: -term excludes");
+
+        let by_feed = get("feed:wombat is:unread").await;
+        assert!(by_feed.contains("Wombat 0"), "{base}: feed: + is:");
+
+        let none = get("is:starred").await;
+        assert!(!none.contains("Wombat 0"), "{base}: is:starred");
+        assert!(none.contains("scoped-search-empty"), "{base}: no matches");
+    }
+}
+
+/// An unparseable query reports why and lists nothing, instead of falling back
+/// to the unfiltered list.
+#[tokio::test]
+async fn test_list_search_syntax_error_lists_nothing() {
+    let app = app_with_wombats(3).await;
+
+    for base in ["/", "/entries/starred", "/categories/1/entries"] {
+        let body = common::get_ok(&app.server, &format!("{base}?fragment=1&q=%28Wombat")).await;
+        assert!(
+            body.contains("Search syntax error (near character 1)"),
+            "{base}: {body}"
+        );
+        assert!(!body.contains("Wombat 0"), "{base}: must list nothing");
+        assert!(!body.contains("scoped-search-empty"), "{base}");
+    }
 }
 
 // --- Category Entries Page Tests ---
@@ -1763,6 +1841,101 @@ async fn test_category_mark_read_scoped_search() {
         other_read_at.is_none(),
         "entry not matching the scoped search must remain unread"
     );
+}
+
+/// "Mark matching as read" takes the search syntax, and a query that does not
+/// parse marks nothing rather than the whole category.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_mark_read_scoped_search_syntax() {
+    let mut app = create_test_app(default_test_config()).await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_ms", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_ms", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "MarkSyntaxCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/ms-feed",
+            title: Some("MS Feed"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for (guid, title) in [
+        ("guid-ms-a", "Widget Roundup"),
+        ("guid-ms-b", "Something Else"),
+    ] {
+        let (e, _) = rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            guid,
+            Some(title),
+            Some(&format!("https://x/ms/{guid}")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        ids.push(e.id);
+    }
+    let (widget_id, other_id) = (ids[0], ids[1]);
+    let url = format!("/categories/{}/entries/mark-read", cat.id);
+
+    async fn read_at(db: &rdrs::Db, id: i64) -> Option<String> {
+        rdrs::query_scalar!(
+            db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            id
+        )
+        .unwrap()
+    }
+
+    // Unparseable: nothing is marked.
+    app.server
+        .post(&url)
+        .form(&[("q", "(Widget")])
+        .await
+        .assert_status_see_other();
+    assert!(read_at(&app.db, widget_id).await.is_none());
+    assert!(read_at(&app.db, other_id).await.is_none());
+
+    // An empty quoted phrase is a syntax error too, not "match everything".
+    app.server
+        .post(&url)
+        .form(&[("q", "\"\"")])
+        .await
+        .assert_status_see_other();
+    assert!(read_at(&app.db, widget_id).await.is_none());
+    assert!(read_at(&app.db, other_id).await.is_none());
+
+    // Syntax is honoured: only the entry that is not "Widget" is marked.
+    app.server
+        .post(&url)
+        .form(&[("q", "-Widget")])
+        .await
+        .assert_status_see_other();
+    assert!(read_at(&app.db, widget_id).await.is_none());
+    assert!(read_at(&app.db, other_id).await.is_some());
 }
 
 /// `GET /api/sidebar/categories/{id}/feeds` — the lazily-loaded feed list the

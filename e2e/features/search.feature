@@ -32,6 +32,10 @@ Feature: Search
     When I load more search results
     Then the result count is 55
 
+  Scenario: The help button opens the search syntax
+    When I open the search page help
+    Then the help overlay shows the search syntax tab
+
   Scenario: Pressing the slash key focuses the search input
     When I press the "/" key
     Then the search input is focused

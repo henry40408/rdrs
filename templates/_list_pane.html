@@ -12,8 +12,11 @@
                     {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
                     <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
                 </form>
+                <button type="button" class="filter-chip-btn" data-search-help data-testid="scoped-search-help" aria-label="Search syntax" title="Search syntax">{% call icons::help() %}{% endcall %}</button>
                 <button type="button" class="filter-chip-btn" data-search-close data-testid="scoped-search-close" aria-label="Close search">{% call icons::close() %}{% endcall %}</button>
             </div>
+            {# Always rendered so a swap can fill it; `hidden` while the query parses. #}
+            <div class="search-error search-drawer-error" role="alert" data-search-error data-testid="scoped-search-error"{% if entries_layout.search_error.is_none() %} hidden{% endif %}>{% if let Some(err) = entries_layout.search_error.as_ref() %}{{ err }}{% endif %}</div>
         </div>
     </div>
     {% endif %}
@@ -32,7 +35,7 @@
             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
         </div>
         {% endif %}
-        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() %}
+        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() || entries_layout.search_action.is_some() %}
         <div class="filter-bar">
             {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
             <div class="form-group form-group-inline" data-status-filter>
