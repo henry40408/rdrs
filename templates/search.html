@@ -17,10 +17,24 @@
                 <form method="get" action="/search" data-swap="[data-search-results]" data-swap-fragment data-swap-latest data-sync-q data-live-search="300" data-live-search-min="2">
                     <div class="search-form-row">
                         <input type="text" id="search-q" name="q" value="{{ search.q }}" placeholder="Find entries by title or content" aria-label="Search keywords" autocomplete="off" autofocus data-testid="search-input">
-                        <button type="button" class="filter-chip-btn" data-search-help data-testid="search-help" aria-label="Search syntax" title="Search syntax">{% call icons::help() %}{% endcall %}</button>
+                        <button type="button" class="filter-chip-btn" data-search-help popovertarget="search-syntax-popover" data-testid="search-help" aria-label="Search syntax" title="Search syntax">{% call icons::help() %}{% endcall %}</button>
                         <button type="submit" data-testid="search-btn">Search</button>
                     </div>
                 </form>
+
+                {# No-JS fallback for the help button: with scripts, app.js cancels the
+                   click and opens <rdrs-kb-help> instead. Keep in step with SEARCH_SYNTAX. #}
+                <div id="search-syntax-popover" class="search-syntax-popover" popover data-testid="search-syntax-popover">
+                    <h2>Search syntax</h2>
+                    <dl>
+                        <dt><code>is:unread</code> <code>is:read</code> <code>is:starred</code></dt><dd>Status</dd>
+                        <dt><code>feed:name</code> <code>category:name</code></dt><dd>By feed or category (fuzzy, case-insensitive)</dd>
+                        <dt><code>title:word</code> <code>author:name</code></dt><dd>Title contains word; by author</dd>
+                        <dt><code>before:2026-01-01</code> <code>after:2026-01-01</code></dt><dd>Published before / after (UTC)</dd>
+                        <dt><code>AND OR NOT</code> <code>( )</code></dt><dd>Boolean operators and grouping; adjacent words imply AND</dd>
+                        <dt><code>-term</code> <code>"exact phrase"</code></dt><dd>Exclude a term; quote phrases and values with spaces, e.g. <code>feed:"Rust Blog"</code></dd>
+                    </dl>
+                </div>
 
                 <div class="search-results-region" data-search-results>
                     {% include "_search_results.html" %}

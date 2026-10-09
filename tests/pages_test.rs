@@ -1157,6 +1157,10 @@ async fn test_search_page_opens_syntax_help_from_a_button() {
     let body = common::get_ok(&app.server, "/search").await;
     assert!(body.contains("data-search-help"));
     assert!(!body.contains("search-syntax-help"));
+    // Without scripts the same button opens a server-rendered popover.
+    assert!(body.contains(r#"popovertarget="search-syntax-popover""#));
+    assert!(body.contains(r#"id="search-syntax-popover" class="search-syntax-popover" popover"#));
+    assert!(body.contains("<code>is:starred</code>"));
 }
 
 /// Every entries list takes the inline search drawer, with its help button.
