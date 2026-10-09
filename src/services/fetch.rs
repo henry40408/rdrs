@@ -217,7 +217,7 @@ mod tests {
         let addrs = resolve(&resolver("localhost"), "localhost")
             .await
             .expect("an allowed host keeps its answers");
-        assert!(!addrs.is_empty());
+        assert_ne!(addrs, [] as [std::net::SocketAddr; 0]);
     }
 
     #[tokio::test]

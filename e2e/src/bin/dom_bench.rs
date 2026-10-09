@@ -423,7 +423,7 @@ fn report_profile(profile: &Profile) {
         {
             current = parent.get(&node.id).and_then(|id| by_id.get(id)).copied();
         }
-        let key = current.map_or_else(|| "(outside app js)".to_owned(), &label);
+        let key = current.map_or_else(|| "(outside app js)".to_owned(), label);
         *owner_time.entry(key).or_default() += 1;
     }
 

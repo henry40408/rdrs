@@ -257,7 +257,7 @@ async fn test_invalid_session_cookie_still_forward_auths() {
         .maybe_cookie("session_token")
         .expect("a fresh session cookie should be minted");
     assert_ne!(fresh.value(), "stale-invalid");
-    assert!(!fresh.value().is_empty());
+    assert_ne!(fresh.value(), "");
 }
 
 #[tokio::test]

@@ -3127,8 +3127,14 @@ mod tests {
 
     #[test]
     fn referrer_suggestions_skip_what_cannot_be_a_referer() {
-        assert!(referrer_suggestions(None, "not a url").is_empty());
-        assert!(referrer_suggestions(Some("file:///etc/hosts"), "not a url").is_empty());
+        assert_eq!(
+            referrer_suggestions(None, "not a url"),
+            [] as [std::string::String; 0]
+        );
+        assert_eq!(
+            referrer_suggestions(Some("file:///etc/hosts"), "not a url"),
+            [] as [std::string::String; 0]
+        );
     }
 
     #[test]

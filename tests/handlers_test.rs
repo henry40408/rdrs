@@ -266,7 +266,10 @@ async fn test_list_feeds_empty() {
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
-    assert!(body["subscriptions"].as_array().unwrap().is_empty());
+    assert_eq!(
+        body["subscriptions"].as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
 }
 
 #[tokio::test]
@@ -1064,7 +1067,7 @@ async fn test_create_category_with_whitespace_name() {
         .map(|t| t["id"].as_str().unwrap())
         .collect();
     // Should have at least one folder tag
-    assert!(!folder_tags.is_empty());
+    assert_ne!(folder_tags, [] as [&str; 0]);
 }
 
 #[tokio::test]

@@ -694,7 +694,7 @@ mod tests {
     /// `refresh_feed` silently drops an invalid `User-Agent`, so every suggestion must parse.
     #[test]
     fn custom_user_agent_suggestions_are_valid_header_values() {
-        assert!(!CUSTOM_USER_AGENT_SUGGESTIONS.is_empty());
+        assert_ne!(CUSTOM_USER_AGENT_SUGGESTIONS, [] as [&str; 0]);
 
         for ua in CUSTOM_USER_AGENT_SUGGESTIONS {
             assert!(
@@ -1053,7 +1053,7 @@ mod tests {
     fn test_parse_trusted_networks() {
         let nets = parse_trusted_networks("10.0.0.0/8, 192.168.1.0/24 , 127.0.0.1").unwrap();
         assert_eq!(nets.len(), 3);
-        assert!(parse_trusted_networks("").unwrap().is_empty());
+        assert_eq!(parse_trusted_networks("").unwrap(), [] as [ipnet::IpNet; 0]);
         assert!(parse_trusted_networks("not-an-ip").is_err());
     }
 

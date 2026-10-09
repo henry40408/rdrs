@@ -129,7 +129,7 @@ mod tests {
     fn relative_none_is_never_with_empty_tooltip() {
         let (text, iso) = format_relative_time(None);
         assert_eq!(text, "Never");
-        assert!(iso.is_empty());
+        assert_eq!(iso, "");
     }
 
     #[test]
