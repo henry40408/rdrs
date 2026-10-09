@@ -379,10 +379,19 @@ impl Parser<'_> {
                 node_from_filter(field, &value, pos)
             }
             Some(Tok::Text(_)) => {
+                let pos = self.peek_pos();
                 let s = match &self.bump().tok {
                     Tok::Text(s) => s.clone(),
                     _ => unreachable!(),
                 };
+                // `""` would be `LIKE '%%'`, matching (and "mark matching as read"
+                // marking) everything.
+                if s.is_empty() {
+                    return Err(ParseError {
+                        position: pos,
+                        message: "Empty quoted phrase".into(),
+                    });
+                }
                 Ok(QueryNode::Text(s))
             }
             _ => Err(ParseError {
@@ -557,6 +566,13 @@ mod tests {
                 value: "jane".into()
             }
         );
+    }
+
+    #[test]
+    fn empty_quoted_phrase_is_rejected() {
+        let err = parse("\"\"").unwrap_err();
+        assert_eq!(err.message, "Empty quoted phrase");
+        assert!(parse("rust \"\"").is_err());
     }
 
     #[test]
