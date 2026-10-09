@@ -1843,6 +1843,101 @@ async fn test_category_mark_read_scoped_search() {
     );
 }
 
+/// "Mark matching as read" takes the search syntax, and a query that does not
+/// parse marks nothing rather than the whole category.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_mark_read_scoped_search_syntax() {
+    let mut app = create_test_app(default_test_config()).await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_ms", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_ms", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "MarkSyntaxCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/ms-feed",
+            title: Some("MS Feed"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for (guid, title) in [
+        ("guid-ms-a", "Widget Roundup"),
+        ("guid-ms-b", "Something Else"),
+    ] {
+        let (e, _) = rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            guid,
+            Some(title),
+            Some(&format!("https://x/ms/{guid}")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        ids.push(e.id);
+    }
+    let (widget_id, other_id) = (ids[0], ids[1]);
+    let url = format!("/categories/{}/entries/mark-read", cat.id);
+
+    async fn read_at(db: &rdrs::Db, id: i64) -> Option<String> {
+        rdrs::query_scalar!(
+            db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            id
+        )
+        .unwrap()
+    }
+
+    // Unparseable: nothing is marked.
+    app.server
+        .post(&url)
+        .form(&[("q", "(Widget")])
+        .await
+        .assert_status_see_other();
+    assert!(read_at(&app.db, widget_id).await.is_none());
+    assert!(read_at(&app.db, other_id).await.is_none());
+
+    // An empty quoted phrase is a syntax error too, not "match everything".
+    app.server
+        .post(&url)
+        .form(&[("q", "\"\"")])
+        .await
+        .assert_status_see_other();
+    assert!(read_at(&app.db, widget_id).await.is_none());
+    assert!(read_at(&app.db, other_id).await.is_none());
+
+    // Syntax is honoured: only the entry that is not "Widget" is marked.
+    app.server
+        .post(&url)
+        .form(&[("q", "-Widget")])
+        .await
+        .assert_status_see_other();
+    assert!(read_at(&app.db, widget_id).await.is_none());
+    assert!(read_at(&app.db, other_id).await.is_some());
+}
+
 /// `GET /api/sidebar/categories/{id}/feeds` — the lazily-loaded feed list the
 /// sidebar shows under the open category, with per-feed unread counts. A
 /// category belonging to another account must 404 rather than leak its feeds.
