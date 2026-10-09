@@ -186,12 +186,14 @@ pub struct EntriesLayoutContext {
     pub onboarding: bool,
     /// See `snapshot_now()`.
     pub snapshot_at: String,
-    /// Current scoped-search keyword.
+    /// Current inline-search query.
     pub search: Option<String>,
-    /// Scoped-search form action; `None` hides the box.
+    /// Inline-search form action; `None` hides the box.
     pub search_action: Option<String>,
     /// Matches for the active search, for "Mark N matching as Read".
     pub matching_count: Option<i64>,
+    /// Why the active search could not run; the list is empty while it is set.
+    pub search_error: Option<String>,
 }
 
 pub(crate) fn row_view_from(
@@ -237,6 +239,66 @@ async fn entries_page_size(state: &AppState, user_id: i64) -> i64 {
             user_settings::MIN_ENTRIES_PER_PAGE,
             user_settings::MAX_ENTRIES_PER_PAGE,
         )
+}
+
+/// A list page's `?q=` run through the search-syntax parser.
+struct ScopedSearch {
+    /// The query as typed; `None` when blank.
+    raw: Option<String>,
+    query: Option<entry::query::QueryNode>,
+    /// Set when `raw` does not parse; the page must then list nothing rather
+    /// than fall back to an unfiltered list.
+    error: Option<String>,
+}
+
+/// `Search syntax error (near character N): …`, shared by `/search` and the
+/// list pages so the two cannot drift.
+fn search_error_message(q: &str, e: &entry::query::ParseError) -> String {
+    // Byte offset → 1-based character position for the message.
+    let char_pos = q.get(..e.position).map_or(0, |p| p.chars().count()) + 1;
+    format!(
+        "Search syntax error (near character {char_pos}): {}",
+        e.message
+    )
+}
+
+fn scoped_search(q: Option<&str>) -> ScopedSearch {
+    let Some(raw) = q.filter(|s| !s.trim().is_empty()) else {
+        return ScopedSearch {
+            raw: None,
+            query: None,
+            error: None,
+        };
+    };
+    match entry::query::parse(raw) {
+        Ok(ast) => ScopedSearch {
+            raw: Some(raw.to_string()),
+            query: Some(ast),
+            error: None,
+        },
+        Err(e) => ScopedSearch {
+            raw: Some(raw.to_string()),
+            query: None,
+            error: Some(search_error_message(raw, &e)),
+        },
+    }
+}
+
+/// [`build_entries_page`], but an unparseable search lists nothing.
+async fn build_searched_entries_page(
+    state: &AppState,
+    user_id: i64,
+    mut filter: entry::EntryFilter,
+    search: &ScopedSearch,
+    sort: entry::EntrySortOrder,
+    page_size: i64,
+    cursor: Option<entry::ContinuationCursor>,
+) -> (Vec<EntryRowView>, Option<String>) {
+    if search.error.is_some() {
+        return (Vec::new(), None);
+    }
+    filter.query.clone_from(&search.query);
+    build_entries_page(state, user_id, filter, sort, page_size, cursor).await
 }
 
 /// One page of rows (the look-ahead sentinel dropped) plus the next composite
@@ -306,7 +368,7 @@ pub struct EntriesQuery {
     pub status: Option<String>,
     /// Deep-link entry to pre-open. Does not mark it read; ignored if not the user's.
     pub entry: Option<i64>,
-    /// Scoped-search keyword; blank means no filter.
+    /// Inline-search query in the `/search` syntax; blank means no filter.
     pub q: Option<String>,
     /// Render-time snapshot applied as [`entry::EntryFilter::read_after`], so
     /// entries read mid-session don't vanish from later pages. Unread views
@@ -637,6 +699,7 @@ pub async fn unread_page(
 ) -> Response {
     let user_id = auth_user.user.id;
     let page_size = entries_page_size(&state, user_id).await;
+    let search = scoped_search(query.q.as_deref());
     let filter = entry::EntryFilter {
         unread_only: true,
         // Only set by the Load-More form.
@@ -649,10 +712,11 @@ pub async fn unread_page(
             .after
             .as_deref()
             .and_then(entry::ContinuationCursor::parse);
-        let (entries, next_cursor) = build_entries_page(
+        let (entries, next_cursor) = build_searched_entries_page(
             &state,
             user_id,
             filter,
+            &search,
             entry::EntrySortOrder::PublishedAt,
             page_size,
             cursor,
@@ -665,7 +729,7 @@ pub async fn unread_page(
                 next_cursor,
                 path: "/".into(),
                 status_filter: None,
-                q: None,
+                q: search.raw,
                 snapshot: query.snapshot.clone(),
                 csrf_token: auth_user.csrf_token.clone(),
             },
@@ -673,10 +737,11 @@ pub async fn unread_page(
             .into_response();
     }
 
-    let (entries, next_cursor) = build_entries_page(
+    let (entries, next_cursor) = build_searched_entries_page(
         &state,
         user_id,
         filter,
+        &search,
         entry::EntrySortOrder::PublishedAt,
         page_size,
         None,
@@ -684,8 +749,10 @@ pub async fn unread_page(
     .await;
 
     // Empty inbox: onboarding if there are no feeds, else "All caught up".
-    let no_feeds =
-        entries.is_empty() && feed::count_by_user(&state.db, user_id).await.unwrap_or(0) == 0;
+    // A search with no hits says nothing about the inbox.
+    let no_feeds = entries.is_empty()
+        && search.raw.is_none()
+        && feed::count_by_user(&state.db, user_id).await.unwrap_or(0) == 0;
 
     let entries_layout = EntriesLayoutContext {
         active: "unread",
@@ -693,9 +760,13 @@ pub async fn unread_page(
         empty_detail: "You've read every unread entry — new items land here as your feeds refresh.",
         path: "/".to_string(),
         mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
-        show_mark_above: true,
+        // Hidden during search: it would be confusable with the marks-all-loaded action.
+        show_mark_above: search.raw.is_none(),
         onboarding: no_feeds,
         snapshot_at: snapshot_now(),
+        search_action: (!no_feeds).then(|| "/".to_string()),
+        search: search.raw,
+        search_error: search.error,
         ..Default::default()
     };
 
@@ -1348,10 +1419,13 @@ async fn entries_tab_page(
     } else {
         None
     };
-    let (entries, next_cursor) =
-        build_entries_page(&state, user_id, tab.filter, tab.sort, page_size, cursor).await;
+    let search = scoped_search(query.q.as_deref());
+    let (entries, next_cursor) = build_searched_entries_page(
+        &state, user_id, tab.filter, &search, tab.sort, page_size, cursor,
+    )
+    .await;
 
-    if fragment {
+    if fragment && query.after.is_some() {
         return (
             flash,
             EntriesFragmentTemplate {
@@ -1359,8 +1433,36 @@ async fn entries_tab_page(
                 next_cursor,
                 path: tab.path.into(),
                 status_filter: None,
-                q: None,
+                q: search.raw,
                 snapshot: query.snapshot,
+                csrf_token: auth_user.csrf_token,
+            },
+        )
+            .into_response();
+    }
+
+    let entries_layout = EntriesLayoutContext {
+        active: tab.active,
+        empty_title: tab.empty_title,
+        empty_detail: tab.empty_detail,
+        path: tab.path.to_string(),
+        show_tab_bar: true,
+        mark_as_read_scope: tab.mark_as_read_scope.map(str::to_string),
+        snapshot_at: snapshot_now(),
+        search_action: Some(tab.path.to_string()),
+        search: search.raw,
+        search_error: search.error,
+        ..Default::default()
+    };
+
+    // Search refresh (fragment=1, no cursor): replace the list in place.
+    if fragment {
+        return (
+            flash,
+            EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
                 csrf_token: auth_user.csrf_token,
             },
         )
@@ -1379,16 +1481,7 @@ async fn entries_tab_page(
             reading_pane,
             next_cursor,
             csrf_token: auth_user.csrf_token.clone(),
-            entries_layout: EntriesLayoutContext {
-                active: tab.active,
-                empty_title: tab.empty_title,
-                empty_detail: tab.empty_detail,
-                path: tab.path.to_string(),
-                show_tab_bar: true,
-                mark_as_read_scope: tab.mark_as_read_scope.map(str::to_string),
-                snapshot_at: snapshot_now(),
-                ..Default::default()
-            },
+            entries_layout,
         },
     )
         .into_response()
@@ -1696,17 +1789,17 @@ async fn scoped_entries_page(
     }
     // See [`EntriesQuery::snapshot`].
     filter.read_after = query.snapshot.clone();
-    let search = query.q.clone().filter(|s| !s.trim().is_empty());
-    filter.search = search.clone();
+    let search = scoped_search(query.q.as_deref());
     let cursor = query
         .after
         .as_deref()
         .and_then(entry::ContinuationCursor::parse);
 
-    let (entries, next_cursor) = build_entries_page(
+    let (entries, next_cursor) = build_searched_entries_page(
         &state,
         user_id,
         filter,
+        &search,
         entry::EntrySortOrder::PublishedAt,
         page_size,
         cursor,
@@ -1719,7 +1812,7 @@ async fn scoped_entries_page(
             next_cursor,
             path: scope.path.into(),
             status_filter: query.status.clone(),
-            q: search,
+            q: search.raw,
             snapshot: query.snapshot.clone(),
             csrf_token: auth_user.csrf_token.clone(),
         };
@@ -1727,11 +1820,11 @@ async fn scoped_entries_page(
     }
 
     // Unread-only regardless of tab, to match what `mark_read_by_filter` touches.
-    let matching_count = if let Some(ref s) = search {
+    let matching_count = if let Some(ast) = search.query.clone() {
         let mark_filter = entry::EntryFilter {
             category_id: scope.category_id,
             feed_id: scope.feed_id,
-            search: Some(s.clone()),
+            query: Some(ast),
             unread_only: true,
             ..Default::default()
         };
@@ -1756,9 +1849,10 @@ async fn scoped_entries_page(
         active_feed_id: scope.feed_id,
         status_filter: query.status.clone(),
         // Hidden during search: it would be confusable with "Mark N matching".
-        show_mark_above: search.is_none(),
+        show_mark_above: search.raw.is_none(),
         snapshot_at: snapshot_now(),
-        search,
+        search: search.raw,
+        search_error: search.error,
         matching_count,
         ..Default::default()
     };
@@ -1924,12 +2018,7 @@ async fn search_results(
     let ast = match entry::query::parse(&view.q) {
         Ok(ast) => ast,
         Err(e) => {
-            // Byte offset → 1-based character position for the message.
-            let char_pos = view.q.get(..e.position).map_or(0, |p| p.chars().count()) + 1;
-            view.error = Some(format!(
-                "Search syntax error (near character {char_pos}): {}",
-                e.message
-            ));
+            view.error = Some(search_error_message(&view.q, &e));
             return view;
         }
     };
@@ -2128,25 +2217,24 @@ async fn mark_read_scoped(
     status: Option<String>,
     base_path: &str,
 ) -> Response {
-    let search = q.as_ref().and_then(|s| {
-        let t = s.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t.to_string())
-        }
-    });
+    let parsed = scoped_search(q.as_deref());
 
     // Must guard here: a blank `q` would match, and mark read, the whole scope.
-    let Some(search) = search else {
+    let Some(raw) = parsed.raw.as_deref() else {
         let redirect = build_scoped_redirect(base_path, None, status.as_deref());
         return FlashRedirect::info(&redirect, "No search term — nothing marked.").into_response();
     };
+    let search = raw.trim().to_string();
+    // An unparseable query matches nothing to mark; say why instead.
+    if let Some(err) = parsed.error {
+        let redirect = build_scoped_redirect(base_path, Some(&search), status.as_deref());
+        return FlashRedirect::error(&redirect, err).into_response();
+    }
 
     let filter = entry::EntryFilter {
         category_id,
         feed_id,
-        search: Some(search.clone()),
+        query: parsed.query,
         ..Default::default()
     };
     // Failure becomes an error flash, not a 500.

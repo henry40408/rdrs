@@ -1,5 +1,6 @@
 {% extends "app_layout.html" %}
 {% import "macros.html" as macros %}
+{%- import "_icons.html" as icons -%}
 
 {% block page_script %}<script type="module" src="/static/js/search.js?v={{ layout.git_version }}"></script>{% endblock %}
 
@@ -16,23 +17,10 @@
                 <form method="get" action="/search" data-swap="[data-search-results]" data-swap-fragment data-swap-latest data-sync-q data-live-search="300" data-live-search-min="2">
                     <div class="search-form-row">
                         <input type="text" id="search-q" name="q" value="{{ search.q }}" placeholder="Find entries by title or content" aria-label="Search keywords" autocomplete="off" autofocus data-testid="search-input">
+                        <button type="button" class="filter-chip-btn" data-search-help data-testid="search-help" aria-label="Search syntax" title="Search syntax">{% call icons::help() %}{% endcall %}</button>
                         <button type="submit" data-testid="search-btn">Search</button>
                     </div>
                 </form>
-
-                <details class="search-syntax-help">
-                    <summary>Search syntax</summary>
-                    <div class="search-syntax-help-body">
-                        <ul>
-                            <li><code>is:unread</code> / <code>is:read</code> / <code>is:starred</code> — by status</li>
-                            <li><code>feed:name</code> / <code>category:name</code> — by source (fuzzy, case-insensitive)</li>
-                            <li><code>title:word</code> / <code>author:name</code> — by field</li>
-                            <li><code>before:2026-01-01</code> / <code>after:2026-01-01</code> — by date (UTC)</li>
-                            <li><code>AND</code> <code>OR</code> <code>NOT</code> and <code>(&nbsp;)</code> — combine; adjacent words imply AND</li>
-                            <li><code>-term</code> — exclude; <code>"exact phrase"</code> — quote (also for values with spaces, e.g. <code>feed:"Rust Blog"</code>)</li>
-                        </ul>
-                    </div>
-                </details>
 
                 <div class="search-results-region" data-search-results>
                     {% include "_search_results.html" %}

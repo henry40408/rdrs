@@ -1148,14 +1148,88 @@ async fn test_search_page_valid_structured_query_renders_without_error() {
     assert!(!body.contains("data-testid=\"search-error\""));
 }
 
+/// The syntax reference is the shared help dialog, opened from a button; the
+/// old `<details>` panel is gone.
 #[tokio::test]
-async fn test_search_page_has_syntax_help_panel() {
+async fn test_search_page_opens_syntax_help_from_a_button() {
     let (app, _) = app_signed_in_as("admin").await;
 
     let body = common::get_ok(&app.server, "/search").await;
-    assert!(body.contains("class=\"search-syntax-help\""));
-    assert!(body.contains("Search syntax"));
-    assert!(body.contains("is:unread"));
+    assert!(body.contains("data-search-help"));
+    assert!(!body.contains("search-syntax-help"));
+}
+
+/// Every entries list takes the inline search drawer, with its help button.
+#[tokio::test]
+async fn test_list_pages_render_the_inline_search_drawer() {
+    let app = app_with_wombats(3).await;
+
+    for path in [
+        "/",
+        "/entries",
+        "/entries/read",
+        "/entries/starred",
+        "/entries/summarized",
+        "/categories/1/entries",
+        "/feeds/1/entries",
+    ] {
+        let body = common::get_ok(&app.server, path).await;
+        for marker in [
+            "data-search-drawer",
+            "data-search-toggle",
+            "data-search-help",
+            "data-search-error",
+        ] {
+            assert!(body.contains(marker), "{path}: missing {marker}");
+        }
+    }
+}
+
+/// The inline search speaks the `/search` syntax on every list, not a substring.
+#[tokio::test]
+async fn test_list_search_uses_search_syntax() {
+    let app = app_with_wombats(3).await;
+
+    for base in ["/", "/entries", "/categories/1/entries", "/feeds/1/entries"] {
+        let get = |q: &str| {
+            let q: String = url::form_urlencoded::byte_serialize(q.as_bytes()).collect();
+            let url = format!("{base}?fragment=1&q={q}");
+            let server = &app.server;
+            async move { common::get_ok(server, &url).await }
+        };
+
+        let exact = get("title:\"Wombat 1\"").await;
+        assert!(exact.contains("Wombat 1"), "{base}: title: term");
+        assert!(!exact.contains("Wombat 2"), "{base}: title: term narrows");
+
+        let excluded = get("Wombat -2").await;
+        assert!(excluded.contains("Wombat 1"), "{base}: -term keeps others");
+        assert!(!excluded.contains("Wombat 2"), "{base}: -term excludes");
+
+        let by_feed = get("feed:wombat is:unread").await;
+        assert!(by_feed.contains("Wombat 0"), "{base}: feed: + is:");
+
+        let none = get("is:starred").await;
+        assert!(!none.contains("Wombat 0"), "{base}: is:starred");
+        assert!(none.contains("scoped-search-empty"), "{base}: no matches");
+    }
+}
+
+/// An unparseable query reports why and lists nothing, instead of falling back
+/// to the unfiltered list.
+#[tokio::test]
+async fn test_list_search_syntax_error_lists_nothing() {
+    let app = app_with_wombats(3).await;
+
+    for base in ["/", "/entries/starred", "/categories/1/entries"] {
+        let body = common::get_ok(&app.server, &format!("{base}?fragment=1&q=%28Wombat")).await;
+        assert!(
+            body.contains("Search syntax error (near character 1)"),
+            "{base}: {body}"
+        );
+        assert!(!body.contains("Wombat 0"), "{base}: must list nothing");
+        assert!(!body.contains("scoped-search-empty"), "{base}");
+    }
 }
 
 // --- Category Entries Page Tests ---

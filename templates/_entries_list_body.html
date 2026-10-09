@@ -13,6 +13,13 @@
                 <a href="/feeds/import" class="btn btn-secondary" data-testid="onboarding-import-opml">Import OPML</a>
             </div>
         </div>
+    {% else if entries_layout.search_error.is_some() %}
+        {# The error banner above the list says why; nothing to list. #}
+    {% else if entries_layout.search.is_some() %}
+        <div class="empty-state-quiet" data-testid="scoped-search-empty">
+            <p class="empty-state-quiet-title">No matches</p>
+            <p class="empty-state-quiet-text">Nothing in this view matches your search.</p>
+        </div>
     {% else %}
         <div class="empty-state-quiet">
             <p class="empty-state-quiet-title">{{ entries_layout.empty_title }}</p>

@@ -222,6 +222,30 @@ Feature: Triage entries (star, mark-read, summarize)
     And the entry list does not show "Other News"
     And the mark-above button is hidden
 
+  Scenario: The scoped search box accepts search syntax
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    And I open the scoped search box
+    And I type "title:Superheroine -Other" into the scoped search box
+    Then the entry list shows "Superheroine Rises"
+    And the entry list does not show "Other News"
+
+  Scenario: A malformed scoped search explains itself under the box
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    And I open the scoped search box
+    And I type "(Superheroine" into the scoped search box
+    Then the scoped search box reports a syntax error
+    And the entry list does not show "Superheroine Rises"
+    And the entry list does not show "Other News"
+
+  Scenario: The scoped search help button opens the search syntax
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    And I open the scoped search box
+    And I open the scoped search help
+    Then the help overlay shows the search syntax tab
+
   Scenario: Clearing the scoped search box resets the q query parameter
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     When I open the entries page for category "Anime"

@@ -238,6 +238,11 @@ function isMorphTarget(selector) {
     return selector === '[data-entries-list]' || selector.startsWith('#entry-row-');
 }
 
+/// Targets that also live inside `[data-list-pane]`, which a pane swap replaces
+/// without touching `lastServerMarkup`: a cached response would then match a
+/// stale banner or button and skip the swap that should have fixed it.
+const ALWAYS_SWAP = new Set(['[data-search-error]', '[data-mark-matching-slot]']);
+
 /// Client-written attributes a morph must keep. Losing `data-…-bound` would
 /// bind a second listener: one click, two POSTs.
 const CLIENT_OWNED_ATTR = /^(data-.+-bound|data-img-.+|data-localized|data-tooltip-at|title)$/;
@@ -447,7 +452,7 @@ async function performSwap(url, init, defaultTarget, options) {
             const sole = sel === '#reading-pane' ? null : soleSwapElement(tpl);
             if (sole && isMorphTarget(sel)) {
                 if (morphSwap(dst, sole)) continue;
-            } else if (sole) {
+            } else if (sole && !ALWAYS_SWAP.has(sel)) {
                 const markup = comparableServerMarkup(sole);
                 if (lastServerMarkup.get(sel) === markup) {
                     syncVolatileAttrs(sole, dst);
@@ -1121,9 +1126,40 @@ const KB_SHORTCUTS = [
     { group: 'Go to', key: '[ / ]', desc: 'Previous / next sidebar row (categories + the open category’s feeds)' },
     { group: 'Go to', key: '{ / }', desc: 'Previous / next sidebar row with unread' },
     { group: 'Feed / category pages', key: '1-4', desc: 'Status filter: All / Unread / Read / Starred' },
-    { group: 'Other', key: '/', desc: 'Open the search box (scoped search on feed / category pages)' },
+    { group: 'Other', key: '/', desc: 'Open the search box (searches the current list; on /search, focuses it)' },
     { group: 'Other', key: '?', desc: 'Toggle this help' },
 ];
+
+// Search-syntax tab of the help overlay; the shape of KB_SHORTCUTS. Keep in step
+// with `entry::query`. Shown only on pages with a search box (`[data-search-help]`).
+const SEARCH_SYNTAX = [
+    { group: 'Status', key: 'is:unread', desc: 'Unread entries' },
+    { group: 'Status', key: 'is:read', desc: 'Read entries' },
+    { group: 'Status', key: 'is:starred', desc: 'Starred entries' },
+    { group: 'Source', key: 'feed:name', desc: 'By feed (fuzzy, case-insensitive)' },
+    { group: 'Source', key: 'category:name', desc: 'By category (fuzzy, case-insensitive)' },
+    { group: 'Field', key: 'title:word', desc: 'Title contains word' },
+    { group: 'Field', key: 'author:name', desc: 'By author' },
+    { group: 'Date (UTC)', key: 'before:2026-01-01', desc: 'Published before' },
+    { group: 'Date (UTC)', key: 'after:2026-01-01', desc: 'Published after' },
+    { group: 'Combine', key: 'AND OR NOT', desc: 'Boolean operators; adjacent words imply AND' },
+    { group: 'Combine', key: '( )', desc: 'Group sub-expressions' },
+    { group: 'Exclude / quote', key: '-term', desc: 'Exclude a term' },
+    { group: 'Exclude / quote', key: '"exact phrase"', desc: 'Quote; also for values with spaces, e.g. feed:"Rust Blog"' },
+];
+
+function showHelp(help, tab) {
+    help.show(KB_SHORTCUTS, document.querySelector('[data-search-help]') ? { syntax: SEARCH_SYNTAX, tab } : {});
+}
+
+// Delegated: list-pane swaps replace the inline search's button.
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-search-help]')) return;
+    const help = document.querySelector('rdrs-kb-help');
+    if (!help) return;
+    e.preventDefault();
+    showHelp(help, 'syntax');
+});
 
 // ── "g" go-to sequences ──────────────────────────────────────────────
 // `g` arms the namespace and times out; captured so `g s` never triggers Save.
@@ -1217,7 +1253,7 @@ function installHelpKeyboard() {
         if (!help) return;
         e.preventDefault();
         if (help.isVisible) help.hide();
-        else help.show(KB_SHORTCUTS);
+        else showHelp(help, 'shortcuts');
     });
 }
 installHelpKeyboard();
@@ -1699,6 +1735,15 @@ function installSearchDrawer() {
     }, true);
 }
 installSearchDrawer();
+
+// The error banner is swapped, the input is not: mirror the banner onto the input.
+function syncSearchInvalid() {
+    const input = document.querySelector('[data-search-drawer] input[name="q"]');
+    const error = document.querySelector('[data-search-error]');
+    if (input && error) input.setAttribute('aria-invalid', String(!error.hidden));
+}
+syncSearchInvalid();
+document.addEventListener('rdrs:swap-complete', syncSearchInvalid);
 
 // Search as you type for `form[data-live-search="<debounce ms>"]`. The form sits
 // outside the swapped results, so it keeps focus while typing; `installSwap()`
