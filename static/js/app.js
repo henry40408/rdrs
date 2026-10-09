@@ -1748,7 +1748,8 @@ document.addEventListener('rdrs:swap-complete', syncSearchInvalid);
 // Search as you type for `form[data-live-search="<debounce ms>"]`. The form sits
 // outside the swapped results, so it keeps focus while typing; `installSwap()`
 // performs the actual swap. `data-live-search-min` holds back a too-short ASCII
-// query (one CJK character is already a word); clearing always submits.
+// query (one CJK character is already a word); clearing always submits. While an
+// IME is composing (zhuyin, pinyin) nothing is submitted; `compositionend` does it.
 function installLiveSearch() {
     for (const form of document.querySelectorAll('form[data-live-search]')) {
         if (form.dataset.searchBound) continue;
@@ -1761,7 +1762,9 @@ function installLiveSearch() {
             if (q && q.length < min && /^[\x00-\x7f]*$/.test(q)) return;
             form.requestSubmit();
         }, Number(form.dataset.liveSearch) || 250);
-        input.addEventListener('input', submit);
+        input.addEventListener('input', (e) => { if (!e.isComposing) submit(); });
+        input.addEventListener('compositionstart', submit.cancel);
+        input.addEventListener('compositionend', submit);
     }
 }
 installLiveSearch();
