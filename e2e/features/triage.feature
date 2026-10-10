@@ -193,12 +193,12 @@ Feature: Triage entries (star, mark-read, summarize)
     When I mark matching entries as read
     Then "Superheroine Rises" is no longer in the unread list
 
-  Scenario: The scoped search box starts collapsed and opens from the filter bar
+  Scenario: The scoped search box starts collapsed and opens from the title row
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     When I open the entries page for category "Anime"
     Then the scoped search box is closed
     And the mark-above button is shown
-    And the search toggle is as tall as the status filter
+    And the search toggle shares a row with the page title
     When I open the scoped search box
     Then the scoped search box is open
     And the search close button is as tall as the search box
