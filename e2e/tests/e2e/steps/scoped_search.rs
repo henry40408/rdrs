@@ -106,15 +106,21 @@ async fn clear_scoped_search(world: &mut RdrsWorld) -> Result<()> {
 
 // ── Height parity ────────────────────────────────────────────────────────────
 
-/// Both chips stretch to a sibling's height, which layout changes break silently.
-#[then("the search toggle is as tall as the status filter")]
-async fn toggle_matches_filter_height(world: &mut RdrsWorld) -> Result<()> {
-    expect_same_height(
-        world,
-        r#"[data-testid="scoped-search-toggle"]"#,
-        r#"[data-testid="status-filter-select"]"#,
-    )
-    .await
+/// The toggle lives beside the `<h1>`; in the filter bar it left a lone chip
+/// on its own row on views without selects.
+#[then("the search toggle shares a row with the page title")]
+async fn toggle_shares_row_with_title(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    let (_, toggle_y, _, toggle_h) = driver
+        .bounding_box(r#"[data-testid="scoped-search-toggle"]"#)
+        .await?;
+    let (_, title_y, _, title_h) = driver.bounding_box(".list-pane-header h1").await?;
+    let delta = ((toggle_y + toggle_h / 2.0) - (title_y + title_h / 2.0)).abs();
+    anyhow::ensure!(
+        delta < 2.0,
+        "search toggle midline is {delta}px from the title's (toggle y={toggle_y} h={toggle_h}, title y={title_y} h={title_h})"
+    );
+    Ok(())
 }
 
 #[then("the search close button is as tall as the search box")]

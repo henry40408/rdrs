@@ -26,7 +26,14 @@
             {% for item in entries_layout.breadcrumb_items %}{% if !loop.first %}<span class="breadcrumb-sep"> / </span>{% endif %}{% if let Some(href) = item.href.as_ref() %}<a href="{{ href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}{% endfor %}
         </nav>
         {% endif %}
-        <h1>{% if let Some(feed_id) = entries_layout.header_feed_icon_id %}<img class="feed-icon" src="/api/feeds/{{ feed_id }}/icon" alt="" width="20" height="20" decoding="sync">{% endif %}{{ title }}</h1>
+        <div class="list-pane-title-row">
+            <h1>{% if let Some(feed_id) = entries_layout.header_feed_icon_id %}<img class="feed-icon" src="/api/feeds/{{ feed_id }}/icon" alt="" width="20" height="20" decoding="sync">{% endif %}{{ title }}</h1>
+            {# Beside the title, not in the filter bar: views without selects
+               (e.g. Read) would otherwise get a row holding only this button. #}
+            {% if entries_layout.search_action.is_some() %}
+            <button type="button" class="filter-chip-btn" data-search-toggle data-testid="scoped-search-toggle" aria-controls="search-drawer" aria-expanded="{% if entries_layout.search.is_some() %}true{% else %}false{% endif %}" aria-label="Search in this view">{% call icons::search() %}{% endcall %}</button>
+            {% endif %}
+        </div>
         {% if entries_layout.show_tab_bar %}
         <div class="tab-bar">
             <a href="/entries" data-testid="tab-all" data-tab="all"{% if entries_layout.active == "all" %} class="active"{% endif %}>All</a>
@@ -35,7 +42,7 @@
             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
         </div>
         {% endif %}
-        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() || entries_layout.search_action.is_some() %}
+        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() %}
         <div class="filter-bar">
             {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
             <div class="form-group form-group-inline" data-status-filter>
@@ -57,7 +64,6 @@
             </div>
             {% endif %}
             {% if entries_layout.search_action.is_some() %}
-            <button type="button" class="filter-chip-btn" data-search-toggle data-testid="scoped-search-toggle" aria-controls="search-drawer" aria-expanded="{% if entries_layout.search.is_some() %}true{% else %}false{% endif %}" aria-label="Search in this view">{% call icons::search() %}{% endcall %}</button>
             <span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>
             {% endif %}
         </div>

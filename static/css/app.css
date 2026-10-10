@@ -738,15 +738,32 @@ body:has(.nav-fallback) .main-content {
     flex-shrink: 0;
 }
 
-.list-pane-header h1 {
+.list-pane-title-row {
     display: flex;
     align-items: center;
-    font-size: var(--font-xl);
+    gap: var(--space-2);
     margin-bottom: var(--space-3);
 }
 
-.list-pane-header h1:last-child {
+.list-pane-title-row:last-child {
     margin-bottom: 0;
+}
+
+.list-pane-title-row h1 {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    font-size: var(--font-xl);
+    margin-bottom: 0;
+}
+
+.list-pane-title-row .filter-chip-btn {
+    flex-shrink: 0;
+    /* Not the chip default (`stretch`): a wrapped title would elongate it. */
+    align-self: center;
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
 }
 
 .list-pane-body {
