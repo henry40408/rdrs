@@ -6,6 +6,17 @@ use crate::error::{AppError, AppResult};
 use crate::services::fetch::Fetcher;
 use crate::services::http::{RetryConfig, send_with_retry_on_error};
 
+/// Upper bound on element nodes in a fetched document; `dom_smoothie` rejects
+/// larger documents up front (`ReadabilityError::TooManyElements`) before any
+/// scoring work, bounding CPU and memory on hostile or pathological pages.
+///
+/// Measured element counts (`dom_smoothie`'s own count, 2026-10): HN front page
+/// 818, MDN `Array` reference 2,176, Wikipedia "List of countries by GDP"
+/// 5,556, "World War II" 16,890, "United States" 21,837, "List of Latin
+/// phrases (full)" 27,588. 100k leaves ~3.6x headroom over the largest of
+/// those while still capping runaway documents.
+const MAX_ELEMENTS_TO_PARSE: usize = 100_000;
+
 #[derive(Debug)]
 pub struct ExtractedContent {
     pub title: Option<String>,
@@ -59,11 +70,7 @@ async fn fetch_and_extract_validated(
     // inside the blocking task; only owned strings cross the boundary.
     let base_url = parsed_url.to_string();
     let article = tokio::task::spawn_blocking(move || {
-        let mut readability =
-            Readability::new(html, Some(base_url.as_str()), Some(Config::default()))
-                .map_err(|e| e.to_string())?;
-        let article = readability.parse().map_err(|e| e.to_string())?;
-        Ok::<_, String>((article.title, article.content.to_string()))
+        extract_article(html, &base_url, MAX_ELEMENTS_TO_PARSE)
     })
     .await
     .map_err(|e| AppError::FetchError(format!("Failed to extract content: {e}")))?
@@ -74,6 +81,23 @@ async fn fetch_and_extract_validated(
         title: Some(title).filter(|t| !t.is_empty()),
         content,
     })
+}
+
+/// Parse `html` into `(title, content)`, rejecting documents with more than
+/// `max_elements` element nodes.
+fn extract_article(
+    html: String,
+    base_url: &str,
+    max_elements: usize,
+) -> Result<(String, String), String> {
+    let config = Config {
+        max_elements_to_parse: max_elements,
+        ..Config::default()
+    };
+    let mut readability =
+        Readability::new(html, Some(base_url), Some(config)).map_err(|e| e.to_string())?;
+    let article = readability.parse().map_err(|e| e.to_string())?;
+    Ok((article.title, article.content.to_string()))
 }
 
 #[cfg(test)]
@@ -195,6 +219,60 @@ mod tests {
 
         match err {
             AppError::FetchError(msg) => assert!(msg.contains("404"), "unexpected message: {msg}"),
+            other => panic!("expected FetchError, got {other:?}"),
+        }
+    }
+
+    // ---- Element-count limit. ----
+
+    #[test]
+    fn extract_article_rejects_documents_over_the_element_limit() {
+        // 100 spans plus html/head/body/article/p is well over a limit of 50.
+        let spans = "<span>x</span>".repeat(100);
+        let html =
+            format!("<html><head></head><body><article><p>{spans}</p></article></body></html>");
+
+        let err = extract_article(html.clone(), "https://example.com/", 50).unwrap_err();
+        assert!(err.contains("too many elements"), "unexpected: {err}");
+
+        // Same document passes when the limit allows it.
+        extract_article(html, "https://example.com/", 1_000).unwrap();
+    }
+
+    #[test]
+    fn article_fixture_is_well_under_the_production_limit() {
+        let (title, content) = extract_article(
+            ARTICLE_HTML.to_string(),
+            "https://example.com/",
+            MAX_ELEMENTS_TO_PARSE,
+        )
+        .unwrap();
+        assert_eq!(title, "The Readable Title");
+        assert!(content.contains("first substantial paragraph"));
+    }
+
+    #[tokio::test]
+    async fn oversized_document_maps_to_fetch_error() {
+        let spans = "<i></i>".repeat(MAX_ELEMENTS_TO_PARSE + 1);
+        let body =
+            format!("<html><head></head><body><article><p>{spans}</p></article></body></html>");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let parsed = Url::parse(&url).unwrap();
+        let err = fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0", &loopback_fetcher())
+            .await
+            .unwrap_err();
+
+        match err {
+            AppError::FetchError(msg) => {
+                assert!(msg.contains("Failed to extract content"), "{msg}");
+                assert!(msg.contains("too many elements"), "{msg}");
+            }
             other => panic!("expected FetchError, got {other:?}"),
         }
     }
