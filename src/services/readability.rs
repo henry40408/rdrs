@@ -1,4 +1,4 @@
-use readability::extractor;
+use dom_smoothie::{Config, Readability};
 use reqwest::header::USER_AGENT;
 use url::Url;
 
@@ -55,12 +55,24 @@ async fn fetch_and_extract_validated(
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    let product = extractor::extract(&mut html.as_bytes(), parsed_url)
-        .map_err(|e| AppError::FetchError(format!("Failed to extract content: {e}")))?;
+    // `Readability` holds a non-`Send` DOM, so build and drop it entirely
+    // inside the blocking task; only owned strings cross the boundary.
+    let base_url = parsed_url.to_string();
+    let article = tokio::task::spawn_blocking(move || {
+        let mut readability =
+            Readability::new(html, Some(base_url.as_str()), Some(Config::default()))
+                .map_err(|e| e.to_string())?;
+        let article = readability.parse().map_err(|e| e.to_string())?;
+        Ok::<_, String>((article.title, article.content.to_string()))
+    })
+    .await
+    .map_err(|e| AppError::FetchError(format!("Failed to extract content: {e}")))?
+    .map_err(|e| AppError::FetchError(format!("Failed to extract content: {e}")))?;
 
+    let (title, content) = article;
     Ok(ExtractedContent {
-        title: Some(product.title).filter(|t| !t.is_empty()),
-        content: product.content,
+        title: Some(title).filter(|t| !t.is_empty()),
+        content,
     })
 }
 
