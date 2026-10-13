@@ -210,7 +210,7 @@ async fn fetch_favicon(
 }
 
 fn extract_favicon_from_html(html: &str, base_url: &Url) -> Option<String> {
-    let html_lower = html.to_lowercase();
+    let html_lower = html.to_ascii_lowercase();
 
     // Look for <link rel="icon" or <link rel="shortcut icon"
     for pattern in &[
@@ -234,7 +234,7 @@ fn extract_favicon_from_html(html: &str, base_url: &Url) -> Option<String> {
 }
 
 fn extract_href(tag: &str) -> Option<String> {
-    let tag_lower = tag.to_lowercase();
+    let tag_lower = tag.to_ascii_lowercase();
 
     for prefix in &["href=\"", "href='"] {
         if let Some(start) = tag_lower.find(prefix) {
@@ -660,6 +660,41 @@ mod tests {
         assert_eq!(
             extract_favicon_from_html(html2, &base),
             Some("https://cdn.example.com/icon.png".to_string())
+        );
+    }
+
+    /// Unicode lowercasing changes byte lengths (`İ` 2 -> 3 bytes, Kelvin sign
+    /// U+212A 3 -> 1 byte), so offsets from a lowercased copy must never be
+    /// used to slice the original. Hostile HTML must not panic or misparse.
+    #[test]
+    fn test_extract_favicon_from_html_non_ascii_lowercase() {
+        let base = Url::parse("https://example.com").unwrap();
+        let expected = Some("https://example.com/a.png".to_string());
+
+        // Growing: `İ` lowercases to 3 bytes, pushing offsets past the end.
+        let grow = "<title>İ</title><link rel=\"icon\" href=\"/a.png\">";
+        assert_eq!(extract_favicon_from_html(grow, &base), expected);
+
+        // Shrinking: Kelvin sign lowercases to 1 byte, pulling offsets short.
+        let shrink = "<title>\u{212A}\u{212A}\u{212A}</title><link rel=\"icon\" href=\"/a.png\">";
+        assert_eq!(extract_favicon_from_html(shrink, &base), expected);
+
+        // Non-ASCII inside the tag itself, before href (extract_href path).
+        let in_tag_grow = "<link rel=\"icon\" title=\"İİ\" href=\"/a.png\">";
+        assert_eq!(extract_favicon_from_html(in_tag_grow, &base), expected);
+        let in_tag_shrink = "<link rel=\"icon\" title=\"\u{212A}\u{212A}\" href=\"/a.png\">";
+        assert_eq!(extract_favicon_from_html(in_tag_shrink, &base), expected);
+    }
+
+    #[test]
+    fn test_extract_href_non_ascii_lowercase() {
+        assert_eq!(
+            extract_href("<link title=\"İİ\" href=\"/a.png\">"),
+            Some("/a.png".to_string())
+        );
+        assert_eq!(
+            extract_href("<link title=\"\u{212A}\u{212A}\" href=\"/a.png\">"),
+            Some("/a.png".to_string())
         );
     }
 }
