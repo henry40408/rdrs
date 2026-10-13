@@ -36,10 +36,6 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 askama = "0.16"
 argon2 = "0.6"
 password-hash = { version = "0.6", features = ["getrandom"] }
-# rand_core 0.6 is declared directly to enable its `getrandom` feature, which
-# provides `OsRng` for password-hash's rand_core (a different major than rand's).
-# It has no direct code references by design — do not remove.
-rand_core = { version = "0.6", features = ["getrandom"] }
 rand = "0.10"
 tower-http = { version = "0.7", features = ["compression-br", "compression-gzip", "csrf", "timeout"] }
 tower = "0.5"
@@ -84,6 +80,8 @@ webauthn-rs-proto = "0.5"
 # options struct and would pull derive_builder + syn into the tree for nothing.
 zxcvbn = { version = "3", default-features = false }
 uuid = { version = "1", features = ["v4", "serde"] }
+# No direct code use: webauthn-rs-core hard-requires openssl; naming it here only
+# turns on `vendored` so the musl cross build (cargo-zigbuild) needs no system OpenSSL.
 openssl = { version = "0.10", features = ["vendored"] }
 moka = { version = "0.12", features = ["sync"] }
 time = "0.3"
