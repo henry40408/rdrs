@@ -8,7 +8,8 @@ use crate::services::http::{RetryConfig, send_with_retry_on_error};
 
 /// Upper bound on element nodes in a fetched document; `dom_smoothie` rejects
 /// larger documents up front (`ReadabilityError::TooManyElements`) before any
-/// scoring work, bounding CPU and memory on hostile or pathological pages.
+/// scoring work. HTML parsing and the DOM are already paid for by then, so this
+/// bounds the scoring/cleanup cost, not the memory of the parsed document.
 ///
 /// Measured element counts (`dom_smoothie`'s own count, 2026-10): HN front page
 /// 818, MDN `Array` reference 2,176, Wikipedia "List of countries by GDP"
