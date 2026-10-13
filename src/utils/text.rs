@@ -7,8 +7,10 @@ fn starts_with_ci(hay: &[u8], needle: &str) -> bool {
 }
 
 /// ASCII case-insensitive substring search on bytes; no allocation.
-/// `needle` must be non-empty and start with an ASCII byte.
+/// `needle` must be non-empty (checked by `debug_assert!`; an empty needle
+/// would panic on indexing) and start with an ASCII byte.
 fn find_ci(hay: &[u8], needle: &str) -> Option<usize> {
+    debug_assert!(!needle.is_empty(), "find_ci: needle must be non-empty");
     let n = needle.as_bytes();
     let first = n[0];
     let last_start = hay.len().checked_sub(n.len())?;
@@ -154,29 +156,45 @@ mod tests {
         assert_eq!(strip_to_plain_text("a<scrip>b</scrip>"), "a b");
     }
 
-    #[test]
-    fn many_tags_linear_time() {
-        let html = "<b>x</b>".repeat(80_000);
-        let start = std::time::Instant::now();
-        let out = strip_to_search_text(&html);
-        assert_eq!(out.len(), 80_000);
+    /// Best-of-5 wall time of `strip_to_search_text` on `unit` repeated `reps`
+    /// times; asserts the output length to keep the call from being elided.
+    fn best_time(unit: &str, reps: usize, expected_len: usize) -> std::time::Duration {
+        let html = unit.repeat(reps);
+        (0..5)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                let out = strip_to_search_text(&html);
+                let elapsed = start.elapsed();
+                assert_eq!(out.len(), expected_len);
+                elapsed
+            })
+            .min()
+            .unwrap()
+    }
+
+    /// Scaling check instead of an absolute deadline: an 8x larger input must
+    /// take well under the 64x an O(n^2) implementation would need (linear
+    /// is ~8x; the 24x bound leaves headroom for CI jitter).
+    fn assert_linear(unit: &str, out_per_unit: usize) {
+        let small = 10_000;
+        let t1 = best_time(unit, small, small * out_per_unit)
+            // Floor avoids a near-zero denominator inflating the ratio.
+            .max(std::time::Duration::from_micros(200));
+        let t8 = best_time(unit, small * 8, small * 8 * out_per_unit);
+        let ratio = t8.as_secs_f64() / t1.as_secs_f64();
         assert!(
-            start.elapsed() < std::time::Duration::from_millis(500),
-            "strip took {:?}",
-            start.elapsed()
+            ratio < 24.0,
+            "8x input took {ratio:.1}x longer ({t1:?} -> {t8:?}); expected ~8x"
         );
     }
 
     #[test]
+    fn many_tags_linear_time() {
+        assert_linear("<b>x</b>", 1);
+    }
+
+    #[test]
     fn many_script_blocks_linear_time() {
-        let html = "<script>x</script>y".repeat(40_000);
-        let start = std::time::Instant::now();
-        let out = strip_to_search_text(&html);
-        assert_eq!(out.len(), 40_000);
-        assert!(
-            start.elapsed() < std::time::Duration::from_millis(500),
-            "strip took {:?}",
-            start.elapsed()
-        );
+        assert_linear("<script>x</script>y", 1);
     }
 }
