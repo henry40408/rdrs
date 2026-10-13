@@ -40,13 +40,13 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "npm"
+  - package-ecosystem: "cargo"
     directory: "/e2e"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      npm:
+      cargo:
         patterns:
           - "*"
