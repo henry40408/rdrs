@@ -666,24 +666,40 @@ mod tests {
     /// Unicode lowercasing changes byte lengths (`İ` 2 -> 3 bytes, Kelvin sign
     /// U+212A 3 -> 1 byte), so offsets from a lowercased copy must never be
     /// used to slice the original. Hostile HTML must not panic or misparse.
-    #[test]
-    fn test_extract_favicon_from_html_non_ascii_lowercase() {
+    fn assert_favicon_resolves_to_a_png(html: &str) {
         let base = Url::parse("https://example.com").unwrap();
-        let expected = Some("https://example.com/a.png".to_string());
+        assert_eq!(
+            extract_favicon_from_html(html, &base),
+            Some("https://example.com/a.png".to_string())
+        );
+    }
 
-        // Growing: `İ` lowercases to 3 bytes, pushing offsets past the end.
-        let grow = "<title>İ</title><link rel=\"icon\" href=\"/a.png\">";
-        assert_eq!(extract_favicon_from_html(grow, &base), expected);
+    /// Growing: `İ` lowercases to 3 bytes, pushing offsets past the end.
+    #[test]
+    fn test_extract_favicon_from_html_growing_char_before_link() {
+        assert_favicon_resolves_to_a_png("<title>İ</title><link rel=\"icon\" href=\"/a.png\">");
+    }
 
-        // Shrinking: Kelvin sign lowercases to 1 byte, pulling offsets short.
-        let shrink = "<title>\u{212A}\u{212A}\u{212A}</title><link rel=\"icon\" href=\"/a.png\">";
-        assert_eq!(extract_favicon_from_html(shrink, &base), expected);
+    /// Shrinking: Kelvin sign lowercases to 1 byte, pulling offsets short.
+    #[test]
+    fn test_extract_favicon_from_html_shrinking_char_before_link() {
+        assert_favicon_resolves_to_a_png(
+            "<title>\u{212A}\u{212A}\u{212A}</title><link rel=\"icon\" href=\"/a.png\">",
+        );
+    }
 
-        // Non-ASCII inside the tag itself, before href (extract_href path).
-        let in_tag_grow = "<link rel=\"icon\" title=\"İİ\" href=\"/a.png\">";
-        assert_eq!(extract_favicon_from_html(in_tag_grow, &base), expected);
-        let in_tag_shrink = "<link rel=\"icon\" title=\"\u{212A}\u{212A}\" href=\"/a.png\">";
-        assert_eq!(extract_favicon_from_html(in_tag_shrink, &base), expected);
+    /// Growing char inside the tag itself, before href (`extract_href` path).
+    #[test]
+    fn test_extract_favicon_from_html_growing_char_inside_tag() {
+        assert_favicon_resolves_to_a_png("<link rel=\"icon\" title=\"İİ\" href=\"/a.png\">");
+    }
+
+    /// Shrinking char inside the tag itself, before href (`extract_href` path).
+    #[test]
+    fn test_extract_favicon_from_html_shrinking_char_inside_tag() {
+        assert_favicon_resolves_to_a_png(
+            "<link rel=\"icon\" title=\"\u{212A}\u{212A}\" href=\"/a.png\">",
+        );
     }
 
     #[test]
