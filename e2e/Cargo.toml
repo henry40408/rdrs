@@ -46,8 +46,9 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 tempfile = "3.26.0"
 # Pinned exactly so a bare `cargo update` cannot pull a release that is still
-# inside the seven-day cooldown this project applies to fresh versions (0.37.6+
-# ages out on 2026-10-15). Relax to a caret once the latest release has aged out.
+# inside the seven-day cooldown this project applies to fresh versions (the
+# latest, 0.37.8, ages out on 2026-10-19). Relax to a caret once the latest
+# release has aged out.
 #
 # `cdp-events` is what makes request interception possible: it opens a WebSocket
 # to the browser so `Fetch.requestPaused` can be *received*, not just commands
