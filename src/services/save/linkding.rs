@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +36,12 @@ struct LinkdingBookmarkResponse {
     id: i64,
 }
 
+/// Built once: reqwest re-reads and parses the system CA store on every build,
+/// and the options never vary per request. Cloning would be cheap, but a
+/// static needs no plumbing through the callers.
+static CLIENT: LazyLock<Result<Client, reqwest::Error>> =
+    LazyLock::new(|| Client::builder().timeout(EXTERNAL_API_TIMEOUT).build());
+
 /// Never fails the request for a Linkding-side problem: errors come back as
 /// `success: false` so one integration cannot fail the others.
 pub async fn save_to_linkding(
@@ -49,9 +57,8 @@ pub async fn save_to_linkding(
         });
     }
 
-    let client = Client::builder()
-        .timeout(EXTERNAL_API_TIMEOUT)
-        .build()
+    let client = CLIENT
+        .as_ref()
         .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {e}")))?;
 
     let api_url = normalize_api_url(&config.api_url);
