@@ -12,7 +12,14 @@ version = 2
 # `ignore` holds advisory IDs we've reviewed and consciously accept; each entry
 # records why it is safe here and what would let us drop it.
 yanked = "deny"
-ignore = []
+ignore = [
+    # ammonia 4.2.0: only affects callers that allow `style` and use
+    # `filter_style_properties`; neither is used in src/services/sanitize.rs.
+    # Fix 4.2.3 is inside the 168h cooldown until 2026-10-18 06:27 UTC.
+    # Drop once ammonia is upgraded. Tracked in
+    # https://github.com/henry40408/rdrs/issues/591
+    "RUSTSEC-2021-0157",
+]
 
 [licenses]
 version = 2
