@@ -9,8 +9,15 @@ Guidance for Claude Code (claude.ai/code) in this repository.
 - Format (CI gate): `cargo fmt --all -- --check`; run `cargo fmt` before committing.
 - Lint (CI gate): `cargo clippy --all-targets -- -D warnings`.
 - Supply-chain (CI gate): `cargo deny check`.
-- Build: `cargo build` / `cargo build --release`.
-- Test: `cargo nextest run` (never `cargo test`); one test: `cargo nextest run <substring>`.
+- Build: `cargo build` / `cargo build --release`. `build.rs` derives the version
+  from the `GIT_VERSION` env var when set (not empty, not `dev`), else `git describe`
+  (Docker builds pass it as a build arg because `.dockerignore` excludes
+  `.git`); it falls back to `dev` when neither yields a value.
+- Release: `gh release create --generate-notes`; never edit the manifest
+  `version` or add a `CHANGELOG.md`.
+- Test: `cargo nextest run` (never `cargo test`); one test: `cargo nextest run <substring>`
+  (e.g. `test_login_success`), `cargo nextest run -E 'test(test_login_success)'`,
+  or a whole file with `--test auth_test`.
   Exception: `e2e/` sets `harness = false` on its test target, which nextest
   cannot drive, so it runs with `cargo test` from `e2e/` (see E2E below).
 - Coverage (as CI): `RDRS_FAST_HASH=1 cargo llvm-cov nextest --lcov --output-path lcov.info`.
@@ -24,8 +31,9 @@ it in production.
 ### E2E (cucumber + thirtyfour, from `e2e/`)
 
 `e2e/` is a **separate cargo workspace** (keeps browser deps out of root
-coverage), so root `cargo fmt --all` / `cargo clippy` don't reach it — lint it
-separately.
+coverage), so root fmt, clippy, nextest, coverage and `cargo deny` don't reach
+it — run fmt and clippy inside `e2e/` too (CI does, in the `lint` job). Its
+`[lints]` mirror the root lint set and must stay in sync.
 
 - Run all: `cargo test --lib --test e2e` (`--lib` runs the wait-helper unit
   tests). One feature: `RDRS_E2E_FEATURES=features/reading.feature cargo test --test e2e`.
