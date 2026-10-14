@@ -1,7 +1,6 @@
 //! Weak `ETag` for 2xx text/html responses, with 304 on `If-None-Match`.
 //! Wired inside `CompressionLayer` so it hashes the uncompressed body.
 
-use std::fmt::Write as _;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -113,10 +112,7 @@ fn compute_weak_etag(body: &[u8]) -> String {
     hasher.update(body);
     let digest = hasher.finalize();
     // First 16 hex chars = 64 bits — collision-safe for our use.
-    let hex = digest.iter().take(8).fold(String::new(), |mut acc, b| {
-        let _ = write!(acc, "{b:02x}");
-        acc
-    });
+    let hex = hex::encode(&digest[..8]);
     format!("W/\"{hex}\"")
 }
 
