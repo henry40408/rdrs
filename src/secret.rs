@@ -126,33 +126,9 @@ pub fn open(secret: &[u8], stored: &str) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        let _ = write!(out, "{b:02x}");
-    }
-    out
-}
-
-/// Decode hex of either case; `None` for odd length or a non-hex byte.
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.as_chunks::<2>().0 {
-        let hi = char::from(pair[0]).to_digit(16)?;
-        let lo = char::from(pair[1]).to_digit(16)?;
-        out.push(u8::try_from(hi * 16 + lo).expect("two hex digits fit in a byte"));
-    }
-    Some(out)
-}
-
 /// Session cookie value: `<token>.<hex hmac>`.
 pub fn sign_session(secret: &[u8], token: &str) -> String {
-    let sig = hex_encode(&tag(secret, DOMAIN_SESSION, &[token.as_bytes()]));
+    let sig = hex::encode(tag(secret, DOMAIN_SESSION, &[token.as_bytes()]));
     format!("{token}{SIG_SEPARATOR}{sig}")
 }
 
@@ -160,7 +136,7 @@ pub fn sign_session(secret: &[u8], token: &str) -> String {
 /// Runs before any DB work, so a forged cookie costs one HMAC, not a query.
 pub fn verify_session(secret: &[u8], cookie_value: &str) -> Option<String> {
     let (token, sig) = cookie_value.rsplit_once(SIG_SEPARATOR)?;
-    let sig = hex_decode(sig)?;
+    let sig = hex::decode(sig).ok()?;
     verify_tag(secret, DOMAIN_SESSION, &[token.as_bytes()], &sig).then(|| token.to_string())
 }
 
@@ -168,12 +144,12 @@ pub fn verify_session(secret: &[u8], cookie_value: &str) -> Option<String> {
 /// from the session token under [`DOMAIN_CSRF`] so it needs no storage. Works
 /// for a row-less session token too, so pre-auth pages can carry one.
 pub fn derive_csrf(secret: &[u8], session_token: &str) -> String {
-    hex_encode(&tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()]))
+    hex::encode(tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()]))
 }
 
 /// Constant-time check of a submitted CSRF token; `false` if malformed.
 pub fn verify_csrf(secret: &[u8], session_token: &str, submitted: &str) -> bool {
-    let Some(bytes) = hex_decode(submitted) else {
+    let Some(bytes) = hex::decode(submitted).ok() else {
         return false;
     };
     verify_tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()], &bytes)
@@ -183,14 +159,14 @@ pub fn verify_csrf(secret: &[u8], session_token: &str, submitted: &str) -> bool 
 /// is the salt, satisfying OWASP's "hashed with a salt"; rotation breaks
 /// correlation with older lines.
 pub fn audit_id(secret: &[u8], token: &str) -> String {
-    hex_encode(&tag(secret, DOMAIN_AUDIT, &[token.as_bytes()])[..8])
+    hex::encode(&tag(secret, DOMAIN_AUDIT, &[token.as_bytes()])[..8])
 }
 
 /// Opaque per-user offline-cache name; the service worker wipes caches that
 /// don't match, isolating readers on a shared device. Exposed to JS, so it must
 /// not be the user id. Not a credential, so truncation is fine.
 pub fn offline_id(secret: &[u8], user_id: i64) -> String {
-    hex_encode(&tag(secret, DOMAIN_OFFLINE, &[&user_id.to_le_bytes()])[..8])
+    hex::encode(&tag(secret, DOMAIN_OFFLINE, &[&user_id.to_le_bytes()])[..8])
 }
 
 /// Tag bytes kept in a pixel token; a forged one writes undetectable bogus opens.
@@ -204,13 +180,13 @@ pub fn pixel_sig(secret: &[u8], user_id: i64, entry_id: i64) -> String {
         DOMAIN_PIXEL,
         &[&user_id.to_le_bytes(), &entry_id.to_le_bytes()],
     );
-    hex_encode(&t[..PIXEL_SIG_BYTES])
+    hex::encode(&t[..PIXEL_SIG_BYTES])
 }
 
 /// Constant-time pixel signature check. The length check is load-bearing:
 /// `verify_truncated_left` accepts prefixes down to 4 bytes.
 pub fn verify_pixel_sig(secret: &[u8], user_id: i64, entry_id: i64, candidate: &str) -> bool {
-    let Some(bytes) = hex_decode(candidate) else {
+    let Some(bytes) = hex::decode(candidate).ok() else {
         return false;
     };
     if bytes.len() != PIXEL_SIG_BYTES {
@@ -230,6 +206,23 @@ mod tests {
     use super::*;
 
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn hex_fixed_vectors() {
+        assert_eq!(hex::encode(b""), "");
+        assert_eq!(hex::encode([0x00, 0x0f, 0xab, 0xff]), "000fabff");
+        assert_eq!(
+            hex::decode("000fabff").ok(),
+            Some(vec![0x00, 0x0f, 0xab, 0xff])
+        );
+        // Either case decodes.
+        assert_eq!(hex::decode("ABcdEF").ok(), Some(vec![0xab, 0xcd, 0xef]));
+        assert_eq!(hex::decode("").ok(), Some(vec![]));
+        // Odd length and non-hex bytes are rejected.
+        for bad in ["a", "abc", "zz", "0g", "+1", " 1", "é1", "12 4", "0x12"] {
+            assert!(hex::decode(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
 
     #[test]
     fn sealed_values_round_trip() {

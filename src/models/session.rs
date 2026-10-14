@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
 
@@ -84,30 +85,7 @@ impl Session {
 pub fn generate_token() -> String {
     let mut rng = rand::rng();
     let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.random()).collect();
-    base64_encode(&bytes)
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut result = String::new();
-
-    for chunk in data.chunks(3) {
-        let n = chunk.len();
-        let b0 = chunk[0] as usize;
-        let b1 = if n > 1 { chunk[1] as usize } else { 0 };
-        let b2 = if n > 2 { chunk[2] as usize } else { 0 };
-
-        result.push(ALPHABET[b0 >> 2] as char);
-        result.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
-        if n > 1 {
-            result.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
-        }
-        if n > 2 {
-            result.push(ALPHABET[b2 & 0x3f] as char);
-        }
-    }
-
-    result
+    URL_SAFE_NO_PAD.encode(&bytes)
 }
 
 pub async fn create_session(
@@ -362,6 +340,29 @@ pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_encoding_fixed_vectors_and_padding_boundaries() {
+        assert_eq!(URL_SAFE_NO_PAD.encode(b""), "");
+        assert_eq!(URL_SAFE_NO_PAD.encode(b"f"), "Zg");
+        assert_eq!(URL_SAFE_NO_PAD.encode(b"fo"), "Zm8");
+        assert_eq!(URL_SAFE_NO_PAD.encode(b"foo"), "Zm9v");
+        assert_eq!(URL_SAFE_NO_PAD.encode(b"foob"), "Zm9vYg");
+        // 0xfb 0xff 0xfe uses the URL-safe `-` and `_` characters.
+        assert_eq!(URL_SAFE_NO_PAD.encode([0xfb, 0xff, 0xfe]), "-__-");
+        assert_eq!(URL_SAFE_NO_PAD.encode([0xff, 0xff]), "__8");
+    }
+
+    #[test]
+    fn generated_token_is_unpadded_base64url() {
+        let t = generate_token();
+        assert_eq!(t.len(), 43); // 32 bytes -> 43 chars, no padding
+        assert!(
+            t.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        );
+        assert_eq!(URL_SAFE_NO_PAD.decode(&t).unwrap().len(), TOKEN_LENGTH);
+    }
     use crate::models::user::Role;
     use crate::test_support::{seed_user, setup_db};
 
