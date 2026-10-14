@@ -11,6 +11,8 @@ Guidance for Claude Code (claude.ai/code) in this repository.
 - Supply-chain (CI gate): `cargo deny check`.
 - Build: `cargo build` / `cargo build --release`.
 - Test: `cargo nextest run` (never `cargo test`); one test: `cargo nextest run <substring>`.
+  Exception: `e2e/` sets `harness = false` on its test target, which nextest
+  cannot drive, so it runs with `cargo test` from `e2e/` (see E2E below).
 - Coverage (as CI): `RDRS_FAST_HASH=1 cargo llvm-cov nextest --lcov --output-path lcov.info`.
 - Entry-list benchmark: `RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- --label before`
   (`--entries`, `--iterations`). Server-side p50/p90 per list route; the
@@ -85,3 +87,5 @@ with reading pane and the keyboard-help overlay, light and dark.
   added/removed) are audited under the `rdrs::audit` tracing target, with
   sessions identified only by `secret::audit_id`. **A new credential path must
   emit an audit event.**
+- **GitHub Actions are pinned by commit SHA**, with the tag as a trailing
+  comment (`uses: owner/action@<sha> # vX.Y.Z`).
