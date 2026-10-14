@@ -10,7 +10,7 @@ Guidance for Claude Code (claude.ai/code) in this repository.
 - Lint (CI gate): `cargo clippy --all-targets -- -D warnings`.
 - Supply-chain (CI gate): `cargo deny check`.
 - Build: `cargo build` / `cargo build --release`. `build.rs` derives the version
-  from `git describe`, or from the `GIT_VERSION` env var when `.git` is absent
+  from the `GIT_VERSION` env var when set (not empty, not `dev`), else `git describe`
   (Docker builds pass it as a build arg because `.dockerignore` excludes
   `.git`); it falls back to `dev` when neither yields a value.
 - Release: `gh release create --generate-notes`; never edit the manifest
