@@ -749,6 +749,72 @@ async fn test_get_entry_position() {
 }
 
 #[tokio::test]
+async fn test_get_entry_neighbors_and_position_respect_search_query() {
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
+
+    // Only "Entry Title 2" contains "2", so no neighbor may fall outside it.
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/neighbors", entry_ids[1]))
+        .add_query_param("q", "2")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body["prev_id"].is_null(), "{body}");
+    assert!(body["next_id"].is_null(), "{body}");
+
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/position", entry_ids[1]))
+        .add_query_param("q", "2")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["position"], 1);
+    assert_eq!(body["total"], 1);
+
+    // Without `q` the same entry has neighbors.
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/neighbors", entry_ids[1]))
+        .await;
+    let body: serde_json::Value = response.json();
+    assert!(
+        body["prev_id"].is_i64() && body["next_id"].is_i64(),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn test_get_entry_neighbors_search_combines_with_unread_snapshot() {
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
+
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/neighbors", entry_ids[1]))
+        .add_query_param("q", "2")
+        .add_query_param("unread_only", "true")
+        .add_query_param("read_after", "2000-01-01 00:00:00")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body["prev_id"].is_null(), "{body}");
+    assert!(body["next_id"].is_null(), "{body}");
+}
+
+#[tokio::test]
+async fn test_get_entry_neighbors_rejects_unparseable_search_query() {
+    let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
+
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/neighbors", entry_ids[1]))
+        .add_query_param("q", "(unclosed")
+        .await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
 async fn test_get_entry_neighbors_first_entry() {
     let (app, (_user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
 

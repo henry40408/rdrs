@@ -755,7 +755,10 @@ let neighborState = { entryId: null, prevId: null, nextId: null };
 function currentEntryFilterParams() {
     const { pathname, search } = window.location;
     const out = new URLSearchParams();
-    const status = new URLSearchParams(search).get('status');
+    const urlParams = new URLSearchParams(search);
+    const status = urlParams.get('status');
+    const q = urlParams.get('q');
+    if (q && q.trim()) out.set('q', q);
     const applyStatus = (s) => {
         // Feed/category default view is Unread when no status is present.
         if (s === 'read') out.set('read_only', 'true');
@@ -797,7 +800,7 @@ function applyNeighborButtons() {
 
 // Resolve prev/next from the DOM to skip a round trip, or null to use the
 // server. Interior rows only (ends can't prove `null`), and not under a scoped
-// search, since the server ignores `q` here.
+// search, where the typed input may differ from the loaded rows.
 function neighborsFromLoadedList(entryId) {
     if (document.querySelector('[data-entries-search] input[name="q"]')?.value) return null;
     const rows = document.querySelectorAll('[data-entries-list] [data-entry-row]');
@@ -831,7 +834,7 @@ async function resolveNeighbors(entryId) {
 }
 
 // "12 / 48" beside prev/next. A separate request, so counting never delays
-// navigation; skipped under a scoped search, which the server ignores here.
+// navigation.
 let positionState = { entryId: null, text: '' };
 
 // An action swap re-renders the pane with the slot empty; refill it.
@@ -846,7 +849,6 @@ function applyPosition() {
 async function resolvePosition(entryId) {
     positionState = { entryId: null, text: '' };
     applyPosition();
-    if (document.querySelector('[data-entries-search] input[name="q"]')?.value) return;
     const params = currentEntryFilterParams();
     const url = `/api/entries/${entryId}/position${params ? `?${params}` : ''}`;
     try {

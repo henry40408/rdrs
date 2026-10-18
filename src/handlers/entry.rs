@@ -33,6 +33,8 @@ pub struct NeighborsQuery {
     /// Unread-snapshot boundary (UTC `YYYY-MM-DD HH:MM:SS`) for
     /// `EntryFilter::read_after`.
     pub read_after: Option<String>,
+    /// The list page's `?q=` search; parsed like the list pages do.
+    pub q: Option<String>,
 }
 
 pub async fn get_entry_neighbors(
@@ -77,6 +79,13 @@ async fn neighbors_filter(
         return Err(AppError::EntryNotFound);
     }
 
+    // Blank means no search; an unparseable query is a 400, which leaves the
+    // pane's prev/next disabled just as the list page shows no rows.
+    let search = match query.q.as_deref().filter(|q| !q.trim().is_empty()) {
+        Some(q) => Some(entry::query::parse(q).map_err(|e| AppError::Validation(e.message))?),
+        None => None,
+    };
+
     let filter = entry::EntryFilter {
         feed_id: query.feed_id,
         category_id: query.category_id,
@@ -84,8 +93,8 @@ async fn neighbors_filter(
         starred_only: query.starred_only,
         read_only: query.read_only,
         has_summary: query.has_summary,
-        search: None,
         read_after: query.read_after,
+        query: search,
         ..Default::default()
     };
     Ok((user_id, filter))
