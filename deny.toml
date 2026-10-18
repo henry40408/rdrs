@@ -29,6 +29,13 @@ ignore = [
     # ammonia is upgraded. Tracked in
     # https://github.com/henry40408/rdrs/issues/591
     "RUSTSEC-2021-0158",
+    # ammonia 4.2.1: CSS `url("")` is matched case-sensitively, so `URL("")`
+    # skips URL filtering, but only when the caller allows `style` and uses
+    # `filter_style_properties`; neither is used in src/services/sanitize.rs.
+    # Fix 4.2.4 was published 2026-10-17 03:45 UTC and is inside the 168h
+    # cooldown until 2026-10-24 03:45 UTC. Drop once ammonia is upgraded.
+    # Tracked in https://github.com/henry40408/rdrs/issues/610
+    "RUSTSEC-2026-0373",
     # rustls 0.23.45 (transitive via reqwest -> hyper-rustls/tokio-rustls and
     # rustls-platform-verifier). Fix 0.23.46 was published 2026-10-14 09:54 UTC
     # and is inside the 168h cooldown until 2026-10-21 09:54 UTC. Drop all four
