@@ -3,9 +3,11 @@
 //! The binary is spawned directly, not via `cargo run`, so killing our PID
 //! kills the server rather than leaving it holding the port.
 
+use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -14,10 +16,6 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::any;
 use tokio::task::JoinHandle;
-
-/// The first-run setup token the server under test is started with, via
-/// `RDRS_SETUP_TOKEN`, so no run has to scrape it from the server log.
-pub const SETUP_TOKEN: &str = "e2e-setup-token-0123456789";
 
 /// How long to wait for `/health` to answer.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -45,6 +43,8 @@ pub struct Endpoints {
     pub db_path: PathBuf,
     /// A URL that always answers with a valid RSS document.
     pub feed_url: String,
+    /// The first-run setup token the server printed to its log at startup.
+    pub setup_token: String,
 }
 
 /// A running rdrs server and its mock upstreams, torn down on drop.
@@ -73,13 +73,14 @@ impl Harness {
         let port = free_port()?;
         let base_url = format!("http://127.0.0.1:{port}");
 
-        let child = Command::new(&binary)
+        let mut child = Command::new(&binary)
             .current_dir(repo_root())
             .env("DATABASE_URL", &db_path)
             .env("RDRS_SERVER_BIND", format!("127.0.0.1:{port}"))
             .env("RDRS_MULTI_USER_ENABLED", "true")
             .env("RUST_LOG", "warn")
-            .env("RDRS_SETUP_TOKEN", SETUP_TOKEN)
+            // No ANSI codes, so the setup token parses cleanly out of the log.
+            .env("NO_COLOR", "1")
             // Minimal Argon2 cost for per-scenario logins. Never in production.
             .env("RDRS_FAST_HASH", "1")
             // All scenarios share 127.0.0.1's bucket; the limiter would refuse
@@ -93,24 +94,31 @@ impl Harness {
             // The mock feed binds loopback, which the SSRF guard refuses by
             // default; this is the self-hoster LAN opt-in, not a test bypass.
             .env("RDRS_FETCH_ALLOW_PRIVATE_HOSTS", "127.0.0.1")
-            // Inherited so startup failures show in the test output.
-            .stdout(Stdio::inherit())
+            // Piped so the setup token can be read; every line is echoed so
+            // startup failures still show in the test output.
+            .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
             .with_context(|| format!("spawning the rdrs server at {}", binary.display()))?;
+        let setup_token_rx = forward_log_and_find_setup_token(&mut child);
 
         // Bound before the wait so a server that never answers is still killed.
-        let harness = Self {
+        let mut harness = Self {
             endpoints: Endpoints {
                 base_url: base_url.clone(),
                 db_path,
                 feed_url,
+                setup_token: String::new(),
             },
             child,
             mocks: vec![feed_task, kagi_task],
             _temp: temp,
         };
         wait_until_healthy(&base_url).await?;
+        // Logged before the listener binds, so it has arrived once `/health` answers.
+        harness.endpoints.setup_token = setup_token_rx
+            .recv_timeout(Duration::from_secs(5))
+            .context("the server did not log a setup token")?;
         Ok(harness)
     }
 
@@ -128,6 +136,25 @@ impl Drop for Harness {
             task.abort();
         }
     }
+}
+
+/// Echoes the server's stdout to ours and delivers the setup token it logs
+/// (`setup_token=<token>`, no ANSI thanks to `NO_COLOR`).
+fn forward_log_and_find_setup_token(child: &mut Child) -> mpsc::Receiver<String> {
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            println!("{line}");
+            let token = line
+                .split_whitespace()
+                .find_map(|word| word.strip_prefix("setup_token="));
+            if let Some(token) = token {
+                let _ = tx.send(token.to_owned());
+            }
+        }
+    });
+    rx
 }
 
 /// Path to the dev-profile server binary, building it if missing. Dev, not

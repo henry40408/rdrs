@@ -11,6 +11,8 @@ use reqwest::header::{HeaderValue, SET_COOKIE};
 use reqwest::{Client, StatusCode, redirect};
 use tokio::sync::Mutex;
 
+use crate::server::Endpoints;
+
 /// The password of every account this suite creates.
 pub const PASSWORD: &str = "vulture-mango-77-quilt";
 
@@ -36,19 +38,21 @@ pub struct Session {
 #[derive(Debug, Clone)]
 pub struct Api {
     base_url: String,
+    setup_token: String,
     client: Client,
 }
 
 impl Api {
     /// Does not follow redirects: the invite link lives only in the flash
     /// cookie of a 303 a following client would consume.
-    pub fn new(base_url: impl Into<String>) -> Result<Self> {
+    pub fn new(endpoints: &Endpoints) -> Result<Self> {
         let client = Client::builder()
             .redirect(redirect::Policy::none())
             .build()
             .context("building the API client")?;
         Ok(Self {
-            base_url: base_url.into(),
+            base_url: endpoints.base_url.clone(),
+            setup_token: endpoints.setup_token.clone(),
             client,
         })
     }
@@ -124,7 +128,7 @@ impl Api {
             .json(&serde_json::json!({
                 "username": username,
                 "password": password,
-                "setup_token": crate::server::SETUP_TOKEN,
+                "setup_token": self.setup_token,
             }))
             .send()
             .await

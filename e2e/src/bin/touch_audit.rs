@@ -153,7 +153,7 @@ async fn audit(browser: &mut Browser, endpoints: &Endpoints) -> Result<Vec<PageR
     let base = endpoints.base_url.clone();
 
     // ---- seed a realistic account ----
-    let api = Api::new(&base)?;
+    let api = Api::new(endpoints)?;
     let username = format!("touch-{}", rdrs_e2e::random_slug());
     api.setup_first_account(&username, PASSWORD).await?;
     let seed = Seed::open(&endpoints.db_path).await?;

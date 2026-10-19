@@ -86,7 +86,7 @@ async fn walk(
     // ── 1. First-run setup ────────────────────────────────────────────────
     goto("/setup").await?;
     driver
-        .fill_css("#setup-token", rdrs_e2e::server::SETUP_TOKEN)
+        .fill_css("#setup-token", &endpoints.setup_token)
         .await?;
     driver.fill_css("#username", USER).await?;
     driver.fill_css("#password", PASS).await?;

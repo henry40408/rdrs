@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     let endpoints = harness.endpoints().clone();
 
     // ---- seed a long backlog ----
-    let api = Api::new(&endpoints.base_url)?;
+    let api = Api::new(&endpoints)?;
     let user = "benchuser";
     api.setup_first_account(user, PASSWORD).await?;
     let seed = Seed::open(&endpoints.db_path).await?;
