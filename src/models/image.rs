@@ -133,10 +133,30 @@ pub async fn delete_by_entity(db: &Db, entity_type: &str, entity_id: i64) -> App
     Ok(())
 }
 
+/// Delete up to `batch_size` feed images whose feed no longer exists; returns
+/// the count. `image` is polymorphic and has no foreign key, so removing a
+/// category or user (which cascades to feeds) and an icon fetch that finishes
+/// after its feed was deleted both leave orphans behind.
+pub async fn delete_orphaned_feed_images(db: &Db, batch_size: i64) -> AppResult<u64> {
+    db_execute!(
+        db,
+        "DELETE FROM image WHERE id IN ( \
+             SELECT id FROM image \
+             WHERE entity_type = $1 \
+               AND NOT EXISTS (SELECT 1 FROM feed WHERE feed.id = image.entity_id) \
+             LIMIT $2)",
+        ENTITY_FEED,
+        batch_size
+    )
+    .map_err(AppError::Database)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::setup_db;
+    use crate::models::user::Role;
+    use crate::models::{category, feed};
+    use crate::test_support::{seed_user, setup_db};
 
     #[tokio::test]
     async fn test_upsert_and_find() {
@@ -260,5 +280,63 @@ mod tests {
             .await
             .unwrap();
         assert!(!needs_refresh(&db, ENTITY_FEED, 1, 7).await.unwrap());
+    }
+
+    async fn seed_feed(db: &Db) -> i64 {
+        let user_id = seed_user(db, "owner", Role::User).await.id;
+        let category_id = category::create_category(db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
+        feed::create_feed(
+            db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Feed"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    #[tokio::test]
+    async fn test_orphan_sweep_removes_only_images_of_missing_feeds() {
+        let db = setup_db().await;
+        let live_feed_id = seed_feed(&db).await;
+        let missing_feed_id = live_feed_id + 1000;
+        upsert(&db, ENTITY_FEED, live_feed_id, &[1], "image/png", None)
+            .await
+            .unwrap();
+        upsert(&db, ENTITY_FEED, missing_feed_id, &[2], "image/png", None)
+            .await
+            .unwrap();
+        // Another entity type with an unrelated id must never be touched.
+        upsert(&db, "other", missing_feed_id, &[3], "image/png", None)
+            .await
+            .unwrap();
+
+        let deleted = delete_orphaned_feed_images(&db, 500).await.unwrap();
+
+        assert_eq!(deleted, 1);
+        assert!(exists(&db, ENTITY_FEED, live_feed_id).await.unwrap());
+        assert!(!exists(&db, ENTITY_FEED, missing_feed_id).await.unwrap());
+        assert!(exists(&db, "other", missing_feed_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_orphan_sweep_respects_the_batch_size() {
+        let db = setup_db().await;
+        for feed_id in [901, 902, 903] {
+            upsert(&db, ENTITY_FEED, feed_id, &[1], "image/png", None)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(delete_orphaned_feed_images(&db, 2).await.unwrap(), 2);
+        assert_eq!(delete_orphaned_feed_images(&db, 2).await.unwrap(), 1);
+        assert_eq!(delete_orphaned_feed_images(&db, 2).await.unwrap(), 0);
     }
 }

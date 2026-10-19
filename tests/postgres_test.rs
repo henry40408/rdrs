@@ -28,7 +28,7 @@ use rdrs::models::user::Role;
 use rdrs::models::{
     api_token, category, entry,
     entry::{ContinuationCursor, ContinuationParams, EntryFilter, EntrySortOrder},
-    entry_open, feed, session, statistics, user, user_invite, user_settings,
+    entry_open, feed, image, session, statistics, user, user_invite, user_settings,
 };
 
 /// Connect to the test Postgres and wipe every table so the run is isolated and
@@ -804,5 +804,56 @@ async fn pg_dialect_smoke() {
             .unwrap()
             .is_some(),
         "the old link must survive a failed re-issue"
+    );
+
+    // Orphaned feed images: one image whose feed exists, one whose feed is gone.
+    let category = category::create_category(&db, alice.id, "Tech")
+        .await
+        .unwrap();
+    let live_feed = feed::create_feed(
+        &db,
+        &feed::CreateFeedParams {
+            category_id: category.id,
+            url: "https://example.com/orphan-sweep.xml",
+            title: Some("Feed"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let missing_feed_id = live_feed.id + 1000;
+    image::upsert(
+        &db,
+        image::ENTITY_FEED,
+        live_feed.id,
+        &[1],
+        "image/png",
+        None,
+    )
+    .await
+    .unwrap();
+    image::upsert(
+        &db,
+        image::ENTITY_FEED,
+        missing_feed_id,
+        &[2],
+        "image/png",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        image::delete_orphaned_feed_images(&db, 500).await.unwrap(),
+        1
+    );
+    assert!(
+        image::exists(&db, image::ENTITY_FEED, live_feed.id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !image::exists(&db, image::ENTITY_FEED, missing_feed_id)
+            .await
+            .unwrap()
     );
 }

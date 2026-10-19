@@ -698,7 +698,7 @@ Kagi Universal Summarizer integration:
 - `summarize/kagi.rs` — API client
 - `summary_worker.rs` — background worker
 - `summary_cache.rs` — in-memory cache
-- `summary_cleanup.rs` — periodic cleanup of orphaned/expired summaries
+- `summary_cleanup.rs` — periodic cleanup of expired summaries, sessions and API tokens, and of feed images whose feed was deleted (`image` has no foreign key)
 
 **Flow:** request → check cache, then DB → otherwise queue to worker → worker
 calls Kagi and stores in `entry_summary` → cached and returned.
