@@ -6320,6 +6320,41 @@ async fn an_admin_created_account_is_activated_through_its_link() {
 }
 
 #[tokio::test]
+async fn a_failed_account_creation_leaves_no_account_behind() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    // The account and its category are written before the invite, so a missing
+    // `user_invite` table fails the last step.
+    rdrs::db_execute!(&app.db, "ALTER TABLE user_invite RENAME TO user_invite_off").unwrap();
+
+    let failed = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    failed.assert_status(StatusCode::SEE_OTHER);
+    assert!(flash_text(&failed).contains("Failed to create the account."));
+    assert!(
+        rdrs::models::user::find_by_username(&app.db, "newcomer")
+            .await
+            .unwrap()
+            .is_none(),
+        "a failed creation must not hold the username"
+    );
+
+    rdrs::db_execute!(&app.db, "ALTER TABLE user_invite_off RENAME TO user_invite").unwrap();
+    let retried = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    assert!(
+        invite_path_from(&retried).starts_with("/invite/"),
+        "the admin can retry with the same username"
+    );
+}
+
+#[tokio::test]
 async fn a_link_works_exactly_once() {
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
