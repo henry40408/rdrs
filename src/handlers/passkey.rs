@@ -16,6 +16,7 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::{AuthUser, Bucket, RecentlyAuthenticated, build_session_cookie};
 use crate::models::{passkey, session, user, webauthn_challenge};
 use crate::services::audit;
+use crate::utils::datetime::format_display;
 use crate::utils::http::request_user_agent;
 
 #[derive(Debug, Serialize)]
@@ -342,10 +343,8 @@ pub async fn list_passkeys(
         .map(|p| PasskeyInfo {
             id: p.id,
             name: p.name,
-            created_at: p.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            last_used_at: p
-                .last_used_at
-                .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string()),
+            created_at: format_display(p.created_at),
+            last_used_at: p.last_used_at.map(format_display),
         })
         .collect();
 

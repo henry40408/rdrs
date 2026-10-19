@@ -115,6 +115,13 @@ pub fn try_parse_datetime(s: &str) -> Option<DateTime<Utc>> {
         .or_else(|| parse_chinese_datetime(s))
 }
 
+/// UTC timestamp as shown to the user. Same pattern as the DB text format but
+/// independent of it: cursor and `read_after` values must keep matching
+/// `datetime('now')` (see `snapshot_now`), so do not reuse this for them.
+pub fn format_display(dt: DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 /// Parse a stored datetime, falling back to `Utc::now()`.
 pub fn parse_datetime(s: &str) -> DateTime<Utc> {
     try_parse_datetime(s).unwrap_or_else(Utc::now)
