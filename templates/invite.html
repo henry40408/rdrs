@@ -11,7 +11,7 @@
         {% if let Some(err) = error %}
         <div class="error" data-testid="invite-error">{{ err }}</div>
         {% endif %}
-        <p class="muted invite-lead">Choose a password for <strong>{{ name }}</strong>.</p>
+        <p class="muted auth-lead">Choose a password for <strong>{{ name }}</strong>.</p>
         {# Plain form POST; the CSRF token comes from the anonymous session minted on GET. #}
         <form method="post" action="/invite/{{ token }}" data-testid="invite-form">
             {% call macros::csrf_field(csrf_token) %}{% endcall %}

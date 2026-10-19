@@ -159,7 +159,7 @@ async fn main() {
             std::process::exit(1);
         });
 
-    let setup_token: Arc<str> = rdrs::models::session::generate_token().into();
+    let setup_token: Arc<str> = rdrs::secret::generate_setup_token().into();
     // Moot once the first account exists, so only logged while setup is open.
     if rdrs::models::user::count(&db).await.unwrap_or(0) == 0 {
         tracing::warn!(

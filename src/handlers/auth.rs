@@ -95,7 +95,7 @@ async fn perform_setup(
     }
 
     if let Some(expected) = &state.setup_token
-        && !crate::secret::verify_setup_token(&config.secret, expected, req.setup_token.trim())
+        && !crate::secret::verify_setup_token(&config.secret, expected, &req.setup_token)
     {
         audit::login_failed(
             req.username.chars().count(),

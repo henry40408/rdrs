@@ -70,13 +70,47 @@ pub fn verify_tag(secret: &[u8], domain: &[u8], parts: &[&[u8]], candidate: &[u8
     mac(secret, domain, parts).verify_slice(candidate).is_ok()
 }
 
+/// Crockford base32: no `I`, `L`, `O`, `U`, so a token read off a log is hard to mistype.
+const SETUP_TOKEN_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// A fresh first-run setup token, `XXXXX-XXXXX` (50 bits).
+///
+/// Short on purpose: it is typed by hand, guesses are only online and
+/// rate-limited per IP, and it dies with the first account.
+pub fn generate_setup_token() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let mut pick = || SETUP_TOKEN_ALPHABET[rng.random_range(0..SETUP_TOKEN_ALPHABET.len())] as char;
+    let first: String = (0..5).map(|_| pick()).collect();
+    let second: String = (0..5).map(|_| pick()).collect();
+    format!("{first}-{second}")
+}
+
+/// The dash is only for readability, so dashes, whitespace and case never matter.
+fn normalize_setup_token(token: &str) -> String {
+    token
+        .chars()
+        .filter(|c| *c != '-' && !c.is_whitespace())
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
 /// Constant-time check of a submitted first-run setup token.
 ///
 /// Why MAC both sides: it compares equal-length digests, so neither the
 /// token's length nor its matching prefix leaks through timing.
 pub fn verify_setup_token(secret: &[u8], expected: &str, submitted: &str) -> bool {
-    let expected_tag = tag(secret, DOMAIN_SETUP, &[expected.as_bytes()]);
-    verify_tag(secret, DOMAIN_SETUP, &[submitted.as_bytes()], &expected_tag)
+    let expected_tag = tag(
+        secret,
+        DOMAIN_SETUP,
+        &[normalize_setup_token(expected).as_bytes()],
+    );
+    verify_tag(
+        secret,
+        DOMAIN_SETUP,
+        &[normalize_setup_token(submitted).as_bytes()],
+        &expected_tag,
+    )
 }
 
 /// Marks and versions values written by [`seal`]; a new construction gets `v2`.
@@ -220,11 +254,28 @@ mod tests {
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
 
     #[test]
-    fn setup_token_matches_only_the_exact_token() {
-        assert!(verify_setup_token(SECRET, "abc", "abc"));
-        assert!(!verify_setup_token(SECRET, "abc", "abd"));
-        assert!(!verify_setup_token(SECRET, "abc", "abcd"));
-        assert!(!verify_setup_token(SECRET, "abc", ""));
+    fn setup_token_matches_only_the_same_token() {
+        assert!(verify_setup_token(SECRET, "ABCDE-12345", "ABCDE-12345"));
+        assert!(!verify_setup_token(SECRET, "ABCDE-12345", "ABCDE-12346"));
+        assert!(!verify_setup_token(SECRET, "ABCDE-12345", "ABCDE-123456"));
+        assert!(!verify_setup_token(SECRET, "ABCDE-12345", ""));
+    }
+
+    #[test]
+    fn setup_token_ignores_dash_case_and_whitespace() {
+        assert!(verify_setup_token(SECRET, "ABCDE-12345", " abcde12345\n"));
+        assert!(verify_setup_token(SECRET, "ABCDE-12345", "abcde - 12345"));
+    }
+
+    #[test]
+    fn generated_setup_token_is_two_groups_of_five_crockford_chars() {
+        let token = generate_setup_token();
+        let (first, second) = token.split_once('-').expect("one dash");
+        for group in [first, second] {
+            assert_eq!(group.len(), 5);
+            assert!(group.bytes().all(|b| SETUP_TOKEN_ALPHABET.contains(&b)));
+        }
+        assert_ne!(token, generate_setup_token());
     }
 
     #[test]

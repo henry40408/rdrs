@@ -1993,8 +1993,8 @@ td input[type="text"] {
     margin-top: var(--space-5);
 }
 
-/* Space the /invite lead line from the first label. */
-.invite-lead {
+/* Space the /invite and /setup lead line from the first label. */
+.auth-lead {
     margin-bottom: var(--space-4);
 }
 
