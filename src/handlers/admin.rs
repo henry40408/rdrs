@@ -13,7 +13,6 @@ use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::flash::FlashRedirect;
 use crate::middleware::{AdminUser, Bucket, build_csrf_cookie, build_session_cookie};
-use crate::models::api_token;
 use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
@@ -343,10 +342,8 @@ pub async fn update_status_form(
             .ok_or(AppError::UserNotFound)?;
         if disabled && !target.is_disabled() {
             user::disable_user(&state.db, user_id).await?;
-            session::delete_user_sessions(&state.db, user_id).await?;
             audit::sessions_destroyed_bulk(user_id, "admin_disable", None);
-            // API tokens bypass `session`, so revoke them too.
-            api_token::delete_user_tokens(&state.db, user_id).await?;
+            audit::api_tokens_destroyed(user_id, "admin_disable", None);
         } else if !disabled && target.is_disabled() {
             user::enable_user(&state.db, user_id).await?;
         }

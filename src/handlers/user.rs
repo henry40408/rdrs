@@ -477,22 +477,16 @@ pub async fn change_password_form(
     };
     let user_id = auth_user.user.id;
 
-    let result: AppResult<()> = async {
-        user::update_password(&state.db, user_id, &new_hash).await?;
-        session::delete_user_sessions(&state.db, user_id).await?;
-        audit::sessions_destroyed_bulk(user_id, "password_change", None);
-        // API tokens bypass `session`, so revoke them too.
-        api_token::delete_user_tokens(&state.db, user_id).await?;
-        Ok(())
-    }
-    .await;
-
-    match result {
-        Ok(()) => FlashRedirect::success(
-            "/login",
-            "Password changed successfully. Please login with your new password.",
-        ),
-        _ => FlashRedirect::error("/user-settings", "Failed to update password."),
+    match user::change_password(&state.db, user_id, &new_hash).await {
+        Ok(()) => {
+            audit::sessions_destroyed_bulk(user_id, "password_change", None);
+            audit::api_tokens_destroyed(user_id, "password_change", None);
+            FlashRedirect::success(
+                "/login",
+                "Password changed successfully. Please login with your new password.",
+            )
+        }
+        Err(_) => FlashRedirect::error("/user-settings", "Failed to update password."),
     }
 }
 

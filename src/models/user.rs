@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, Tx, is_unique_violation};
 use crate::error::{AppError, AppResult};
+use crate::models::{api_token, session};
 use crate::{
-    db_execute, query_all, query_one, query_one_tx, query_opt, query_scalar, query_scalar_tx,
+    db_execute, db_execute_tx, query_all, query_one, query_one_tx, query_opt, query_scalar,
+    query_scalar_tx,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,9 +179,24 @@ pub async fn list_all(db: &Db) -> AppResult<Vec<User>> {
     .map_err(AppError::Database)
 }
 
-pub async fn update_password(db: &Db, user_id: i64, new_password_hash: &str) -> AppResult<()> {
-    let rows = db_execute!(
-        db,
+/// Set a new password and revoke every credential issued under the old one, as
+/// one transaction: a failed revocation must not leave the new password live
+/// beside old sessions and API tokens.
+pub async fn change_password(db: &Db, user_id: i64, new_password_hash: &str) -> AppResult<()> {
+    let mut tx = db.begin().await?;
+    change_password_tx(&mut tx, user_id, new_password_hash).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// [`change_password`] inside a caller-owned transaction.
+pub async fn change_password_tx(
+    tx: &mut Tx<'_>,
+    user_id: i64,
+    new_password_hash: &str,
+) -> AppResult<()> {
+    let rows = db_execute_tx!(
+        tx,
         "UPDATE \"user\" SET password_hash = $1 WHERE id = $2",
         new_password_hash,
         user_id
@@ -189,6 +206,13 @@ pub async fn update_password(db: &Db, user_id: i64, new_password_hash: &str) -> 
     if rows == 0 {
         return Err(AppError::UserNotFound);
     }
+    revoke_credentials_tx(tx, user_id).await
+}
+
+/// Sessions plus API tokens; tokens bypass `session`, so both must go.
+async fn revoke_credentials_tx(tx: &mut Tx<'_>, user_id: i64) -> AppResult<()> {
+    session::delete_user_sessions_tx(tx, user_id).await?;
+    api_token::delete_user_tokens_tx(tx, user_id).await?;
     Ok(())
 }
 
@@ -207,9 +231,12 @@ pub async fn update_role(db: &Db, user_id: i64, role: Role) -> AppResult<()> {
     Ok(())
 }
 
+/// Disable the account and revoke its sessions and API tokens in one
+/// transaction, so a disabled user is never left holding a live credential.
 pub async fn disable_user(db: &Db, user_id: i64) -> AppResult<()> {
-    let rows = db_execute!(
-        db,
+    let mut tx = db.begin().await?;
+    let rows = db_execute_tx!(
+        &mut tx,
         "UPDATE \"user\" SET disabled_at = $1 WHERE id = $2",
         Utc::now(),
         user_id
@@ -219,6 +246,8 @@ pub async fn disable_user(db: &Db, user_id: i64) -> AppResult<()> {
     if rows == 0 {
         return Err(AppError::UserNotFound);
     }
+    revoke_credentials_tx(&mut tx, user_id).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -307,6 +336,78 @@ mod tests {
         enable_user(&db, user.id).await.unwrap();
         let enabled = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert!(!enabled.is_disabled());
+    }
+
+    /// A user holding one session and one API token.
+    async fn user_with_session_and_api_token(db: &Db) -> User {
+        let user = create_user(db, "holder", "old-hash", Role::User)
+            .await
+            .unwrap();
+        session::create_session(db, user.id, "ua", "127.0.0.1")
+            .await
+            .unwrap();
+        api_token::create_api_token(db, user.id, "greader", "label", "ua", "127.0.0.1")
+            .await
+            .unwrap();
+        user
+    }
+
+    async fn session_and_token_counts(db: &Db, user_id: i64) -> (usize, usize) {
+        let sessions = session::list_user_sessions(db, user_id).await.unwrap();
+        let tokens = api_token::list_user_tokens(db, user_id).await.unwrap();
+        (sessions.len(), tokens.len())
+    }
+
+    #[tokio::test]
+    async fn change_password_revokes_sessions_and_api_tokens() {
+        let db = setup_db().await;
+        let user = user_with_session_and_api_token(&db).await;
+
+        change_password(&db, user.id, "new-hash").await.unwrap();
+
+        let after = find_by_id(&db, user.id).await.unwrap().unwrap();
+        assert_eq!(after.password_hash, "new-hash");
+        assert_eq!(session_and_token_counts(&db, user.id).await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn change_password_rolls_back_when_revocation_fails() {
+        let db = setup_db().await;
+        let user = user_with_session_and_api_token(&db).await;
+        db_execute!(&db, "DROP TABLE api_token").unwrap();
+
+        assert!(change_password(&db, user.id, "new-hash").await.is_err());
+
+        let after = find_by_id(&db, user.id).await.unwrap().unwrap();
+        assert_eq!(after.password_hash, "old-hash", "password must not change");
+        let sessions = session::list_user_sessions(&db, user.id).await.unwrap();
+        assert_eq!(sessions.len(), 1, "session deletion must roll back too");
+    }
+
+    #[tokio::test]
+    async fn disable_user_revokes_sessions_and_api_tokens() {
+        let db = setup_db().await;
+        let user = user_with_session_and_api_token(&db).await;
+
+        disable_user(&db, user.id).await.unwrap();
+
+        let after = find_by_id(&db, user.id).await.unwrap().unwrap();
+        assert!(after.is_disabled());
+        assert_eq!(session_and_token_counts(&db, user.id).await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn disable_user_rolls_back_when_revocation_fails() {
+        let db = setup_db().await;
+        let user = user_with_session_and_api_token(&db).await;
+        db_execute!(&db, "DROP TABLE api_token").unwrap();
+
+        assert!(disable_user(&db, user.id).await.is_err());
+
+        let after = find_by_id(&db, user.id).await.unwrap().unwrap();
+        assert!(!after.is_disabled(), "account must stay enabled");
+        let sessions = session::list_user_sessions(&db, user.id).await.unwrap();
+        assert_eq!(sessions.len(), 1, "session deletion must roll back too");
     }
 
     #[tokio::test]

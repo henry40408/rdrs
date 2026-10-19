@@ -19,7 +19,7 @@ use crate::error::AppError;
 use crate::handlers::pages::InviteTemplate;
 use crate::middleware::Bucket;
 use crate::middleware::flash::FlashRedirect;
-use crate::models::{session, user, user_invite};
+use crate::models::{user, user_invite};
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
@@ -122,31 +122,29 @@ pub async fn redeem_form(
         .into_response();
     };
 
-    // Spend the link *before* writing the password so only the winner of a
-    // racing double-submit writes; the loser sees a spent link.
-    match user_invite::consume(&state.db, live.invite.id).await {
-        Ok(true) => {}
-        _ => return InviteTemplate::invalid().into_response(),
-    }
-
-    if user::update_password(&state.db, live.invite.user_id, &password_hash)
-        .await
-        .is_err()
+    match user_invite::redeem(
+        &state.db,
+        live.invite.id,
+        live.invite.user_id,
+        &password_hash,
+    )
+    .await
     {
-        return InviteTemplate::error(
-            &token,
-            live.username,
-            "Could not set the password.",
-            csrf_token,
-        )
-        .into_response();
+        Ok(true) => {}
+        Ok(false) => return InviteTemplate::invalid().into_response(),
+        Err(_) => {
+            return InviteTemplate::error(
+                &token,
+                live.username,
+                "Could not set the password.",
+                csrf_token,
+            )
+            .into_response();
+        }
     }
 
-    // Admin resets land here too: revoke prior sessions and API tokens, as a
-    // settings-page password change does.
-    let _ = session::delete_user_sessions(&state.db, live.invite.user_id).await;
-    let _ = crate::models::api_token::delete_user_tokens(&state.db, live.invite.user_id).await;
-
+    audit::sessions_destroyed_bulk(live.invite.user_id, "invite_redeem", None);
+    audit::api_tokens_destroyed(live.invite.user_id, "invite_redeem", None);
     audit::invite_consumed(
         &state.config.secret,
         &token,

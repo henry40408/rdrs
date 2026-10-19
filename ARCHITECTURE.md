@@ -282,7 +282,10 @@ leaks whether it exists.
    expired, spent) renders one identical page naming no account. Redemption
    spends the invite with `UPDATE … WHERE consumed_at IS NULL` *before* writing
    the password (so racing submissions can't both win), then clears the
-   account's sessions and API tokens.
+   account's sessions and API tokens, all in one transaction
+   (`user_invite::redeem`): a failed write leaves the link live to retry.
+   `user::change_password` and `user::disable_user` bind the same revocation
+   to a password change and an admin disable.
 
 This is also the only password-reset path; the old password keeps working until
 the link is redeemed.
