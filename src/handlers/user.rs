@@ -20,6 +20,7 @@ use crate::models::user;
 use crate::models::user_settings;
 use crate::models::{category, entry};
 use crate::services::{KagiConfig, LinkdingConfig, audit};
+use crate::utils::datetime::format_display;
 
 #[derive(Debug, Serialize)]
 pub struct MeResponse {
@@ -59,16 +60,8 @@ pub async fn get_me(
         is_admin,
         is_masquerading,
         original_user_id: auth_user.session.original_user_id,
-        created_at: auth_user
-            .user
-            .created_at
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
-        session_created_at: auth_user
-            .session
-            .created_at
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
+        created_at: format_display(auth_user.user.created_at),
+        session_created_at: format_display(auth_user.session.created_at),
     }))
 }
 

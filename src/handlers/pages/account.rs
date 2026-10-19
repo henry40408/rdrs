@@ -8,6 +8,7 @@ use crate::middleware::flash::Flash;
 use crate::models::api_token;
 use crate::models::session;
 use crate::models::user_settings;
+use crate::utils::datetime::format_display;
 
 /// `GET /user-settings`.
 pub async fn user_settings_page(
@@ -98,17 +99,9 @@ pub async fn user_settings_page(
         .unwrap_or_else(|| format!("http://localhost:{}", state.config.server_bind.port()));
 
     let role = auth_user.user.role.as_str().to_string();
-    let created_at = auth_user
-        .user
-        .created_at
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    let created_at = format_display(auth_user.user.created_at);
     let created_at_iso = auth_user.user.created_at.to_rfc3339();
-    let session_created_at = auth_user
-        .session
-        .created_at
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    let session_created_at = format_display(auth_user.session.created_at);
     let session_created_at_iso = auth_user.session.created_at.to_rfc3339();
     let username = auth_user.user.username.clone();
 
@@ -123,14 +116,14 @@ pub async fn user_settings_page(
             .filter(|s| !s.is_expired())
             .map(|s| SessionRow {
                 id: s.id,
-                created_at: s.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                created_at: format_display(s.created_at),
                 created_at_iso: s.created_at.to_rfc3339(),
-                expires_at: s.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                expires_at: format_display(s.expires_at),
                 expires_at_iso: s.expires_at.to_rfc3339(),
                 is_current: s.id == auth_user.session.id,
                 user_agent: s.user_agent.clone(),
                 ip_address: s.ip_address.clone(),
-                last_seen: s.last_seen_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                last_seen: format_display(s.last_seen_at),
                 last_seen_iso: s.last_seen_at.to_rfc3339(),
             })
             .collect()
@@ -148,11 +141,11 @@ pub async fn user_settings_page(
             .map(|t| ApiTokenRow {
                 id: t.id,
                 label: t.label.clone(),
-                created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                created_at: format_display(t.created_at),
                 created_at_iso: t.created_at.to_rfc3339(),
-                last_seen: t.last_seen_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                last_seen: format_display(t.last_seen_at),
                 last_seen_iso: t.last_seen_at.to_rfc3339(),
-                expires_at: t.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                expires_at: format_display(t.expires_at),
                 expires_at_iso: t.expires_at.to_rfc3339(),
                 user_agent: t.user_agent.clone(),
                 ip_address: t.ip_address.clone(),
