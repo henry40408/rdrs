@@ -160,7 +160,7 @@ pub struct StatisticsTemplate {
     pub admin_db: Option<AdminDatabaseStatsView>,
 }
 
-/// Chart bars, plus the busiest bucket's count that scales them.
+/// The returned max is taken over buckets, not days, so bars scale to what is drawn.
 fn daily_read_views(daily: &[DailyReadCount]) -> (i64, Vec<DailyReadView>) {
     // Cap bar count so long ranges stay tappable on mobile.
     const MAX_DAILY_BARS: usize = 14;
