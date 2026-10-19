@@ -5,6 +5,10 @@ use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
+use crate::models::entry_open::FeedOpenRate;
+use crate::models::statistics::{
+    AdminCounts, AdminDatabaseStats, AdminEntryStats, CategoryCount, DailyReadCount, FeedCount,
+};
 
 #[derive(serde::Deserialize)]
 pub struct StatisticsQuery {
@@ -156,6 +160,114 @@ pub struct StatisticsTemplate {
     pub admin_db: Option<AdminDatabaseStatsView>,
 }
 
+/// Cap bar count so long ranges stay tappable on mobile.
+const MAX_DAILY_BARS: usize = 14;
+
+/// The returned max is taken over buckets, not days, so bars scale to what is drawn.
+fn daily_read_views(daily: &[DailyReadCount]) -> (i64, Vec<DailyReadView>) {
+    let buckets = crate::models::statistics::bucket_daily_counts(daily, MAX_DAILY_BARS);
+
+    let daily_max = buckets.iter().map(|b| b.count).max().unwrap_or(0);
+
+    let max_idx = if daily_max > 0 {
+        buckets.iter().position(|b| b.count == daily_max)
+    } else {
+        None
+    };
+    let views = buckets
+        .into_iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let short_label = b.start.format("%m/%d").to_string();
+            let date_label = if b.start == b.end {
+                b.start.format("%Y-%m-%d").to_string()
+            } else {
+                format!("{} – {}", b.start.format("%Y-%m-%d"), b.end.format("%m/%d"))
+            };
+            DailyReadView {
+                date_label,
+                count: b.count,
+                height_percent: bar_percent(b.count, daily_max),
+                short_label,
+                is_max: Some(i) == max_idx,
+            }
+        })
+        .collect();
+    (daily_max, views)
+}
+
+fn category_views(cats: Vec<CategoryCount>) -> Vec<CategoryStatsView> {
+    let cat_max = cats.iter().map(|c| c.count).max().unwrap_or(0);
+    cats.into_iter()
+        .map(|c| CategoryStatsView {
+            count: c.count,
+            width_percent: bar_percent(c.count, cat_max),
+            name: c.name,
+        })
+        .collect()
+}
+
+fn top_feed_views(feeds: Vec<FeedCount>) -> Vec<FeedStatsView> {
+    let feed_max = feeds.iter().map(|f| f.count).max().unwrap_or(0);
+    feeds
+        .into_iter()
+        .map(|f| FeedStatsView {
+            count: f.count,
+            width_percent: bar_percent(f.count, feed_max),
+            title: f.title,
+        })
+        .collect()
+}
+
+/// Feeds below the tracking minimum have no rate (`percent()` is `None`), so they are left out.
+fn open_rate_views(rates: Vec<FeedOpenRate>) -> Vec<FeedOpenRateView> {
+    let mut open_rate_feeds: Vec<FeedOpenRateView> = rates
+        .into_iter()
+        .filter_map(|r| {
+            let percent = r.percent()?;
+            Some(FeedOpenRateView {
+                title: r.title.unwrap_or_else(|| "(untitled feed)".to_string()),
+                percent,
+                opened: r.opened,
+                tracked: r.tracked,
+                width_percent: u8::try_from(percent.clamp(0, 100)).unwrap_or(100),
+            })
+        })
+        .collect();
+    open_rate_feeds.sort_by_key(|f| (f.percent, f.title.to_lowercase()));
+    open_rate_feeds.truncate(10);
+    open_rate_feeds
+}
+
+fn admin_stats_view(
+    admin_counts: Option<AdminCounts>,
+    admin_entry_stats: Option<AdminEntryStats>,
+) -> Option<AdminStatsView> {
+    match (admin_counts, admin_entry_stats) {
+        (Some(c), Some(e)) => Some(AdminStatsView {
+            total_users: c.total_users,
+            total_feeds: c.total_feeds,
+            total_entries: e.total_entries,
+            read_rate_fmt: format!("{:.1}", e.read_rate()),
+        }),
+        _ => None,
+    }
+}
+
+fn admin_database_view(stats: Option<AdminDatabaseStats>) -> Option<AdminDatabaseStatsView> {
+    stats.map(|s| AdminDatabaseStatsView {
+        size_fmt: format_db_bytes(s.db_size_bytes),
+        reclaimable: s.reclaimable.map(|r| ReclaimableView {
+            size_fmt: format_db_bytes(r.bytes),
+            frag_pct: (r.fragmentation_ratio * 100.0).round() as i64,
+        }),
+        total_entries: s.total_entries,
+        avg_per_day_fmt: format!("{}", s.avg_new_entries_per_day.round() as i64),
+        coverage_fmt: format!("{}d", s.coverage_days.round() as i64),
+        tombstone_count: s.tombstone_count,
+    })
+}
+
 /// `GET /statistics`.
 pub async fn statistics_page(
     auth_user: PageAuthUser,
@@ -257,76 +369,16 @@ pub async fn statistics_page(
         (String::new(), String::new())
     };
 
-    // Cap bar count so long ranges stay tappable on mobile.
-    const MAX_DAILY_BARS: usize = 14;
-    let buckets = crate::models::statistics::bucket_daily_counts(&daily, MAX_DAILY_BARS);
-
-    let daily_max = buckets.iter().map(|b| b.count).max().unwrap_or(0);
-    let cat_max = cats.iter().map(|c| c.count).max().unwrap_or(0);
-    let feed_max = feeds.iter().map(|f| f.count).max().unwrap_or(0);
-
-    let max_idx = if daily_max > 0 {
-        buckets.iter().position(|b| b.count == daily_max)
-    } else {
-        None
-    };
-    let daily_read_counts = buckets
-        .into_iter()
-        .enumerate()
-        .map(|(i, b)| {
-            let short_label = b.start.format("%m/%d").to_string();
-            let date_label = if b.start == b.end {
-                b.start.format("%Y-%m-%d").to_string()
-            } else {
-                format!("{} – {}", b.start.format("%Y-%m-%d"), b.end.format("%m/%d"))
-            };
-            DailyReadView {
-                date_label,
-                count: b.count,
-                height_percent: bar_percent(b.count, daily_max),
-                short_label,
-                is_max: Some(i) == max_idx,
-            }
-        })
-        .collect();
-
-    let categories = cats
-        .into_iter()
-        .map(|c| CategoryStatsView {
-            count: c.count,
-            width_percent: bar_percent(c.count, cat_max),
-            name: c.name,
-        })
-        .collect();
-
-    let top_feeds = feeds
-        .into_iter()
-        .map(|f| FeedStatsView {
-            count: f.count,
-            width_percent: bar_percent(f.count, feed_max),
-            title: f.title,
-        })
-        .collect();
+    let (daily_max, daily_read_counts) = daily_read_views(&daily);
+    let categories = category_views(cats);
+    let top_feeds = top_feed_views(feeds);
 
     // Ignores the period filter: open rate is only meaningful since opt-in.
-    let mut open_rate_feeds: Vec<FeedOpenRateView> =
+    let open_rate_feeds = open_rate_views(
         crate::models::entry_open::open_rates_by_feed(&state.db, user_id)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|r| {
-                let percent = r.percent()?;
-                Some(FeedOpenRateView {
-                    title: r.title.unwrap_or_else(|| "(untitled feed)".to_string()),
-                    percent,
-                    opened: r.opened,
-                    tracked: r.tracked,
-                    width_percent: u8::try_from(percent.clamp(0, 100)).unwrap_or(100),
-                })
-            })
-            .collect();
-    open_rate_feeds.sort_by_key(|f| (f.percent, f.title.to_lowercase()));
-    open_rate_feeds.truncate(10);
+            .unwrap_or_default(),
+    );
 
     let tracked_since = crate::models::entry_open::tracking_window(&state.db, user_id)
         .await
@@ -337,27 +389,8 @@ pub async fn statistics_page(
         .tracked_since()
         .map(|t| t.format("%Y-%m-%d").to_string());
 
-    let admin = match (admin_counts, admin_entry_stats) {
-        (Some(c), Some(e)) => Some(AdminStatsView {
-            total_users: c.total_users,
-            total_feeds: c.total_feeds,
-            total_entries: e.total_entries,
-            read_rate_fmt: format!("{:.1}", e.read_rate()),
-        }),
-        _ => None,
-    };
-
-    let admin_db = admin_db_stats.map(|s| AdminDatabaseStatsView {
-        size_fmt: format_db_bytes(s.db_size_bytes),
-        reclaimable: s.reclaimable.map(|r| ReclaimableView {
-            size_fmt: format_db_bytes(r.bytes),
-            frag_pct: (r.fragmentation_ratio * 100.0).round() as i64,
-        }),
-        total_entries: s.total_entries,
-        avg_per_day_fmt: format!("{}", s.avg_new_entries_per_day.round() as i64),
-        coverage_fmt: format!("{}d", s.coverage_days.round() as i64),
-        tombstone_count: s.tombstone_count,
-    });
+    let admin = admin_stats_view(admin_counts, admin_entry_stats);
+    let admin_db = admin_database_view(admin_db_stats);
 
     (
         flash,
