@@ -30,6 +30,7 @@ pub async fn test_state(config: Config) -> AppState {
         events: services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
         login_rate_limiter: test_rate_limiter(),
+        setup_token: None,
     }
 }
 

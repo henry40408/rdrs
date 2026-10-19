@@ -127,7 +127,7 @@ impl RdrsWorld {
                 password: PASSWORD.to_owned(),
             },
             user_id: None,
-            api: Api::new(&endpoints.base_url)?,
+            api: Api::new(&endpoints)?,
             seed: Seed::open(&endpoints.db_path).await?,
             browser: None,
             seeded_entries: Vec::new(),

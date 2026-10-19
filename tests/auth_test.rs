@@ -87,6 +87,127 @@ async fn test_register_first_user_becomes_admin() {
     assert_eq!(body["role"], "admin");
 }
 
+const SETUP_TOKEN: &str = "token-from-the-server-log";
+
+/// A server whose `/setup` demands [`SETUP_TOKEN`], as `main` configures it.
+async fn build_server_with_setup_token() -> (TestServer, Db) {
+    let mut state = common::test_state(default_test_config()).await;
+    state.setup_token = Some(SETUP_TOKEN.into());
+    let db = state.db.clone();
+    (
+        TestServer::builder()
+            .save_cookies()
+            .build(create_router(state)),
+        db,
+    )
+}
+
+#[tokio::test]
+async fn setup_refuses_a_missing_or_wrong_token_and_creates_nothing() {
+    let (server, db) = build_server_with_setup_token().await;
+
+    for body in [
+        json!({ "username": "admin", "password": "vulture-mango-77-quilt" }),
+        json!({ "username": "admin", "password": "vulture-mango-77-quilt", "setup_token": "guess" }),
+    ] {
+        server
+            .post("/api/setup")
+            .json(&body)
+            .await
+            .assert_status(StatusCode::FORBIDDEN);
+    }
+
+    assert_eq!(rdrs::models::user::count(&db).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn setup_accepts_the_logged_token() {
+    let (server, _db) = build_server_with_setup_token().await;
+
+    server
+        .post("/api/setup")
+        .json(&json!({
+            "username": "admin",
+            "password": "vulture-mango-77-quilt",
+            "setup_token": SETUP_TOKEN
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn setup_form_refuses_a_wrong_token_and_shows_why() {
+    let (server, db) = build_server_with_setup_token().await;
+    let page = server.get("/setup").await;
+    let csrf = page.cookie("csrf_token").value().to_string();
+
+    let response = server
+        .post("/setup")
+        .add_header("x-csrf-token", csrf)
+        .form(&[
+            ("username", "admin"),
+            ("password", "vulture-mango-77-quilt"),
+            ("confirm-password", "vulture-mango-77-quilt"),
+            ("setup-token", "guess"),
+        ])
+        .await;
+
+    assert!(response.text().contains("Invalid setup token"));
+    assert_eq!(rdrs::models::user::count(&db).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn setup_form_accepts_the_logged_token_ignoring_surrounding_whitespace() {
+    let (server, db) = build_server_with_setup_token().await;
+    let page = server.get("/setup").await;
+    let csrf = page.cookie("csrf_token").value().to_string();
+
+    server
+        .post("/setup")
+        .add_header("x-csrf-token", csrf)
+        .form(&[
+            ("username", "admin"),
+            ("password", "vulture-mango-77-quilt"),
+            ("confirm-password", "vulture-mango-77-quilt"),
+            ("setup-token", &format!(" {SETUP_TOKEN}\n")),
+        ])
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    assert_eq!(rdrs::models::user::count(&db).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_setups_with_different_usernames_create_one_account() {
+    let (server, db) = build_server(default_test_config()).await;
+    let server = std::sync::Arc::new(server);
+
+    // Five stays within the per-IP `AccountSetup` limit, so every attempt reaches the DB.
+    let attempts: Vec<_> = (0..5)
+        .map(|i| {
+            let server = server.clone();
+            tokio::spawn(async move {
+                server
+                    .post("/api/setup")
+                    .json(&json!({
+                        "username": format!("admin{i}"),
+                        "password": "vulture-mango-77-quilt"
+                    }))
+                    .await
+                    .status_code()
+            })
+        })
+        .collect();
+    let mut created = 0;
+    for attempt in attempts {
+        if attempt.await.unwrap() == StatusCode::CREATED {
+            created += 1;
+        }
+    }
+    assert_eq!(created, 1);
+    assert_eq!(rdrs::models::user::count(&db).await.unwrap(), 1);
+}
+
 #[tokio::test]
 async fn setup_closes_permanently_after_the_first_account() {
     // The endpoint that used to be self-service registration now exists only

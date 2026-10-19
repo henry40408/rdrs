@@ -12,11 +12,16 @@
     <div class="auth-card">
         {% call macros::flash(flash_messages) %}{% endcall %}
         <h1>rdrs</h1>
-        <p class="muted">Create the administrator account for this instance. Everyone else is added from the admin panel afterwards.</p>
+        <p class="muted auth-lead">Create the administrator account for this instance. Everyone else is added from the admin panel afterwards.</p>
         {# Filled server-side after a failed native POST, or by setup.js on the fetch path. #}
         <div id="error" class="error"{% if error.is_none() %} hidden{% endif %} data-testid="setup-error">{% if let Some(err) = error %}{{ err }}{% endif %}</div>
         <form id="setup-form" method="post" action="/setup" data-testid="setup-form">
             {% call macros::csrf_field(csrf_token) %}{% endcall %}
+            <div class="form-group">
+                <label for="setup-token">Setup token</label>
+                <input type="text" id="setup-token" name="setup-token" required autocomplete="off" spellcheck="false" data-testid="setup-token">
+                <p class="muted form-hint">Printed in the server log when rdrs started with no accounts.</p>
+            </div>
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autocomplete="username" data-testid="setup-username">

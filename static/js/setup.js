@@ -7,6 +7,7 @@ if (form) {
         const errorDiv = document.getElementById('error');
         errorDiv.hidden = true;
 
+        const setup_token = document.getElementById('setup-token').value;
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
         const confirmPassword = document.getElementById('confirm-password').value;
@@ -21,7 +22,7 @@ if (form) {
             const response = await fetch('/api/setup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
+                body: JSON.stringify({ username, password, setup_token })
             });
 
             if (response.ok) {

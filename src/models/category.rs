@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::db::{Db, is_unique_violation};
+use crate::db::{Db, Tx, is_unique_violation};
 use crate::error::{AppError, AppResult};
-use crate::{db_execute, query_all, query_one, query_opt};
+use crate::{db_execute, query_all, query_one, query_one_tx, query_opt};
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Category {
@@ -16,6 +16,25 @@ pub struct Category {
 pub async fn create_category(db: &Db, user_id: i64, name: &str) -> AppResult<Category> {
     query_one!(
         db,
+        Category,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2) \
+         RETURNING id, user_id, name, created_at",
+        user_id,
+        name
+    )
+    .map_err(|e| {
+        if is_unique_violation(&e) {
+            AppError::CategoryExists
+        } else {
+            AppError::Database(e)
+        }
+    })
+}
+
+/// [`create_category`] inside a caller-owned transaction.
+pub async fn create_category_tx(tx: &mut Tx<'_>, user_id: i64, name: &str) -> AppResult<Category> {
+    query_one_tx!(
+        tx,
         Category,
         "INSERT INTO category (user_id, name) VALUES ($1, $2) \
          RETURNING id, user_id, name, created_at",

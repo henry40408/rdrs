@@ -121,7 +121,7 @@ async fn audit(
     let base = &endpoints.base_url;
 
     // ---- seed an account with something to render ----
-    let api = Api::new(base)?;
+    let api = Api::new(endpoints)?;
     let username = format!("csp-{}", rdrs_e2e::random_slug());
     api.setup_first_account(&username, PASSWORD).await?;
 

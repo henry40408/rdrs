@@ -159,6 +159,16 @@ async fn main() {
             std::process::exit(1);
         });
 
+    let setup_token: Arc<str> = rdrs::secret::generate_setup_token().into();
+    // Moot once the first account exists, so only logged while setup is open.
+    if rdrs::models::user::count(&db).await.unwrap_or(0) == 0 {
+        tracing::warn!(
+            event = "setup.token",
+            setup_token = %setup_token,
+            "no accounts yet: open /setup and enter this setup token to create the admin account"
+        );
+    }
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
@@ -176,6 +186,7 @@ async fn main() {
             config.login_rate_limit_attempts,
             config.login_rate_limit_window_secs,
         )),
+        setup_token: Some(setup_token),
     };
 
     let background_handle = services::start_background_sync(

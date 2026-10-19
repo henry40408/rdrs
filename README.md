@@ -72,6 +72,9 @@ cargo build --release
 
 Open `http://localhost:8080`. An empty database serves `/setup`, which creates
 the admin account and then closes for good — **there is no public sign-up**.
+`/setup` asks for a one-time **setup token** that rdrs prints in its log at
+startup (`setup_token=...`), so a bot that finds a fresh public deploy cannot
+claim the admin account first.
 Others are added by an admin; see [Adding people](#adding-people).
 
 ## Configuration

@@ -3,9 +3,11 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{Db, is_unique_violation};
+use crate::db::{Db, Tx, is_unique_violation};
 use crate::error::{AppError, AppResult};
-use crate::{db_execute, query_all, query_one, query_opt, query_scalar};
+use crate::{
+    db_execute, query_all, query_one, query_one_tx, query_opt, query_scalar, query_scalar_tx,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -102,6 +104,31 @@ pub async fn create_user(
 ) -> AppResult<User> {
     query_one!(
         db,
+        User,
+        "INSERT INTO \"user\" (username, password_hash, role) VALUES ($1, $2, $3) \
+         RETURNING id, username, password_hash, role, disabled_at, created_at",
+        username,
+        password_hash,
+        role.as_str()
+    )
+    .map_err(|e| {
+        if is_unique_violation(&e) {
+            AppError::UsernameExists
+        } else {
+            AppError::Database(e)
+        }
+    })
+}
+
+/// [`create_user`] inside a caller-owned transaction.
+pub async fn create_user_tx(
+    tx: &mut Tx<'_>,
+    username: &str,
+    password_hash: &str,
+    role: Role,
+) -> AppResult<User> {
+    query_one_tx!(
+        tx,
         User,
         "INSERT INTO \"user\" (username, password_hash, role) VALUES ($1, $2, $3) \
          RETURNING id, username, password_hash, role, disabled_at, created_at",
@@ -221,6 +248,10 @@ pub async fn delete_user(db: &Db, user_id: i64) -> AppResult<()> {
 
 pub async fn count(db: &Db) -> AppResult<i64> {
     query_scalar!(db, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)
+}
+
+pub async fn count_tx(tx: &mut Tx<'_>) -> AppResult<i64> {
+    query_scalar_tx!(tx, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)
 }
 
 #[cfg(test)]

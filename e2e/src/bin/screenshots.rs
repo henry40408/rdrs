@@ -164,7 +164,7 @@ fn screenshot_dir() -> PathBuf {
 }
 
 async fn seed_demo_content(endpoints: &Endpoints) -> Result<()> {
-    Api::new(&endpoints.base_url)?
+    Api::new(endpoints)?
         .setup_first_account(DEMO_USER, PASSWORD)
         .await?;
     let seed = Seed::open(&endpoints.db_path).await?;
