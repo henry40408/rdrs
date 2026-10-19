@@ -37,16 +37,29 @@ mod search;
 mod settings;
 mod statistics;
 
-pub use account::*;
-pub use admin::*;
-pub use auth::*;
-pub use categories::*;
-pub use error::*;
-pub use feeds::*;
-pub use offline::*;
-pub use search::*;
-pub use settings::*;
-pub use statistics::*;
+pub use account::{ApiTokenRow, SessionRow, UserSettingsTemplate, user_settings_page};
+pub use admin::{AdminTemplate, AdminUserView, admin_page};
+pub use auth::{
+    InviteTemplate, LoginQuery, LoginTemplate, SetupTemplate, login_next, login_page, setup_page,
+};
+pub use categories::{CategoriesTemplate, CategoryRowView, categories_page};
+pub use error::{ErrorTemplate, not_found_page, render_not_found};
+pub use feeds::{
+    FeedCategoryOption, FeedEditTemplate, FeedEditView, FeedFilterLink, FeedRowView,
+    FeedsImportTemplate, FeedsQuery, FeedsTemplate, ReturnToQuery, feed_edit_page,
+    feeds_import_page, feeds_page,
+};
+pub use offline::{OfflineTemplate, offline_page};
+pub use search::{
+    SearchFragmentTemplate, SearchQuery, SearchRefreshFragmentTemplate, SearchResultView,
+    SearchResultsView, SearchTemplate, search_page,
+};
+pub use settings::{SettingsTemplate, settings_page};
+pub use statistics::{
+    AdminDatabaseStatsView, AdminStatsView, CategoryStatsView, DailyReadView, FeedOpenRateView,
+    FeedStatsView, ReclaimableView, StatisticsQuery, StatisticsTemplate, resolve_statistics_period,
+    statistics_page,
+};
 
 // --- Entries-family shared view structs ---
 
