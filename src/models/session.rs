@@ -2,9 +2,9 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
 
-use crate::db::Db;
+use crate::db::{Db, Tx};
 use crate::error::{AppError, AppResult};
-use crate::{db_execute, query_all, query_one, query_opt};
+use crate::{db_execute, db_execute_tx, query_all, query_one, query_opt};
 
 pub const SESSION_EXPIRY_DAYS: i64 = 7;
 pub const SESSION_ABSOLUTE_MAX_DAYS: i64 = 90;
@@ -222,6 +222,13 @@ pub async fn delete_session(db: &Db, token: &str) -> AppResult<()> {
 
 pub async fn delete_user_sessions(db: &Db, user_id: i64) -> AppResult<()> {
     db_execute!(db, "DELETE FROM session WHERE user_id = $1", user_id)
+        .map_err(AppError::Database)?;
+    Ok(())
+}
+
+/// [`delete_user_sessions`] inside a caller-owned transaction.
+pub async fn delete_user_sessions_tx(tx: &mut Tx<'_>, user_id: i64) -> AppResult<()> {
+    db_execute_tx!(tx, "DELETE FROM session WHERE user_id = $1", user_id)
         .map_err(AppError::Database)?;
     Ok(())
 }

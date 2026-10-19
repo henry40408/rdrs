@@ -704,4 +704,78 @@ async fn pg_dialect_smoke() {
     user_settings::update_pixel_tracking(&db, user_id, false)
         .await
         .unwrap();
+
+    // --- credential revocation is atomic with the password/status change ------
+    // Renaming `api_token` away makes the last step of each flow fail, after the
+    // account row was already written inside the transaction.
+    let holder = user::create_user(&db, "holder", "old-hash", Role::User)
+        .await
+        .unwrap();
+    session::create_session(&db, holder.id, "ua", "127.0.0.1")
+        .await
+        .unwrap();
+    rdrs::db_execute!(&db, "ALTER TABLE api_token RENAME TO api_token_off").unwrap();
+
+    user::change_password(&db, holder.id, "new-hash")
+        .await
+        .expect_err("revocation fails without api_token");
+    user::disable_user(&db, holder.id)
+        .await
+        .expect_err("revocation fails without api_token");
+
+    rdrs::db_execute!(&db, "ALTER TABLE api_token_off RENAME TO api_token").unwrap();
+    let unchanged = user::find_by_id(&db, holder.id).await.unwrap().unwrap();
+    assert_eq!(unchanged.password_hash, "old-hash");
+    assert!(!unchanged.is_disabled());
+    assert_eq!(
+        session::list_user_sessions(&db, holder.id)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "session deletion must roll back with the failed change"
+    );
+
+    user::change_password(&db, holder.id, "new-hash")
+        .await
+        .unwrap();
+    assert!(
+        session::list_user_sessions(&db, holder.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // --- concurrent first-run setup: `lock_user_table` admits exactly one ------
+    // Mirrors `perform_setup`'s transaction. Without the table lock, READ
+    // COMMITTED lets every racer see an empty `user` table and insert.
+    rdrs::db_execute!(&db, "TRUNCATE \"user\" RESTART IDENTITY CASCADE").unwrap();
+    let racers: Vec<_> = (0..8)
+        .map(|i| {
+            let db = db.clone();
+            tokio::spawn(async move {
+                let mut tx = db.begin().await.unwrap();
+                tx.lock_user_table().await.unwrap();
+                if user::count_tx(&mut tx).await.unwrap() != 0 {
+                    return false;
+                }
+                // Widen the check-to-insert window so the race is deterministic.
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                user::create_user_tx(&mut tx, &format!("admin{i}"), "hash", Role::Admin)
+                    .await
+                    .unwrap();
+                tx.commit().await.unwrap();
+                true
+            })
+        })
+        .collect();
+    let mut winners = 0;
+    for racer in racers {
+        winners += usize::from(racer.await.unwrap());
+    }
+    assert_eq!(
+        winners, 1,
+        "exactly one concurrent setup may create the admin"
+    );
+    assert_eq!(user::count(&db).await.unwrap(), 1);
 }

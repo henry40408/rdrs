@@ -6,10 +6,11 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::db::Db;
+use crate::db::{Db, Tx};
 use crate::error::{AppError, AppResult};
+use crate::models::user;
 use crate::secret::{DOMAIN_INVITE, tag};
-use crate::{db_execute, query_one, query_opt};
+use crate::{db_execute, db_execute_tx, query_one, query_opt};
 
 /// How long an unused link stays usable: survives a weekend, but a link leaked
 /// into a log stops being a credential soon.
@@ -81,10 +82,18 @@ pub async fn find_by_token(db: &Db, secret: &[u8], token: &str) -> AppResult<Opt
 
 /// Spend the invite, returning whether this caller spent it. `consumed_at IS
 /// NULL` makes racing submissions single-winner; on `false` change nothing.
+#[cfg(test)]
 pub async fn consume(db: &Db, invite_id: i64) -> AppResult<bool> {
+    let mut tx = db.begin().await?;
+    let spent = consume_tx(&mut tx, invite_id).await?;
+    tx.commit().await?;
+    Ok(spent)
+}
+
+async fn consume_tx(tx: &mut Tx<'_>, invite_id: i64) -> AppResult<bool> {
     let now = Utc::now();
-    let updated = db_execute!(
-        db,
+    let updated = db_execute_tx!(
+        tx,
         "UPDATE user_invite SET consumed_at = $1 WHERE id = $2 AND consumed_at IS NULL",
         now,
         invite_id
@@ -92,6 +101,20 @@ pub async fn consume(db: &Db, invite_id: i64) -> AppResult<bool> {
     .map_err(AppError::Database)?;
 
     Ok(updated == 1)
+}
+
+/// Spend the invite and set the invitee's password in one transaction, returning
+/// whether this caller spent it. Spending first keeps a racing double-submit
+/// single-winner; on `false` nothing changed. Prior sessions and API tokens are
+/// revoked with the password, as admin resets land here too.
+pub async fn redeem(db: &Db, invite_id: i64, user_id: i64, password_hash: &str) -> AppResult<bool> {
+    let mut tx = db.begin().await?;
+    if !consume_tx(&mut tx, invite_id).await? {
+        return Ok(false);
+    }
+    user::change_password_tx(&mut tx, user_id, password_hash).await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Delete (not consume) any outstanding link for `user_id`; the audit log records it.
@@ -190,6 +213,41 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn redeem_sets_the_password_and_spends_the_link_once() {
+        let (db, user_id) = setup().await;
+        let issued = issue(&db, SECRET, user_id, "redeem-me").await.unwrap();
+
+        assert!(redeem(&db, issued.id, user_id, "new-hash").await.unwrap());
+        assert!(
+            !redeem(&db, issued.id, user_id, "other-hash").await.unwrap(),
+            "a spent link must not change the password again"
+        );
+
+        let after = user::find_by_id(&db, user_id).await.unwrap().unwrap();
+        assert_eq!(after.password_hash, "new-hash");
+    }
+
+    #[tokio::test]
+    async fn redeem_keeps_the_link_live_when_the_password_write_fails() {
+        let (db, user_id) = setup().await;
+        let issued = issue(&db, SECRET, user_id, "retry-me").await.unwrap();
+        crate::db_execute!(&db, "DROP TABLE api_token").unwrap();
+
+        assert!(redeem(&db, issued.id, user_id, "new-hash").await.is_err());
+
+        let after = find_by_token(&db, SECRET, "retry-me")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            after.is_live(Utc::now()),
+            "the invitee must be able to retry"
+        );
+        let unchanged = user::find_by_id(&db, user_id).await.unwrap().unwrap();
+        assert_ne!(unchanged.password_hash, "new-hash");
     }
 
     #[tokio::test]

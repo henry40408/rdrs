@@ -3,10 +3,10 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::db::Db;
+use crate::db::{Db, Tx};
 use crate::error::{AppError, AppResult};
 use crate::models::session;
-use crate::{db_execute, query_all, query_one, query_opt};
+use crate::{db_execute, db_execute_tx, query_all, query_one, query_opt};
 
 /// Sliding idle TTL with deliberately **no absolute cap** (unlike web sessions):
 /// `GReader` clients can't re-authenticate interactively.
@@ -171,6 +171,12 @@ pub async fn delete_token(db: &Db, id: i64, user_id: i64) -> AppResult<()> {
 /// Delete every token belonging to `user_id`, returning how many were revoked.
 pub async fn delete_user_tokens(db: &Db, user_id: i64) -> AppResult<u64> {
     db_execute!(db, "DELETE FROM api_token WHERE user_id = $1", user_id).map_err(AppError::Database)
+}
+
+/// [`delete_user_tokens`] inside a caller-owned transaction.
+pub async fn delete_user_tokens_tx(tx: &mut Tx<'_>, user_id: i64) -> AppResult<u64> {
+    db_execute_tx!(tx, "DELETE FROM api_token WHERE user_id = $1", user_id)
+        .map_err(AppError::Database)
 }
 
 /// Delete expired tokens; periodic backstop for the lazy delete in
