@@ -273,7 +273,9 @@ leaks whether it exists.
    concurrent setups on PostgreSQL).
 2. **`POST /admin/users`** creates every later account with
    `password_hash = "!"` (unparseable PHC, same as `forward_auth`), so
-   `verify_password` fails for all input, browser and GReader alike.
+   `verify_password` fails for all input, browser and GReader alike. The
+   account, its default category and its first invite link share one
+   transaction, so a failure leaves no half-made account holding the username.
 3. **`user_invite`** holds a one-time link. Token generated like a session
    token, stored as an HMAC under `secret::DOMAIN_INVITE`; raw value shown once
    in the admin's flash. Expires after `INVITE_TTL_DAYS` (7); re-issuing revokes

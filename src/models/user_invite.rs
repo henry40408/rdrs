@@ -10,7 +10,7 @@ use crate::db::{Db, Tx};
 use crate::error::{AppError, AppResult};
 use crate::models::user;
 use crate::secret::{DOMAIN_INVITE, tag};
-use crate::{db_execute, db_execute_tx, query_one, query_opt};
+use crate::{db_execute, db_execute_tx, query_one_tx, query_opt};
 
 /// How long an unused link stays usable: survives a weekend, but a link leaked
 /// into a log stops being a credential soon.
@@ -45,14 +45,29 @@ pub fn hash_token(secret: &[u8], token: &str) -> String {
 /// Issue a link for `user_id`, revoking any outstanding one so only one link is
 /// ever live. The caller holds the only copy of the raw token.
 pub async fn issue(db: &Db, secret: &[u8], user_id: i64, token: &str) -> AppResult<UserInvite> {
-    revoke_for_user(db, user_id).await?;
+    let mut tx = db.begin().await?;
+    let invite = issue_tx(&mut tx, secret, user_id, token).await?;
+    tx.commit().await?;
+    Ok(invite)
+}
+
+/// [`issue`] inside a caller-owned transaction. The revoke and the insert stand
+/// or fall together: a failed insert must not cost the account its old link.
+pub async fn issue_tx(
+    tx: &mut Tx<'_>,
+    secret: &[u8],
+    user_id: i64,
+    token: &str,
+) -> AppResult<UserInvite> {
+    db_execute_tx!(tx, "DELETE FROM user_invite WHERE user_id = $1", user_id)
+        .map_err(AppError::Database)?;
 
     let now = Utc::now();
     let expires_at = now + Duration::days(INVITE_TTL_DAYS);
     let token_hash = hash_token(secret, token);
 
-    query_one!(
-        db,
+    query_one_tx!(
+        tx,
         UserInvite,
         "INSERT INTO user_invite (user_id, token_hash, created_at, expires_at) \
          VALUES ($1, $2, $3, $4) \
@@ -212,6 +227,28 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn issuing_keeps_the_old_link_when_the_insert_fails() {
+        let (db, user_id) = setup().await;
+        let other = user::create_user(&db, "other", "hash", user::Role::User)
+            .await
+            .unwrap();
+        issue(&db, SECRET, user_id, "old-link").await.unwrap();
+        issue(&db, SECRET, other.id, "taken").await.unwrap();
+
+        // `token_hash` is unique, so reusing another account's token fails the
+        // insert after the revoke already ran.
+        assert!(issue(&db, SECRET, user_id, "taken").await.is_err());
+
+        assert!(
+            find_by_token(&db, SECRET, "old-link")
+                .await
+                .unwrap()
+                .is_some(),
+            "the revoke must roll back with the failed insert"
         );
     }
 

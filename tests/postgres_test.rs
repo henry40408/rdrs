@@ -28,7 +28,7 @@ use rdrs::models::user::Role;
 use rdrs::models::{
     api_token, category, entry,
     entry::{ContinuationCursor, ContinuationParams, EntryFilter, EntrySortOrder},
-    entry_open, feed, session, statistics, user, user_settings,
+    entry_open, feed, session, statistics, user, user_invite, user_settings,
 };
 
 /// Connect to the test Postgres and wipe every table so the run is isolated and
@@ -778,4 +778,31 @@ async fn pg_dialect_smoke() {
         "exactly one concurrent setup may create the admin"
     );
     assert_eq!(user::count(&db).await.unwrap(), 1);
+
+    // --- invite re-issue: the revoke rolls back with a failed insert ----------
+    // `token_hash` is unique, so reusing another account's token fails the
+    // insert after the revoke ran.
+    let secret = b"pg-invite-secret-at-least-32-bytes";
+    let alice = user::create_user(&db, "alice", "!", Role::User)
+        .await
+        .unwrap();
+    let bob = user::create_user(&db, "bob", "!", Role::User)
+        .await
+        .unwrap();
+    user_invite::issue(&db, secret, alice.id, "old-link")
+        .await
+        .unwrap();
+    user_invite::issue(&db, secret, bob.id, "taken")
+        .await
+        .unwrap();
+    user_invite::issue(&db, secret, alice.id, "taken")
+        .await
+        .expect_err("duplicate token hash must fail the insert");
+    assert!(
+        user_invite::find_by_token(&db, secret, "old-link")
+            .await
+            .unwrap()
+            .is_some(),
+        "the old link must survive a failed re-issue"
+    );
 }

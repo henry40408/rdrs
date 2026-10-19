@@ -16,7 +16,7 @@ use crate::middleware::{AdminUser, Bucket, build_csrf_cookie, build_session_cook
 use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
-use crate::models::user_invite;
+use crate::models::user_invite::{self, UserInvite};
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
@@ -146,17 +146,64 @@ async fn issue_invite(
 ) -> AppResult<String> {
     let token = session::generate_token();
     let invite = user_invite::issue(&state.db, &state.config.secret, user_id, &token).await?;
+    Ok(announce_invite(
+        state,
+        &token,
+        &invite,
+        actor_user_id,
+        reason,
+    ))
+}
 
+/// Audit a committed invite and return its path.
+fn announce_invite(
+    state: &AppState,
+    token: &str,
+    invite: &UserInvite,
+    actor_user_id: i64,
+    reason: &str,
+) -> String {
     audit::invite_issued(
         &state.config.secret,
-        &token,
-        user_id,
+        token,
+        invite.user_id,
         actor_user_id,
         reason,
         invite.expires_at,
     );
+    format!("/invite/{token}")
+}
 
-    Ok(format!("/invite/{token}"))
+/// Create the account, its default category and its first invite link in one
+/// transaction, so a failure never leaves a half-made account holding the
+/// username. Returns the invite path.
+async fn create_account_with_invite(
+    state: &AppState,
+    username: &str,
+    role: Role,
+    actor_id: i64,
+) -> AppResult<String> {
+    let token = session::generate_token();
+    let mut tx = state.db.begin().await?;
+    // `"!"` never parses as a PHC string, so no password verifies.
+    let created = user::create_user_tx(&mut tx, username, "!", role).await?;
+    category::create_category_tx(&mut tx, created.id, "Uncategorized").await?;
+    let invite = user_invite::issue_tx(&mut tx, &state.config.secret, created.id, &token).await?;
+    tx.commit().await?;
+
+    audit::account_created(
+        created.id,
+        actor_id,
+        username.chars().count(),
+        role.as_str(),
+    );
+    Ok(announce_invite(
+        state,
+        &token,
+        &invite,
+        actor_id,
+        "account_created",
+    ))
 }
 
 /// Absolute URL when `RDRS_PUBLIC_BASE_URL` is set, else the bare path.
@@ -196,18 +243,7 @@ pub async fn create_user_form(
             return Err(AppError::RegistrationNotAllowed);
         }
 
-        // `"!"` never parses as a PHC string, so no password verifies.
-        let created = user::create_user(&state.db, &username, "!", req.role).await?;
-        audit::account_created(
-            created.id,
-            actor_id,
-            username.chars().count(),
-            req.role.as_str(),
-        );
-
-        category::create_category(&state.db, created.id, "Uncategorized").await?;
-
-        issue_invite(&state, created.id, actor_id, "account_created").await
+        create_account_with_invite(&state, &username, req.role, actor_id).await
     }
     .await;
 
