@@ -13,22 +13,6 @@ version = 2
 # records why it is safe here and what would let us drop it.
 yanked = "deny"
 ignore = [
-    # ammonia 4.2.0: only affects callers that allow `style` and use
-    # `filter_style_properties`; neither is used in src/services/sanitize.rs.
-    # Fix 4.2.3 is inside the 168h cooldown until 2026-10-18 06:27 UTC.
-    # Drop once ammonia is upgraded. Tracked in
-    # https://github.com/henry40408/rdrs/issues/591
-    "RUSTSEC-2021-0157",
-    # ammonia 4.2.0: SVG `animateMotion`/`animateTransform`/`animateColor`
-    # bypass attribute URL filtering, but only when the caller explicitly
-    # allows those tags (none are allowed by default). sanitize.rs sets
-    # `.tags(...)` to fixed whitelists (sanitize_html, SUMMARY_TAGS) that
-    # contain no `svg` or `animate*` element, so this is not reachable.
-    # Fix 4.2.3 (or 4.1.7) was published 2026-10-11 and is inside the 168h
-    # cooldown until 2026-10-18 06:27 UTC. Drop together with 0157 once
-    # ammonia is upgraded. Tracked in
-    # https://github.com/henry40408/rdrs/issues/591
-    "RUSTSEC-2021-0158",
     # ammonia 4.2.1: CSS `url("")` is matched case-sensitively, so `URL("")`
     # skips URL filtering, but only when the caller allows `style` and uses
     # `filter_style_properties`; neither is used in src/services/sanitize.rs.
