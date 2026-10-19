@@ -72,6 +72,10 @@ cargo build --release
 
 Open `http://localhost:8080`. An empty database serves `/setup`, which creates
 the admin account and then closes for good — **there is no public sign-up**.
+`/setup` asks for a one-time **setup token** that rdrs prints in its log at
+startup (`setup_token=...`), so a bot that finds a fresh public deploy cannot
+claim the admin account first. Set `RDRS_SETUP_TOKEN` (16+ characters) to
+choose the token instead of reading it from the log.
 Others are added by an admin; see [Adding people](#adding-people).
 
 ## Configuration
@@ -100,6 +104,7 @@ All configuration is via environment variables.
 |----------|---------|-------------|
 | `DATABASE_URL` | `rdrs.sqlite3` | File path or `sqlite://` URL → SQLite; `postgres://` URL → PostgreSQL. Chosen at startup. |
 | `RDRS_SERVER_BIND` | `127.0.0.1:8080` | Bind address (`host:port`). The container image sets `0.0.0.0:8080`. |
+| `RDRS_SETUP_TOKEN` | random, logged at startup | Token `/setup` requires to create the first account (16+ characters). Unused once an account exists. |
 | `RDRS_MULTI_USER_ENABLED` | `false` | Allow more than one account (governs the admin's "Add an account" form). No public sign-up either way. |
 | `RDRS_SECRET` | Auto-generated | Root HMAC key for all signatures (sessions, image-proxy URLs, GReader post token), domain-separated. Set a persistent value; a generated one changes every restart. |
 | `RDRS_PUBLIC_BASE_URL` | - | Public base URL for absolute image-proxy URLs in API responses (e.g. `https://rdrs.example.com`). Unset → relative paths. |

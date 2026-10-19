@@ -159,6 +159,36 @@ async fn main() {
             std::process::exit(1);
         });
 
+    // Env only, never a CLI flag: arguments are visible to other users in `ps`.
+    let configured_setup_token = std::env::var("RDRS_SETUP_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty());
+    if configured_setup_token
+        .as_ref()
+        .is_some_and(|t| t.len() < rdrs::secret::MIN_SECRET_LEN)
+    {
+        tracing::error!(
+            event = "startup.setup_token_too_short",
+            min_len = rdrs::secret::MIN_SECRET_LEN,
+            "RDRS_SETUP_TOKEN is too short to resist guessing"
+        );
+        std::process::exit(1);
+    }
+    let setup_token: Arc<str> = configured_setup_token
+        .clone()
+        .unwrap_or_else(rdrs::models::session::generate_token)
+        .into();
+    // A token the operator chose is already known to them; a generated one is
+    // useless unless logged, and moot once the first account exists.
+    if configured_setup_token.is_none() && rdrs::models::user::count(&db).await.unwrap_or(0) == 0 {
+        tracing::warn!(
+            event = "setup.token",
+            setup_token = %setup_token,
+            "no accounts yet: open /setup and enter this setup token to create the admin account"
+        );
+    }
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
@@ -176,6 +206,7 @@ async fn main() {
             config.login_rate_limit_attempts,
             config.login_rate_limit_window_secs,
         )),
+        setup_token: Some(setup_token),
     };
 
     let background_handle = services::start_background_sync(

@@ -23,6 +23,9 @@ pub enum AppError {
     #[error("Registration not allowed")]
     RegistrationNotAllowed,
 
+    #[error("Invalid setup token")]
+    InvalidSetupToken,
+
     #[error("User is disabled")]
     UserDisabled,
 
@@ -128,6 +131,7 @@ impl IntoResponse for AppError {
             AppError::UserNotFound => (StatusCode::NOT_FOUND, "User not found"),
             AppError::UsernameExists => (StatusCode::CONFLICT, "Username already exists"),
             AppError::RegistrationNotAllowed => (StatusCode::FORBIDDEN, "Registration not allowed"),
+            AppError::InvalidSetupToken => (StatusCode::FORBIDDEN, "Invalid setup token"),
             AppError::UserDisabled => (StatusCode::FORBIDDEN, "User is disabled"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden"),

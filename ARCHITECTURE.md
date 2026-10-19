@@ -266,7 +266,11 @@ leaks whether it exists.
 
 1. **`POST /api/setup`** creates the first account (admin), refused once
    `user::count() > 0` (`Config::can_setup`). `GET /setup` then redirects to
-   `/login`.
+   `/login`. It also requires `AppState::setup_token` (random per start and
+   logged, or `RDRS_SETUP_TOKEN`), compared in constant time, so an anonymous
+   bot cannot claim a fresh public deploy. The count, the user insert and the
+   default category share one transaction (`lock_user_table` serializes
+   concurrent setups on PostgreSQL).
 2. **`POST /admin/users`** creates every later account with
    `password_hash = "!"` (unparseable PHC, same as `forward_auth`), so
    `verify_password` fails for all input, browser and GReader alike.

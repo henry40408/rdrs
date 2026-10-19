@@ -30,6 +30,9 @@ use crate::utils::http::request_user_agent;
 pub struct SetupRequest {
     pub username: String,
     pub password: String,
+    /// The token printed in the server log at startup.
+    #[serde(default)]
+    pub setup_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -91,15 +94,34 @@ async fn perform_setup(
         return Err(AppError::RegistrationNotAllowed);
     }
 
+    if let Some(expected) = &state.setup_token
+        && !crate::secret::verify_setup_token(&config.secret, expected, req.setup_token.trim())
+    {
+        audit::login_failed(
+            req.username.chars().count(),
+            "bad_setup_token",
+            &ip.to_string(),
+            &request_user_agent(headers),
+        );
+        return Err(AppError::InvalidSetupToken);
+    }
+
     // Behind the limiter: zxcvbn's worst case (~79ms) rivals Argon2.
     validate_password_strength(&req.password, &[&req.username])?;
 
     let password_hash = hash_password(&req.password)?;
 
-    let user = user::create_user(&state.db, &req.username, &password_hash, Role::Admin).await?;
-
+    // One tx so two concurrent setups cannot both pass the empty-instance check;
+    // this re-count, not the early one above, is the authoritative gate.
+    let mut tx = state.db.begin().await?;
+    tx.lock_user_table().await?;
+    if !config.can_setup(user::count_tx(&mut tx).await?) {
+        return Err(AppError::RegistrationNotAllowed);
+    }
+    let user = user::create_user_tx(&mut tx, &req.username, &password_hash, Role::Admin).await?;
     // Same default as OPML import and the GReader subscription API.
-    category::create_category(&state.db, user.id, "Uncategorized").await?;
+    category::create_category_tx(&mut tx, user.id, "Uncategorized").await?;
+    tx.commit().await?;
 
     audit::account_created(
         user.id,
@@ -122,6 +144,8 @@ pub struct SetupForm {
     pub password: String,
     #[serde(rename = "confirm-password")]
     pub confirm_password: String,
+    #[serde(rename = "setup-token", default)]
+    pub setup_token: String,
 }
 
 pub async fn setup_form(
@@ -151,6 +175,7 @@ pub async fn setup_form(
     let req = SetupRequest {
         username: form.username,
         password: form.password,
+        setup_token: form.setup_token,
     };
     match perform_setup(&state, &headers, peer, &req, "POST /setup").await {
         Ok(_) => {
@@ -161,6 +186,9 @@ pub async fn setup_form(
             "Too many attempts. Please try again in {retry_after_secs} seconds."
         )),
         Err(AppError::UsernameExists) => render_error("Username already exists".to_string()),
+        Err(AppError::InvalidSetupToken) => {
+            render_error("Invalid setup token. Find it in the server log from startup.".to_string())
+        }
         Err(_) => render_error("Could not create the account".to_string()),
     }
 }

@@ -121,7 +121,11 @@ impl Api {
         let response = self
             .client
             .post(format!("{}/api/setup", self.base_url))
-            .json(&serde_json::json!({ "username": username, "password": password }))
+            .json(&serde_json::json!({
+                "username": username,
+                "password": password,
+                "setup_token": crate::server::SETUP_TOKEN,
+            }))
             .send()
             .await
             .context("posting /api/setup")?;

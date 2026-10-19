@@ -252,6 +252,21 @@ impl Db {
 }
 
 impl Tx<'_> {
+    /// Serialize writers of the `user` table for the rest of this transaction.
+    ///
+    /// Why: PostgreSQL's default isolation lets two transactions both read
+    /// `COUNT(*) = 0` and each insert an account. `SQLite` needs nothing: `begin`
+    /// already took the write lock with `BEGIN IMMEDIATE`.
+    pub async fn lock_user_table(&mut self) -> Result<(), sqlx::Error> {
+        match self {
+            Tx::Sqlite { .. } => Ok(()),
+            Tx::Postgres(t) => sqlx::query("LOCK TABLE \"user\" IN SHARE ROW EXCLUSIVE MODE")
+                .execute(&mut **t)
+                .await
+                .map(|_| ()),
+        }
+    }
+
     pub async fn commit(self) -> Result<(), sqlx::Error> {
         match self {
             Tx::Sqlite { tx, .. } => tx.commit().await,

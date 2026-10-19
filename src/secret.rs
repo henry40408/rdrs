@@ -38,6 +38,9 @@ pub const DOMAIN_SERVICE_TOKENS: &[u8] = b"service-tokens:";
 /// Domain-separation prefix for the flash-message cookie signature.
 pub const DOMAIN_FLASH: &[u8] = b"flash:";
 
+/// Domain-separation prefix for comparing the first-run setup token.
+pub const DOMAIN_SETUP: &[u8] = b"setup:";
+
 /// Token/signature separator in the session cookie; absent from the token
 /// alphabet (`A-Za-z0-9-_`), so `rsplit_once` cannot cut into the token.
 const SIG_SEPARATOR: char = '.';
@@ -65,6 +68,15 @@ pub fn tag(secret: &[u8], domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
 /// Constant-time check that `candidate` is the tag for `parts` under `domain`.
 pub fn verify_tag(secret: &[u8], domain: &[u8], parts: &[&[u8]], candidate: &[u8]) -> bool {
     mac(secret, domain, parts).verify_slice(candidate).is_ok()
+}
+
+/// Constant-time check of a submitted first-run setup token.
+///
+/// Why MAC both sides: it compares equal-length digests, so neither the
+/// token's length nor its matching prefix leaks through timing.
+pub fn verify_setup_token(secret: &[u8], expected: &str, submitted: &str) -> bool {
+    let expected_tag = tag(secret, DOMAIN_SETUP, &[expected.as_bytes()]);
+    verify_tag(secret, DOMAIN_SETUP, &[submitted.as_bytes()], &expected_tag)
 }
 
 /// Marks and versions values written by [`seal`]; a new construction gets `v2`.
@@ -206,6 +218,14 @@ mod tests {
     use super::*;
 
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn setup_token_matches_only_the_exact_token() {
+        assert!(verify_setup_token(SECRET, "abc", "abc"));
+        assert!(!verify_setup_token(SECRET, "abc", "abd"));
+        assert!(!verify_setup_token(SECRET, "abc", "abcd"));
+        assert!(!verify_setup_token(SECRET, "abc", ""));
+    }
 
     #[test]
     fn hex_fixed_vectors() {

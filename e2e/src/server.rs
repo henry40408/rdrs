@@ -15,6 +15,10 @@ use axum::response::IntoResponse;
 use axum::routing::any;
 use tokio::task::JoinHandle;
 
+/// The first-run setup token the server under test is started with, via
+/// `RDRS_SETUP_TOKEN`, so no run has to scrape it from the server log.
+pub const SETUP_TOKEN: &str = "e2e-setup-token-0123456789";
+
 /// How long to wait for `/health` to answer.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -75,6 +79,7 @@ impl Harness {
             .env("RDRS_SERVER_BIND", format!("127.0.0.1:{port}"))
             .env("RDRS_MULTI_USER_ENABLED", "true")
             .env("RUST_LOG", "warn")
+            .env("RDRS_SETUP_TOKEN", SETUP_TOKEN)
             // Minimal Argon2 cost for per-scenario logins. Never in production.
             .env("RDRS_FAST_HASH", "1")
             // All scenarios share 127.0.0.1's bucket; the limiter would refuse
