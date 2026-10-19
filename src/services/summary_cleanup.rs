@@ -4,11 +4,16 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::db::Db;
-use crate::models::{api_token, entry_summary, session};
+use crate::error::AppResult;
+use crate::models::{api_token, entry_summary, image, session};
+
+/// Orphaned images deleted per statement, to keep each SQLite write short.
+const ORPHAN_IMAGE_BATCH_SIZE: i64 = 500;
 
 /// Start the worker that periodically deletes expired summaries, sessions and
-/// `api_token` rows. The latter two back up the lazy per-request deletes, which
-/// never fire for an abandoned device. Sweeps fail independently.
+/// `api_token` rows, plus feed images whose feed is gone. Sessions and tokens
+/// back up the lazy per-request deletes, which never fire for an abandoned
+/// device. Sweeps fail independently.
 pub fn start_cleanup_worker(
     db: Db,
     interval_hours: u64,
@@ -93,6 +98,32 @@ async fn run_sweeps(db: &Db, ttl_hours: i64) {
         Ok(_) => {}
         Err(e) => {
             tracing::error!(event = "cleanup.sweep_failed", kind = "api_token", error = %e, "failed to sweep expired API tokens");
+        }
+    }
+
+    match delete_all_orphaned_feed_images(db).await {
+        Ok(n) if n > 0 => {
+            tracing::info!(
+                event = "cleanup.swept",
+                kind = "feed_image",
+                count = n,
+                "swept orphaned feed images"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::error!(event = "cleanup.sweep_failed", kind = "feed_image", error = %e, "failed to sweep orphaned feed images");
+        }
+    }
+}
+
+async fn delete_all_orphaned_feed_images(db: &Db) -> AppResult<u64> {
+    let mut total = 0;
+    loop {
+        let deleted = image::delete_orphaned_feed_images(db, ORPHAN_IMAGE_BATCH_SIZE).await?;
+        total += deleted;
+        if deleted < ORPHAN_IMAGE_BATCH_SIZE as u64 {
+            return Ok(total);
         }
     }
 }
@@ -364,5 +395,17 @@ mod tests {
                 .is_none(),
             "the api_token sweep must still run after the summary sweep failed"
         );
+    }
+
+    #[tokio::test]
+    async fn test_sweep_removes_orphaned_feed_images() {
+        let db = setup_db().await;
+        image::upsert(&db, image::ENTITY_FEED, 4242, &[1], "image/png", None)
+            .await
+            .unwrap();
+
+        run_sweeps(&db, 24).await;
+
+        assert!(!image::exists(&db, image::ENTITY_FEED, 4242).await.unwrap());
     }
 }
