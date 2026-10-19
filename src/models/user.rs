@@ -339,7 +339,7 @@ mod tests {
     }
 
     /// A user holding one session and one API token.
-    async fn user_with_credentials(db: &Db) -> User {
+    async fn user_with_session_and_api_token(db: &Db) -> User {
         let user = create_user(db, "holder", "old-hash", Role::User)
             .await
             .unwrap();
@@ -352,7 +352,7 @@ mod tests {
         user
     }
 
-    async fn credential_counts(db: &Db, user_id: i64) -> (usize, usize) {
+    async fn session_and_token_counts(db: &Db, user_id: i64) -> (usize, usize) {
         let sessions = session::list_user_sessions(db, user_id).await.unwrap();
         let tokens = api_token::list_user_tokens(db, user_id).await.unwrap();
         (sessions.len(), tokens.len())
@@ -361,19 +361,19 @@ mod tests {
     #[tokio::test]
     async fn change_password_revokes_sessions_and_api_tokens() {
         let db = setup_db().await;
-        let user = user_with_credentials(&db).await;
+        let user = user_with_session_and_api_token(&db).await;
 
         change_password(&db, user.id, "new-hash").await.unwrap();
 
         let after = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(after.password_hash, "new-hash");
-        assert_eq!(credential_counts(&db, user.id).await, (0, 0));
+        assert_eq!(session_and_token_counts(&db, user.id).await, (0, 0));
     }
 
     #[tokio::test]
     async fn change_password_rolls_back_when_revocation_fails() {
         let db = setup_db().await;
-        let user = user_with_credentials(&db).await;
+        let user = user_with_session_and_api_token(&db).await;
         db_execute!(&db, "DROP TABLE api_token").unwrap();
 
         assert!(change_password(&db, user.id, "new-hash").await.is_err());
@@ -387,19 +387,19 @@ mod tests {
     #[tokio::test]
     async fn disable_user_revokes_sessions_and_api_tokens() {
         let db = setup_db().await;
-        let user = user_with_credentials(&db).await;
+        let user = user_with_session_and_api_token(&db).await;
 
         disable_user(&db, user.id).await.unwrap();
 
         let after = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert!(after.is_disabled());
-        assert_eq!(credential_counts(&db, user.id).await, (0, 0));
+        assert_eq!(session_and_token_counts(&db, user.id).await, (0, 0));
     }
 
     #[tokio::test]
     async fn disable_user_rolls_back_when_revocation_fails() {
         let db = setup_db().await;
-        let user = user_with_credentials(&db).await;
+        let user = user_with_session_and_api_token(&db).await;
         db_execute!(&db, "DROP TABLE api_token").unwrap();
 
         assert!(disable_user(&db, user.id).await.is_err());
