@@ -6354,6 +6354,86 @@ async fn a_failed_account_creation_leaves_no_account_behind() {
     );
 }
 
+/// A `tracing` writer that keeps everything in memory so a test can assert on
+/// what was logged.
+#[derive(Clone, Default)]
+struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl CapturedLogs {
+    fn count(&self, needle: &str) -> usize {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .matches(needle)
+            .count()
+    }
+}
+
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An audit event claims the account or link exists, so it must follow the
+/// commit: a rolled-back attempt must leave no trace that says otherwise.
+///
+/// This installs a *global* subscriber, which a process accepts only once. That
+/// is fine under `cargo nextest` (one process per test); it is the only test in
+/// this file that does so. Plain `cargo test` would share the buffer with the
+/// parallel admin tests, whose own audit lines would break the exact counts.
+#[tokio::test]
+async fn a_failed_invite_or_account_creation_emits_no_audit_event() {
+    let logs = CapturedLogs::default();
+    let writer = logs.clone();
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::INFO)
+            .without_time()
+            // Colour codes would split the field names the counts search for.
+            .with_ansi(false)
+            .finish(),
+    )
+    .expect("no other subscriber may already be installed in this process");
+
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    // Setup already audits the first admin's own account.
+    let accounts_before = logs.count("account.created");
+    let invites_before = logs.count("invite.issued");
+    let create = |app: &TestApp| {
+        app.server
+            .post("/admin/users")
+            .form(&json!({ "username": "newcomer", "role": "user" }))
+    };
+
+    rdrs::db_execute!(&app.db, "ALTER TABLE user_invite RENAME TO user_invite_off").unwrap();
+    let failed = create(&app).await;
+    assert!(flash_text(&failed).contains("Failed to create the account."));
+    assert_eq!(logs.count("account.created"), accounts_before);
+    assert_eq!(logs.count("invite.issued"), invites_before);
+
+    rdrs::db_execute!(&app.db, "ALTER TABLE user_invite_off RENAME TO user_invite").unwrap();
+    let created = create(&app).await;
+    assert!(invite_path_from(&created).starts_with("/invite/"));
+    assert_eq!(logs.count("account.created"), accounts_before + 1);
+    assert_eq!(logs.count("invite.issued"), invites_before + 1);
+
+    rdrs::db_execute!(&app.db, "ALTER TABLE user_invite RENAME TO user_invite_off").unwrap();
+    let failed = app.server.post("/admin/users/2/invite").await;
+    assert!(flash_text(&failed).contains("Failed to issue a link."));
+    assert_eq!(logs.count("invite.issued"), invites_before + 1);
+
+    rdrs::db_execute!(&app.db, "ALTER TABLE user_invite_off RENAME TO user_invite").unwrap();
+    let reissued = app.server.post("/admin/users/2/invite").await;
+    assert!(invite_path_from(&reissued).starts_with("/invite/"));
+    assert_eq!(logs.count("invite.issued"), invites_before + 2);
+}
+
 #[tokio::test]
 async fn a_link_works_exactly_once() {
     let mut app = create_test_app(default_test_config()).await;
