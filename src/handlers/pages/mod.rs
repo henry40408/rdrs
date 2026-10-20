@@ -438,13 +438,15 @@ async fn maybe_build_reading_pane(
         .ok()?;
     crate::handlers::entries::build_reading_pane_view(
         state,
-        user_id,
-        &ewf,
-        has_save,
-        has_kagi,
-        crate::handlers::entries::ContentView::Full,
-        // A list page rendered with `?entry=` is the reader looking at it.
-        crate::handlers::entries::RenderPurpose::Reader,
+        crate::handlers::entries::ReadingPaneRequest {
+            user_id,
+            ewf: &ewf,
+            has_save,
+            has_kagi,
+            view: crate::handlers::entries::ContentView::Full,
+            // A list page rendered with `?entry=` is the reader looking at it.
+            purpose: crate::handlers::entries::RenderPurpose::Reader,
+        },
     )
     .await
     .ok()

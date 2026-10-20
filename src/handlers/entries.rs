@@ -261,8 +261,18 @@ pub async fn entry_fragment(
     } else {
         RenderPurpose::Reader
     };
-    let pane =
-        build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, view, purpose).await?;
+    let pane = build_reading_pane_view(
+        &state,
+        ReadingPaneRequest {
+            user_id,
+            ewf: &ewf,
+            has_save,
+            has_kagi,
+            view,
+            purpose,
+        },
+    )
+    .await?;
     let row = row_view_from(&ewf, status);
 
     // After the render only to stay off the critical path.
@@ -295,12 +305,14 @@ pub async fn summary_fragment(
     // has_save/has_kagi are irrelevant to the summary container.
     let pane = build_reading_pane_view(
         &state,
-        user_id,
-        &ewf,
-        false,
-        false,
-        ContentView::Full,
-        RenderPurpose::Reader,
+        ReadingPaneRequest {
+            user_id,
+            ewf: &ewf,
+            has_save: false,
+            has_kagi: false,
+            view: ContentView::Full,
+            purpose: RenderPurpose::Reader,
+        },
     )
     .await?;
     Ok(SummaryFragment {
@@ -373,17 +385,30 @@ pub(crate) enum RenderPurpose {
     Speculative,
 }
 
+/// Request for [`build_reading_pane_view`].
+pub(crate) struct ReadingPaneRequest<'a> {
+    pub user_id: i64,
+    pub ewf: &'a entry::EntryWithFeed,
+    pub has_save: bool,
+    pub has_kagi: bool,
+    pub view: ContentView,
+    pub purpose: RenderPurpose,
+}
+
 /// Build a `ReadingPaneView` from an already-loaded entry: sanitize, inject the
 /// pixel, and resolve the summary.
 pub(crate) async fn build_reading_pane_view(
     state: &AppState,
-    user_id: i64,
-    ewf: &entry::EntryWithFeed,
-    has_save: bool,
-    has_kagi: bool,
-    view: ContentView,
-    purpose: RenderPurpose,
+    request: ReadingPaneRequest<'_>,
 ) -> AppResult<ReadingPaneView> {
+    let ReadingPaneRequest {
+        user_id,
+        ewf,
+        has_save,
+        has_kagi,
+        view,
+        purpose,
+    } = request;
     let entry_id = ewf.entry.id;
     let stored_full = ewf.entry.full_content.as_deref().filter(|s| !s.is_empty());
     let showing_full = matches!(view, ContentView::Full) && stored_full.is_some();
@@ -850,12 +875,14 @@ pub async fn fetch_full_content_form(
     };
     let pane = build_reading_pane_view(
         &state,
-        user_id,
-        &ewf,
-        has_save,
-        has_kagi,
-        ContentView::Full,
-        RenderPurpose::Reader,
+        ReadingPaneRequest {
+            user_id,
+            ewf: &ewf,
+            has_save,
+            has_kagi,
+            view: ContentView::Full,
+            purpose: RenderPurpose::Reader,
+        },
     )
     .await?;
     let message = flash.to_message();
@@ -948,12 +975,14 @@ pub async fn save_entry_form(
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(
         &state,
-        user_id,
-        &ewf,
-        has_save,
-        has_kagi,
-        ContentView::Full,
-        RenderPurpose::Reader,
+        ReadingPaneRequest {
+            user_id,
+            ewf: &ewf,
+            has_save,
+            has_kagi,
+            view: ContentView::Full,
+            purpose: RenderPurpose::Reader,
+        },
     )
     .await?;
     // Save changes nothing visible, so the flash is the only feedback.
