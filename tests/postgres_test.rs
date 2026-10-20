@@ -115,14 +115,12 @@ async fn pg_dialect_smoke() {
     // must not rewrite the row, a changed column must.
     let unchanged = entry::upsert_entry_id(
         &db,
-        feed_id,
-        "g1",
-        Some("t"),
-        Some("l"),
-        None,
-        None,
-        None,
-        Some(utc("2026-07-07T12:00:00Z")),
+        &entry::EntryUpsert {
+            title: Some("t"),
+            link: Some("l"),
+            published_at: Some(utc("2026-07-07T12:00:00Z")),
+            ..entry::EntryUpsert::new(feed_id, "g1")
+        },
     )
     .await
     .unwrap();
@@ -133,14 +131,12 @@ async fn pg_dialect_smoke() {
 
     let updated = entry::upsert_entry_id(
         &db,
-        feed_id,
-        "g1",
-        Some("t changed"),
-        Some("l"),
-        None,
-        None,
-        None,
-        Some(utc("2026-07-07T12:00:00Z")),
+        &entry::EntryUpsert {
+            title: Some("t changed"),
+            link: Some("l"),
+            published_at: Some(utc("2026-07-07T12:00:00Z")),
+            ..entry::EntryUpsert::new(feed_id, "g1")
+        },
     )
     .await
     .unwrap();
@@ -151,14 +147,12 @@ async fn pg_dialect_smoke() {
     // Restore the original title so the pagination assertions below are unaffected.
     entry::upsert_entry_id(
         &db,
-        feed_id,
-        "g1",
-        Some("t"),
-        Some("l"),
-        None,
-        None,
-        None,
-        Some(utc("2026-07-07T12:00:00Z")),
+        &entry::EntryUpsert {
+            title: Some("t"),
+            link: Some("l"),
+            published_at: Some(utc("2026-07-07T12:00:00Z")),
+            ..entry::EntryUpsert::new(feed_id, "g1")
+        },
     )
     .await
     .unwrap();

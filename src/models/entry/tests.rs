@@ -272,27 +272,19 @@ async fn mark_read_by_filter_marks_only_matching_unread_owned() {
 
     let m = upsert_entry_id(
         &db,
-        feed_id,
-        "m",
-        Some("超少女登場"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("超少女登場"),
+            ..EntryUpsert::new(feed_id, "m")
+        },
     )
     .await
     .unwrap();
     let n = upsert_entry_id(
         &db,
-        feed_id,
-        "n",
-        Some("其他新聞"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("其他新聞"),
+            ..EntryUpsert::new(feed_id, "n")
+        },
     )
     .await
     .unwrap();
@@ -345,27 +337,19 @@ async fn mark_read_by_filter_does_not_cross_user_boundary() {
     // No feed/category scoping: ownership comes only from the user_id seed condition.
     let e1 = upsert_entry_id(
         &db,
-        feed1,
-        "e1",
-        Some("超少女登場"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("超少女登場"),
+            ..EntryUpsert::new(feed1, "e1")
+        },
     )
     .await
     .unwrap();
     let e2 = upsert_entry_id(
         &db,
-        feed2,
-        "e2",
-        Some("超少女登場"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("超少女登場"),
+            ..EntryUpsert::new(feed2, "e2")
+        },
     )
     .await
     .unwrap();
@@ -1188,14 +1172,10 @@ async fn test_upsert_entry_id_returns_id_and_is_new() {
 
     let first = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-1",
-        Some("Title"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Title"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
@@ -1208,14 +1188,10 @@ async fn test_upsert_entry_id_returns_id_and_is_new() {
 
     let second = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-1",
-        Some("Title 2"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Title 2"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
@@ -1232,18 +1208,15 @@ async fn upsert_identical_values_is_unchanged_and_does_not_write() {
     let category_id = create_test_category(&db, user_id, "Tech").await;
     let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-    let args = (
-        Some("Title"),
-        Some("https://example.com/a"),
-        Some("<p>body</p>"),
-        Some("summary"),
-        Some("author"),
-    );
-    let first = upsert_entry_id(
-        &db, feed_id, "guid-1", args.0, args.1, args.2, args.3, args.4, None,
-    )
-    .await
-    .unwrap();
+    let upsert = EntryUpsert {
+        title: Some("Title"),
+        link: Some("https://example.com/a"),
+        content: Some("<p>body</p>"),
+        summary: Some("summary"),
+        author: Some("author"),
+        ..EntryUpsert::new(feed_id, "guid-1")
+    };
+    let first = upsert_entry_id(&db, &upsert).await.unwrap();
     let id = match first {
         UpsertOutcome::Inserted(id) => id,
         o => panic!("expected Inserted, got {o:?}"),
@@ -1251,11 +1224,7 @@ async fn upsert_identical_values_is_unchanged_and_does_not_write() {
     let before = find_by_id(&db, id).await.unwrap().unwrap();
 
     // Same values again: no write, no bump of `updated_at`.
-    let second = upsert_entry_id(
-        &db, feed_id, "guid-1", args.0, args.1, args.2, args.3, args.4, None,
-    )
-    .await
-    .unwrap();
+    let second = upsert_entry_id(&db, &upsert).await.unwrap();
     assert!(
         matches!(second, UpsertOutcome::Unchanged(uid) if uid == id),
         "expected Unchanged, got {second:?}"
@@ -1266,14 +1235,10 @@ async fn upsert_identical_values_is_unchanged_and_does_not_write() {
     // A single differing column still updates.
     let third = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-1",
-        args.0,
-        args.1,
-        Some("<p>edited</p>"),
-        args.3,
-        args.4,
-        None,
+        &EntryUpsert {
+            content: Some("<p>edited</p>"),
+            ..upsert
+        },
     )
     .await
     .unwrap();
@@ -1295,14 +1260,10 @@ async fn upsert_null_columns_compare_null_safely() {
 
     let first = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-n",
-        Some("T"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("T"),
+            ..EntryUpsert::new(feed_id, "guid-n")
+        },
     )
     .await
     .unwrap();
@@ -1313,14 +1274,10 @@ async fn upsert_null_columns_compare_null_safely() {
 
     let second = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-n",
-        Some("T"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("T"),
+            ..EntryUpsert::new(feed_id, "guid-n")
+        },
     )
     .await
     .unwrap();
@@ -1332,14 +1289,16 @@ async fn upsert_null_columns_compare_null_safely() {
     // NULL -> non-NULL is a real change.
     let third = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-n",
-        Some("T"),
-        Some("https://example.com/x"),
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            feed_id,
+            guid: "guid-n",
+            title: Some("T"),
+            link: Some("https://example.com/x"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1351,14 +1310,10 @@ async fn upsert_null_columns_compare_null_safely() {
     // non-NULL -> NULL is a real change too.
     let fourth = upsert_entry_id(
         &db,
-        feed_id,
-        "guid-n",
-        Some("T"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("T"),
+            ..EntryUpsert::new(feed_id, "guid-n")
+        },
     )
     .await
     .unwrap();
@@ -1377,14 +1332,11 @@ async fn upsert_populates_content_text_stripped() {
 
     let out = upsert_entry_id(
         &db,
-        feed_id,
-        "g1",
-        Some("t"),
-        None,
-        Some("超<b>少女</b>與機器人"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("t"),
+            content: Some("超<b>少女</b>與機器人"),
+            ..EntryUpsert::new(feed_id, "g1")
+        },
     )
     .await
     .unwrap();
@@ -1412,14 +1364,10 @@ async fn test_upsert_skips_tombstoned_guid() {
     insert_tombstone(&db, feed_id, "ghost").await.unwrap();
     let outcome = upsert_entry_id(
         &db,
-        feed_id,
-        "ghost",
-        Some("Ghost"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Ghost"),
+            ..EntryUpsert::new(feed_id, "ghost")
+        },
     )
     .await
     .unwrap();
@@ -1441,14 +1389,10 @@ async fn test_upsert_inserts_then_updates() {
 
     let first = upsert_entry_id(
         &db,
-        feed_id,
-        "g1",
-        Some("First"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("First"),
+            ..EntryUpsert::new(feed_id, "g1")
+        },
     )
     .await
     .unwrap();
@@ -1459,14 +1403,10 @@ async fn test_upsert_inserts_then_updates() {
 
     let second = upsert_entry_id(
         &db,
-        feed_id,
-        "g1",
-        Some("Updated"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Updated"),
+            ..EntryUpsert::new(feed_id, "g1")
+        },
     )
     .await
     .unwrap();
@@ -2622,9 +2562,15 @@ async fn test_prune_respects_threshold_star_and_optin() {
 
     // Helper: insert a read entry aged `days_old` (and optionally starred).
     async fn mk(db: &Db, feed_id: i64, guid: &str, days: i64, starred: bool) {
-        upsert_entry_id(db, feed_id, guid, Some(guid), None, None, None, None, None)
-            .await
-            .unwrap();
+        upsert_entry_id(
+            db,
+            &EntryUpsert {
+                title: Some(guid),
+                ..EntryUpsert::new(feed_id, guid)
+            },
+        )
+        .await
+        .unwrap();
         crate::db_execute!(
             db,
             "UPDATE entry SET read_at = datetime('now', $2) WHERE guid = $1 AND feed_id = $3",
@@ -2648,14 +2594,10 @@ async fn test_prune_respects_threshold_star_and_optin() {
     mk(&db, feed_id, "fresh", 1, false).await; // too recent -> kept
     upsert_entry_id(
         &db,
-        feed_id,
-        "unread",
-        Some("u"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("u"),
+            ..EntryUpsert::new(feed_id, "unread")
+        },
     )
     .await
     .unwrap(); // unread
@@ -2704,14 +2646,10 @@ async fn test_prune_respects_threshold_star_and_optin() {
     // Tombstone present -> a refresh serving "old" again is skipped.
     let outcome = upsert_entry_id(
         &db,
-        feed_id,
-        "old",
-        Some("Old"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Old"),
+            ..EntryUpsert::new(feed_id, "old")
+        },
     )
     .await
     .unwrap();
@@ -2739,9 +2677,15 @@ async fn test_prune_batch_size_limits_rows() {
         .unwrap();
     for i in 0..5 {
         let g = format!("g{i}");
-        upsert_entry_id(&db, feed_id, &g, Some(&g), None, None, None, None, None)
-            .await
-            .unwrap();
+        upsert_entry_id(
+            &db,
+            &EntryUpsert {
+                title: Some(&g),
+                ..EntryUpsert::new(feed_id, &g)
+            },
+        )
+        .await
+        .unwrap();
         crate::db_execute!(
             &db,
             "UPDATE entry SET read_at = datetime('now', '-10 days') WHERE guid = $1 AND feed_id = $2",
@@ -2765,9 +2709,15 @@ async fn test_prune_batch_size_limits_rows() {
                 .is_none(),
             "{g} should have been deleted"
         );
-        let outcome = upsert_entry_id(&db, feed_id, &g, Some(&g), None, None, None, None, None)
-            .await
-            .unwrap();
+        let outcome = upsert_entry_id(
+            &db,
+            &EntryUpsert {
+                title: Some(&g),
+                ..EntryUpsert::new(feed_id, &g)
+            },
+        )
+        .await
+        .unwrap();
         assert!(
             matches!(outcome, UpsertOutcome::SkippedTombstoned),
             "{g} should be tombstoned, got {outcome:?}"

@@ -793,20 +793,48 @@ async fn upsert_update(db: &Db, u: &UpsertUpdate<'_>) -> Result<u64, sqlx::Error
     }
 }
 
+/// Fields of one entry as fetched from a feed; input to the `upsert_entry*` family.
+pub struct EntryUpsert<'a> {
+    pub feed_id: i64,
+    pub guid: &'a str,
+    pub title: Option<&'a str>,
+    pub link: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+impl<'a> EntryUpsert<'a> {
+    /// Required fields only; the optional ones start as `None`.
+    pub fn new(feed_id: i64, guid: &'a str) -> Self {
+        Self {
+            feed_id,
+            guid,
+            title: None,
+            link: None,
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        }
+    }
+}
+
 /// Upsert an entry without re-reading the row (feed-sync hot path). The insert
 /// is tombstone-guarded via `RETURNING id`: no row means tombstoned.
-#[allow(clippy::too_many_arguments)]
-pub async fn upsert_entry_id(
-    db: &Db,
-    feed_id: i64,
-    guid: &str,
-    title: Option<&str>,
-    link: Option<&str>,
-    content: Option<&str>,
-    summary: Option<&str>,
-    author: Option<&str>,
-    published_at: Option<DateTime<Utc>>,
-) -> AppResult<UpsertOutcome> {
+pub async fn upsert_entry_id(db: &Db, entry: &EntryUpsert<'_>) -> AppResult<UpsertOutcome> {
+    let EntryUpsert {
+        feed_id,
+        guid,
+        title,
+        link,
+        content,
+        summary,
+        author,
+        published_at,
+    } = *entry;
+
     // Seconds-truncated NaiveDateTime: SQLite cursor TEXT, PG `timestamp`
     // (a raw string bind is rejected by PG's `timestamptz`).
     let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
@@ -1033,14 +1061,16 @@ pub async fn upsert_entry(
 ) -> AppResult<(Entry, bool)> {
     let (id, is_new) = match upsert_entry_id(
         db,
-        feed_id,
-        guid,
-        title,
-        link,
-        content,
-        summary,
-        author,
-        published_at,
+        &EntryUpsert {
+            feed_id,
+            guid,
+            title,
+            link,
+            content,
+            summary,
+            author,
+            published_at,
+        },
     )
     .await?
     {

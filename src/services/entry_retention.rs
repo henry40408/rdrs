@@ -242,9 +242,15 @@ mod tests {
         .await
         .unwrap()
         .id;
-        entry::upsert_entry_id(&db, fid, "old", Some("o"), None, None, None, None, None)
-            .await
-            .unwrap();
+        entry::upsert_entry_id(
+            &db,
+            &entry::EntryUpsert {
+                title: Some("o"),
+                ..entry::EntryUpsert::new(fid, "old")
+            },
+        )
+        .await
+        .unwrap();
         db_execute!(
             &db,
             "UPDATE entry SET read_at = datetime('now','-40 days') WHERE guid='old' AND feed_id=$1",
