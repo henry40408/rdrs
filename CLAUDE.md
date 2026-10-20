@@ -22,8 +22,12 @@ Guidance for Claude Code (claude.ai/code) in this repository.
   cannot drive, so it runs with `cargo test` from `e2e/` (see E2E below).
 - Coverage (as CI): `RDRS_FAST_HASH=1 cargo llvm-cov nextest --lcov --output-path lcov.info`.
 - Entry-list benchmark: `RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- --label before`
-  (`--entries`, `--iterations`). Server-side p50/p90 per list route; the
-  baseline for list-handler or entry-query changes (`dom-bench` covers the browser).
+  (`--entries`, `--categories`, `--feeds-per-category`). SQLite page-cache
+  misses per list route (cold pager cache, sidebar cache busted / primed),
+  including `/feeds`, `/categories` and `/statistics`; the baseline for
+  list-handler or entry-query changes. Not wall clock: that cannot see Pi
+  storage reads. Raise `--entries` for realistic data volume
+  (`dom-bench` covers the browser).
 
 `RDRS_FAST_HASH=1` uses minimal-cost Argon2 for fast local tests. **Never** set
 it in production.
