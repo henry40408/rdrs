@@ -137,6 +137,68 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
     String::from_utf8(result).unwrap_or_default()
 }
 
+#[derive(Default)]
+struct OutlineAttributes {
+    text: Option<String>,
+    title: Option<String>,
+    xml_url: Option<String>,
+    html_url: Option<String>,
+}
+
+fn outline_attributes(element: &BytesStart) -> OutlineAttributes {
+    let mut attributes = OutlineAttributes::default();
+
+    for attr in element.attributes().flatten() {
+        let key = attr.key.as_ref().to_lowercase();
+        let value = attr
+            .normalized_value(XmlVersion::Implicit1_0)
+            .map_or_else(|_| attr.value.to_string(), |v| v.to_string());
+
+        match key.as_str() {
+            "text" => attributes.text = Some(value),
+            "title" => attributes.title = Some(value),
+            "xmlurl" => attributes.xml_url = Some(value),
+            "htmlurl" => attributes.html_url = Some(value),
+            _ => {}
+        }
+    }
+
+    attributes
+}
+
+/// Files the feed under the open category, or on its own under "Uncategorized".
+fn push_feed(
+    outlines: &mut Vec<OpmlOutline>,
+    category_is_open: bool,
+    current_feeds: &mut Vec<OpmlFeed>,
+    feed: OpmlFeed,
+) {
+    if category_is_open {
+        current_feeds.push(feed);
+    } else {
+        outlines.push(OpmlOutline {
+            category_name: "Uncategorized".to_string(),
+            feeds: vec![feed],
+        });
+    }
+}
+
+/// Closes the open category; one without feeds is dropped.
+fn flush_category(
+    outlines: &mut Vec<OpmlOutline>,
+    category: Option<String>,
+    current_feeds: &mut Vec<OpmlFeed>,
+) {
+    if let Some(category_name) = category
+        && !current_feeds.is_empty()
+    {
+        outlines.push(OpmlOutline {
+            category_name,
+            feeds: std::mem::take(current_feeds),
+        });
+    }
+}
+
 pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
@@ -161,116 +223,56 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     continue;
                 }
 
-                let mut text: Option<String> = None;
-                let mut title: Option<String> = None;
-                let mut xml_url: Option<String> = None;
-                let mut html_url: Option<String> = None;
+                let attributes = outline_attributes(&e);
 
-                for attr in e.attributes().flatten() {
-                    let key = attr.key.as_ref().to_lowercase();
-                    let value = attr
-                        .normalized_value(XmlVersion::Implicit1_0)
-                        .map_or_else(|_| attr.value.to_string(), |v| v.to_string());
-
-                    match key.as_str() {
-                        "text" => text = Some(value),
-                        "title" => title = Some(value),
-                        "xmlurl" => xml_url = Some(value),
-                        "htmlurl" => html_url = Some(value),
-                        _ => {}
-                    }
-                }
-
-                if let Some(url) = xml_url {
+                if let Some(url) = attributes.xml_url {
                     // Start element with xmlUrl: unusual, but a feed.
                     let feed = OpmlFeed {
-                        title: title.or(text),
+                        title: attributes.title.or(attributes.text),
                         xml_url: url,
-                        html_url,
+                        html_url: attributes.html_url,
                     };
-
-                    if current_category.is_some() {
-                        current_feeds.push(feed);
-                    } else {
-                        outlines.push(OpmlOutline {
-                            category_name: "Uncategorized".to_string(),
-                            feeds: vec![feed],
-                        });
-                    }
+                    push_feed(
+                        &mut outlines,
+                        current_category.is_some(),
+                        &mut current_feeds,
+                        feed,
+                    );
                 } else {
-                    // Category: save the previous one, if any.
-                    if let Some(cat_name) = current_category.take()
-                        && !current_feeds.is_empty()
-                    {
-                        outlines.push(OpmlOutline {
-                            category_name: cat_name,
-                            feeds: std::mem::take(&mut current_feeds),
-                        });
-                    }
-
-                    current_category = text.or(title);
+                    flush_category(&mut outlines, current_category.take(), &mut current_feeds);
+                    current_category = attributes.text.or(attributes.title);
                     depth += 1;
                 }
             }
             Ok(Event::Empty(e)) => {
-                let tag_name = e.name();
-
-                if !in_body || tag_name.as_ref() != "outline" {
+                if !in_body || e.name().as_ref() != "outline" {
                     continue;
                 }
 
-                let mut text: Option<String> = None;
-                let mut title: Option<String> = None;
-                let mut xml_url: Option<String> = None;
-                let mut html_url: Option<String> = None;
+                let attributes = outline_attributes(&e);
 
-                for attr in e.attributes().flatten() {
-                    let key = attr.key.as_ref().to_lowercase();
-                    let value = attr
-                        .normalized_value(XmlVersion::Implicit1_0)
-                        .map_or_else(|_| attr.value.to_string(), |v| v.to_string());
-
-                    match key.as_str() {
-                        "text" => text = Some(value),
-                        "title" => title = Some(value),
-                        "xmlurl" => xml_url = Some(value),
-                        "htmlurl" => html_url = Some(value),
-                        _ => {}
-                    }
-                }
-
-                // Self-closing outline: a feed.
-                if let Some(url) = xml_url {
+                // Without xmlUrl a self-closing outline is an empty category, so it is ignored.
+                if let Some(url) = attributes.xml_url {
                     let feed = OpmlFeed {
-                        title: title.or(text),
+                        title: attributes.title.or(attributes.text),
                         xml_url: url,
-                        html_url,
+                        html_url: attributes.html_url,
                     };
-
-                    if current_category.is_some() {
-                        current_feeds.push(feed);
-                    } else {
-                        outlines.push(OpmlOutline {
-                            category_name: "Uncategorized".to_string(),
-                            feeds: vec![feed],
-                        });
-                    }
+                    push_feed(
+                        &mut outlines,
+                        current_category.is_some(),
+                        &mut current_feeds,
+                        feed,
+                    );
                 }
-                // Empty outline without xmlUrl is ignored (empty category)
             }
             Ok(Event::End(e)) => {
                 if e.name().as_ref() == "body" {
                     in_body = false;
                 } else if e.name().as_ref() == "outline" && depth > 0 {
                     depth -= 1;
-                    if depth == 0
-                        && let Some(cat_name) = current_category.take()
-                        && !current_feeds.is_empty()
-                    {
-                        outlines.push(OpmlOutline {
-                            category_name: cat_name,
-                            feeds: std::mem::take(&mut current_feeds),
-                        });
+                    if depth == 0 {
+                        flush_category(&mut outlines, current_category.take(), &mut current_feeds);
                     }
                 }
             }
@@ -286,15 +288,7 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
         }
     }
 
-    // Handle any remaining category
-    if let Some(cat_name) = current_category
-        && !current_feeds.is_empty()
-    {
-        outlines.push(OpmlOutline {
-            category_name: cat_name,
-            feeds: current_feeds,
-        });
-    }
+    flush_category(&mut outlines, current_category, &mut current_feeds);
 
     if outlines.is_empty() {
         return Err(AppError::OpmlParseError(
@@ -631,6 +625,63 @@ mod tests {
         assert_eq!(result[0].feeds.len(), 1);
         assert_eq!(result[1].category_name, "News");
         assert_eq!(result[1].feeds.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_opml_uncategorized_nested_and_start_feeds() {
+        let opml = r#"<opml version="2.0">
+  <body>
+    <outline type="rss" text="Loose" xmlUrl="https://example.com/loose"/>
+    <outline type="rss" text="Open" xmlUrl="https://example.com/open"></outline>
+    <outline text="Empty category"/>
+    <outline text="Outer">
+      <outline type="rss" title="Before" xmlUrl="https://example.com/before"/>
+      <outline text="Inner">
+        <outline type="rss" text="Inside" xmlUrl="https://example.com/inside"/>
+      </outline>
+    </outline>
+    <outline text="No feeds"></outline>
+  </body>
+</opml>"#;
+
+        let result = parse_opml(opml).unwrap();
+        let shape: Vec<(&str, Vec<&str>)> = result
+            .iter()
+            .map(|o| {
+                (
+                    o.category_name.as_str(),
+                    o.feeds.iter().map(|f| f.xml_url.as_str()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("Uncategorized", vec!["https://example.com/loose"]),
+                ("Uncategorized", vec!["https://example.com/open"]),
+                ("Outer", vec!["https://example.com/before"]),
+                ("Inner", vec!["https://example.com/inside"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_opml_prefers_text_for_categories_and_title_for_feeds() {
+        let opml = r#"<opml version="2.0">
+  <body>
+    <outline text="Category text" title="Category title">
+      <outline type="rss" text="Feed text" title="Feed title" xmlUrl="https://example.com/a"/>
+      <outline type="rss" text="Open text" title="Open title" xmlUrl="https://example.com/b"></outline>
+    </outline>
+  </body>
+</opml>"#;
+
+        let result = parse_opml(opml).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].category_name, "Category text");
+        let titles: Vec<_> = result[0].feeds.iter().map(|f| f.title.as_deref()).collect();
+        assert_eq!(titles, vec![Some("Feed title"), Some("Open title")]);
     }
 
     #[test]
