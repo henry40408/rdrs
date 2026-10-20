@@ -1238,12 +1238,14 @@ pub async fn category_mark_read_form(
 ) -> Response {
     mark_read_scoped(
         &state,
-        auth_user.user.id,
-        Some(id),
-        None,
-        form.q,
-        form.status,
-        &format!("/categories/{id}/entries"),
+        MarkReadScope {
+            user_id: auth_user.user.id,
+            category_id: Some(id),
+            feed_id: None,
+            q: form.q,
+            status: form.status,
+            base_path: &format!("/categories/{id}/entries"),
+        },
     )
     .await
 }
@@ -1257,12 +1259,14 @@ pub async fn feed_mark_read_form(
 ) -> Response {
     mark_read_scoped(
         &state,
-        auth_user.user.id,
-        None,
-        Some(id),
-        form.q,
-        form.status,
-        &format!("/feeds/{id}/entries"),
+        MarkReadScope {
+            user_id: auth_user.user.id,
+            category_id: None,
+            feed_id: Some(id),
+            q: form.q,
+            status: form.status,
+            base_path: &format!("/feeds/{id}/entries"),
+        },
     )
     .await
 }
@@ -1289,15 +1293,25 @@ fn build_scoped_redirect(base_path: &str, search: Option<&str>, status: Option<&
     }
 }
 
-async fn mark_read_scoped(
-    state: &AppState,
+/// Request for [`mark_read_scoped`]: the scope to mark and the page to return to.
+struct MarkReadScope<'a> {
     user_id: i64,
     category_id: Option<i64>,
     feed_id: Option<i64>,
     q: Option<String>,
     status: Option<String>,
-    base_path: &str,
-) -> Response {
+    base_path: &'a str,
+}
+
+async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Response {
+    let MarkReadScope {
+        user_id,
+        category_id,
+        feed_id,
+        q,
+        status,
+        base_path,
+    } = scope;
     let parsed = scoped_search(q.as_deref());
 
     // Must guard here: a blank `q` would match, and mark read, the whole scope.
