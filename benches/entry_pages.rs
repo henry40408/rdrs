@@ -148,12 +148,11 @@ async fn mark_fetch_states(db: &Db, feeds: &[i64], now: chrono::DateTime<chrono:
         let age_days = if i % 5 == 0 { 120 } else { 1 + (i % 20) as i64 };
         feed::update_fetch_result(
             db,
-            id,
-            now,
-            error,
-            None,
-            None,
-            Some(now - chrono::Duration::days(age_days)),
+            &feed::FetchResult {
+                fetch_error: error,
+                feed_updated_at: Some(now - chrono::Duration::days(age_days)),
+                ..feed::FetchResult::new(id, now)
+            },
         )
         .await
         .unwrap();
