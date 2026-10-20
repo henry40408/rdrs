@@ -126,25 +126,27 @@ pub async fn finish_registration(
     let name = req.name;
     let new_passkey = passkey::create_passkey(
         &state.db,
-        user_id,
-        &credential_id,
-        &public_key_json,
-        0,
-        &name,
-        transports.as_deref(),
+        &passkey::NewPasskey {
+            user_id,
+            credential_id: &credential_id,
+            public_key: &public_key_json,
+            counter: 0,
+            name: &name,
+            transports: transports.as_deref(),
+        },
     )
     .await?;
 
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    audit::passkey_registered(
-        &state.config.secret,
-        &auth_user.session.session_token,
+    audit::passkey_registered(&audit::PasskeyRegistered {
+        secret: &state.config.secret,
+        token: &auth_user.session.session_token,
         user_id,
-        new_passkey.id,
-        &new_passkey.name,
-        &state.config.client_ip(peer, &headers).to_string(),
-        &request_user_agent(&headers),
-    );
+        passkey_id: new_passkey.id,
+        name: &new_passkey.name,
+        ip: &state.config.client_ip(peer, &headers).to_string(),
+        ua: &request_user_agent(&headers),
+    });
 
     Ok((
         StatusCode::CREATED,

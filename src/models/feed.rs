@@ -232,15 +232,39 @@ pub async fn delete_feed(db: &Db, id: i64, category_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn update_fetch_result(
-    db: &Db,
-    id: i64,
-    fetched_at: DateTime<Utc>,
-    fetch_error: Option<&str>,
-    etag: Option<&str>,
-    last_modified: Option<&str>,
-    feed_updated_at: Option<DateTime<Utc>>,
-) -> AppResult<()> {
+/// Outcome of one fetch attempt; input to [`update_fetch_result`].
+pub struct FetchResult<'a> {
+    pub id: i64,
+    pub fetched_at: DateTime<Utc>,
+    pub fetch_error: Option<&'a str>,
+    pub etag: Option<&'a str>,
+    pub last_modified: Option<&'a str>,
+    pub feed_updated_at: Option<DateTime<Utc>>,
+}
+
+impl FetchResult<'_> {
+    /// Required fields only; the optional ones start as `None`.
+    pub fn new(id: i64, fetched_at: DateTime<Utc>) -> Self {
+        Self {
+            id,
+            fetched_at,
+            fetch_error: None,
+            etag: None,
+            last_modified: None,
+            feed_updated_at: None,
+        }
+    }
+}
+
+pub async fn update_fetch_result(db: &Db, result: &FetchResult<'_>) -> AppResult<()> {
+    let FetchResult {
+        id,
+        fetched_at,
+        fetch_error,
+        etag,
+        last_modified,
+        feed_updated_at,
+    } = *result;
     let now = Utc::now();
     db_execute!(
         db,
@@ -259,15 +283,15 @@ pub async fn update_fetch_result(
 }
 
 /// Transactional [`update_fetch_result`], so readers never see a half-applied feed sync.
-pub async fn update_fetch_result_tx(
-    tx: &mut Tx<'_>,
-    id: i64,
-    fetched_at: DateTime<Utc>,
-    fetch_error: Option<&str>,
-    etag: Option<&str>,
-    last_modified: Option<&str>,
-    feed_updated_at: Option<DateTime<Utc>>,
-) -> AppResult<()> {
+pub async fn update_fetch_result_tx(tx: &mut Tx<'_>, result: &FetchResult<'_>) -> AppResult<()> {
+    let FetchResult {
+        id,
+        fetched_at,
+        fetch_error,
+        etag,
+        last_modified,
+        feed_updated_at,
+    } = *result;
     let now = Utc::now();
     db_execute_tx!(
         tx,

@@ -30,14 +30,11 @@ async fn seed_entries(db: &Db, admin_id: i64) {
     for i in 1..=5 {
         let (e, _) = entry::upsert_entry(
             db,
-            feed.id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(published),
+            &entry::EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..entry::EntryUpsert::new(feed.id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();

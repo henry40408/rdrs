@@ -619,12 +619,14 @@ async fn passkey_challenge_never_discloses_registered_credentials() {
     // credential ID below cannot appear in the response.
     rdrs::models::passkey::create_passkey(
         &db,
-        user.id,
-        b"secret-credential-id",
-        b"{}",
-        0,
-        "Laptop",
-        None,
+        &rdrs::models::passkey::NewPasskey {
+            user_id: user.id,
+            credential_id: b"secret-credential-id",
+            public_key: b"{}",
+            counter: 0,
+            name: "Laptop",
+            transports: None,
+        },
     )
     .await
     .unwrap();
@@ -664,9 +666,19 @@ async fn passkey_challenge_is_identical_with_and_without_registered_passkeys() {
         .await
         .unwrap()
         .expect("the user was just created");
-    rdrs::models::passkey::create_passkey(&db, user.id, b"cred", b"{}", 0, "Laptop", None)
-        .await
-        .unwrap();
+    rdrs::models::passkey::create_passkey(
+        &db,
+        &rdrs::models::passkey::NewPasskey {
+            user_id: user.id,
+            credential_id: b"cred",
+            public_key: b"{}",
+            counter: 0,
+            name: "Laptop",
+            transports: None,
+        },
+    )
+    .await
+    .unwrap();
     let populated = server.post("/api/passkey/auth/start").await;
 
     assert_eq!(empty.status_code(), populated.status_code());

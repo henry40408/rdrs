@@ -46,9 +46,14 @@ pub async fn refresh_feed(
     let parsed_url = Url::parse(&feed_data.url).map_err(|_e| AppError::InvalidUrl)?;
     if let Err(e) = fetcher.validate(&parsed_url) {
         let error_msg = e.to_string();
-        let _ =
-            feed::update_fetch_result(&db, feed_id, Utc::now(), Some(&error_msg), None, None, None)
-                .await;
+        let _ = feed::update_fetch_result(
+            &db,
+            &feed::FetchResult {
+                fetch_error: Some(&error_msg),
+                ..feed::FetchResult::new(feed_id, Utc::now())
+            },
+        )
+        .await;
         return Err(AppError::InvalidUrl);
     }
 
@@ -96,12 +101,10 @@ pub async fn refresh_feed(
             let error_msg = e.to_string();
             let _ = feed::update_fetch_result(
                 &db,
-                feed_id,
-                Utc::now(),
-                Some(&error_msg),
-                None,
-                None,
-                None,
+                &feed::FetchResult {
+                    fetch_error: Some(&error_msg),
+                    ..feed::FetchResult::new(feed_id, Utc::now())
+                },
             )
             .await;
             return Err(AppError::FetchError(error_msg));
@@ -117,12 +120,11 @@ pub async fn refresh_feed(
         );
         feed::update_fetch_result(
             &db,
-            feed_id,
-            Utc::now(),
-            None,
-            feed_data.etag.as_deref(),
-            feed_data.last_modified.as_deref(),
-            None,
+            &feed::FetchResult {
+                etag: feed_data.etag.as_deref(),
+                last_modified: feed_data.last_modified.as_deref(),
+                ..feed::FetchResult::new(feed_id, Utc::now())
+            },
         )
         .await?;
         return Ok(SyncResult {
@@ -133,8 +135,14 @@ pub async fn refresh_feed(
 
     if !status.is_success() {
         let error_msg = format!("HTTP {status}");
-        feed::update_fetch_result(&db, feed_id, Utc::now(), Some(&error_msg), None, None, None)
-            .await?;
+        feed::update_fetch_result(
+            &db,
+            &feed::FetchResult {
+                fetch_error: Some(&error_msg),
+                ..feed::FetchResult::new(feed_id, Utc::now())
+            },
+        )
+        .await?;
         return Err(AppError::FetchError(error_msg));
     }
 
@@ -157,12 +165,10 @@ pub async fn refresh_feed(
             let error_msg = e.to_string();
             let _ = feed::update_fetch_result(
                 &db,
-                feed_id,
-                Utc::now(),
-                Some(&error_msg),
-                None,
-                None,
-                None,
+                &feed::FetchResult {
+                    fetch_error: Some(&error_msg),
+                    ..feed::FetchResult::new(feed_id, Utc::now())
+                },
             )
             .await;
             return Err(AppError::FetchError(error_msg));
@@ -184,12 +190,10 @@ pub async fn refresh_feed(
             let error_msg = e.to_string();
             let _ = feed::update_fetch_result(
                 &db,
-                feed_id,
-                Utc::now(),
-                Some(&error_msg),
-                None,
-                None,
-                None,
+                &feed::FetchResult {
+                    fetch_error: Some(&error_msg),
+                    ..feed::FetchResult::new(feed_id, Utc::now())
+                },
             )
             .await;
             return Err(AppError::FeedParseError(error_msg));
@@ -301,14 +305,16 @@ pub async fn refresh_feed(
 
             match entry::upsert_entry_id_tx(
                 &mut tx,
-                feed_id,
-                &guid,
-                title.as_deref(),
-                link.as_deref(),
-                content.as_deref(),
-                summary.as_deref(),
-                author.as_deref(),
-                published_at,
+                &entry::EntryUpsert {
+                    feed_id,
+                    guid: &guid,
+                    title: title.as_deref(),
+                    link: link.as_deref(),
+                    content: content.as_deref(),
+                    summary: summary.as_deref(),
+                    author: author.as_deref(),
+                    published_at,
+                },
             )
             .await?
             {
@@ -324,12 +330,12 @@ pub async fn refresh_feed(
 
         feed::update_fetch_result_tx(
             &mut tx,
-            feed_id,
-            Utc::now(),
-            None,
-            new_etag.as_deref(),
-            new_last_modified.as_deref(),
-            effective_updated_at,
+            &feed::FetchResult {
+                etag: new_etag.as_deref(),
+                last_modified: new_last_modified.as_deref(),
+                feed_updated_at: effective_updated_at,
+                ..feed::FetchResult::new(feed_id, Utc::now())
+            },
         )
         .await?;
 
@@ -812,12 +818,11 @@ mod tests {
 
         feed::update_fetch_result(
             &pool,
-            feed_id,
-            chrono::Utc::now(),
-            None,
-            Some("\"abc123\""),
-            Some("Mon, 09 Jun 2025 00:00:00 GMT"),
-            None,
+            &feed::FetchResult {
+                etag: Some("\"abc123\""),
+                last_modified: Some("Mon, 09 Jun 2025 00:00:00 GMT"),
+                ..feed::FetchResult::new(feed_id, chrono::Utc::now())
+            },
         )
         .await
         .unwrap();

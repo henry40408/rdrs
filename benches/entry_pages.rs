@@ -101,14 +101,16 @@ async fn seed(db: &Db, args: &Args) -> (i64, i64, i64, i64) {
         let minutes = i64::try_from(i).unwrap();
         let (e, _) = entry::upsert_entry(
             db,
-            feeds[i % feeds.len()],
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            Some(&format!("https://example.com/{i}")),
-            Some(&content),
-            Some("A short summary."),
-            None,
-            Some(now - chrono::Duration::minutes(minutes)),
+            &entry::EntryUpsert {
+                feed_id: feeds[i % feeds.len()],
+                guid: &format!("guid-{i}"),
+                title: Some(&format!("Entry {i}")),
+                link: Some(&format!("https://example.com/{i}")),
+                content: Some(&content),
+                summary: Some("A short summary."),
+                author: None,
+                published_at: Some(now - chrono::Duration::minutes(minutes)),
+            },
         )
         .await
         .unwrap();
@@ -146,12 +148,11 @@ async fn mark_fetch_states(db: &Db, feeds: &[i64], now: chrono::DateTime<chrono:
         let age_days = if i % 5 == 0 { 120 } else { 1 + (i % 20) as i64 };
         feed::update_fetch_result(
             db,
-            id,
-            now,
-            error,
-            None,
-            None,
-            Some(now - chrono::Duration::days(age_days)),
+            &feed::FetchResult {
+                fetch_error: error,
+                feed_updated_at: Some(now - chrono::Duration::days(age_days)),
+                ..feed::FetchResult::new(id, now)
+            },
         )
         .await
         .unwrap();

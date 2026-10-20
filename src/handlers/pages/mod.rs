@@ -315,16 +315,29 @@ fn scoped_search(q: Option<&str>) -> ScopedSearch {
     }
 }
 
-/// [`build_entries_page`], but an unparseable search lists nothing.
-async fn build_searched_entries_page(
-    state: &AppState,
+/// Request for [`build_searched_entries_page`].
+struct SearchedEntriesPage<'a> {
     user_id: i64,
-    mut filter: entry::EntryFilter,
-    search: &ScopedSearch,
+    filter: entry::EntryFilter,
+    search: &'a ScopedSearch,
     sort: entry::EntrySortOrder,
     page_size: i64,
     cursor: Option<entry::ContinuationCursor>,
+}
+
+/// [`build_entries_page`], but an unparseable search lists nothing.
+async fn build_searched_entries_page(
+    state: &AppState,
+    request: SearchedEntriesPage<'_>,
 ) -> (Vec<EntryRowView>, Option<String>) {
+    let SearchedEntriesPage {
+        user_id,
+        mut filter,
+        search,
+        sort,
+        page_size,
+        cursor,
+    } = request;
     if search.error.is_some() {
         return (Vec::new(), None);
     }
@@ -425,13 +438,15 @@ async fn maybe_build_reading_pane(
         .ok()?;
     crate::handlers::entries::build_reading_pane_view(
         state,
-        user_id,
-        &ewf,
-        has_save,
-        has_kagi,
-        crate::handlers::entries::ContentView::Full,
-        // A list page rendered with `?entry=` is the reader looking at it.
-        crate::handlers::entries::RenderPurpose::Reader,
+        crate::handlers::entries::ReadingPaneRequest {
+            user_id,
+            ewf: &ewf,
+            has_save,
+            has_kagi,
+            view: crate::handlers::entries::ContentView::Full,
+            // A list page rendered with `?entry=` is the reader looking at it.
+            purpose: crate::handlers::entries::RenderPurpose::Reader,
+        },
     )
     .await
     .ok()
@@ -525,12 +540,14 @@ pub async fn unread_page(
             .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_searched_entries_page(
             &state,
-            user_id,
-            filter,
-            &search,
-            entry::EntrySortOrder::PublishedAt,
-            page_size,
-            cursor,
+            SearchedEntriesPage {
+                user_id,
+                filter,
+                search: &search,
+                sort: entry::EntrySortOrder::PublishedAt,
+                page_size,
+                cursor,
+            },
         )
         .await;
         return (
@@ -550,12 +567,14 @@ pub async fn unread_page(
 
     let (entries, next_cursor) = build_searched_entries_page(
         &state,
-        user_id,
-        filter,
-        &search,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        None,
+        SearchedEntriesPage {
+            user_id,
+            filter,
+            search: &search,
+            sort: entry::EntrySortOrder::PublishedAt,
+            page_size,
+            cursor: None,
+        },
     )
     .await;
 
@@ -647,7 +666,15 @@ async fn entries_tab_page(
     };
     let search = scoped_search(query.q.as_deref());
     let (entries, next_cursor) = build_searched_entries_page(
-        &state, user_id, tab.filter, &search, tab.sort, page_size, cursor,
+        &state,
+        SearchedEntriesPage {
+            user_id,
+            filter: tab.filter,
+            search: &search,
+            sort: tab.sort,
+            page_size,
+            cursor,
+        },
     )
     .await;
 
@@ -972,12 +999,14 @@ async fn scoped_entries_page(
 
     let (entries, next_cursor) = build_searched_entries_page(
         &state,
-        user_id,
-        filter,
-        &search,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        cursor,
+        SearchedEntriesPage {
+            user_id,
+            filter,
+            search: &search,
+            sort: entry::EntrySortOrder::PublishedAt,
+            page_size,
+            cursor,
+        },
     )
     .await;
 
@@ -1211,12 +1240,14 @@ pub async fn category_mark_read_form(
 ) -> Response {
     mark_read_scoped(
         &state,
-        auth_user.user.id,
-        Some(id),
-        None,
-        form.q,
-        form.status,
-        &format!("/categories/{id}/entries"),
+        MarkReadScope {
+            user_id: auth_user.user.id,
+            category_id: Some(id),
+            feed_id: None,
+            q: form.q,
+            status: form.status,
+            base_path: &format!("/categories/{id}/entries"),
+        },
     )
     .await
 }
@@ -1230,12 +1261,14 @@ pub async fn feed_mark_read_form(
 ) -> Response {
     mark_read_scoped(
         &state,
-        auth_user.user.id,
-        None,
-        Some(id),
-        form.q,
-        form.status,
-        &format!("/feeds/{id}/entries"),
+        MarkReadScope {
+            user_id: auth_user.user.id,
+            category_id: None,
+            feed_id: Some(id),
+            q: form.q,
+            status: form.status,
+            base_path: &format!("/feeds/{id}/entries"),
+        },
     )
     .await
 }
@@ -1262,15 +1295,25 @@ fn build_scoped_redirect(base_path: &str, search: Option<&str>, status: Option<&
     }
 }
 
-async fn mark_read_scoped(
-    state: &AppState,
+/// Request for [`mark_read_scoped`]: the scope to mark and the page to return to.
+struct MarkReadScope<'a> {
     user_id: i64,
     category_id: Option<i64>,
     feed_id: Option<i64>,
     q: Option<String>,
     status: Option<String>,
-    base_path: &str,
-) -> Response {
+    base_path: &'a str,
+}
+
+async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Response {
+    let MarkReadScope {
+        user_id,
+        category_id,
+        feed_id,
+        q,
+        status,
+        base_path,
+    } = scope;
     let parsed = scoped_search(q.as_deref());
 
     // Must guard here: a blank `q` would match, and mark read, the whole scope.

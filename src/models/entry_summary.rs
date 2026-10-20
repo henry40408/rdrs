@@ -290,14 +290,16 @@ mod tests {
 
         let (entry, _) = entry::upsert_entry(
             db,
-            feed_id,
-            "guid-123",
-            Some("Test Entry"),
-            Some("https://example.com/entry"),
-            Some("Content"),
-            None,
-            None,
-            None,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "guid-123",
+                title: Some("Test Entry"),
+                link: Some("https://example.com/entry"),
+                content: Some("Content"),
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
@@ -402,14 +404,16 @@ mod tests {
         for i in 0..3 {
             let (e, _) = entry::upsert_entry(
                 &db,
-                feed_id,
-                &format!("guid-{i}"),
-                Some(&format!("Entry {i}")),
-                Some("https://example.com/entry"),
-                None,
-                None,
-                None,
-                None,
+                &entry::EntryUpsert {
+                    feed_id,
+                    guid: &format!("guid-{i}"),
+                    title: Some(&format!("Entry {i}")),
+                    link: Some("https://example.com/entry"),
+                    content: None,
+                    summary: None,
+                    author: None,
+                    published_at: None,
+                },
             )
             .await
             .unwrap();
@@ -514,14 +518,16 @@ mod tests {
         let make_entry = |guid: &'static str| async move {
             entry::upsert_entry(
                 db_ref,
-                feed1,
-                guid,
-                Some("Test Entry"),
-                Some("https://example.com/entry"),
-                Some("Content"),
-                None,
-                None,
-                None,
+                &entry::EntryUpsert {
+                    feed_id: feed1,
+                    guid,
+                    title: Some("Test Entry"),
+                    link: Some("https://example.com/entry"),
+                    content: Some("Content"),
+                    summary: None,
+                    author: None,
+                    published_at: None,
+                },
             )
             .await
             .unwrap()
