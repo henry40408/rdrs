@@ -136,15 +136,15 @@ pub async fn finish_registration(
     .await?;
 
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    audit::passkey_registered(
-        &state.config.secret,
-        &auth_user.session.session_token,
+    audit::passkey_registered(&audit::PasskeyRegistered {
+        secret: &state.config.secret,
+        token: &auth_user.session.session_token,
         user_id,
-        new_passkey.id,
-        &new_passkey.name,
-        &state.config.client_ip(peer, &headers).to_string(),
-        &request_user_agent(&headers),
-    );
+        passkey_id: new_passkey.id,
+        name: &new_passkey.name,
+        ip: &state.config.client_ip(peer, &headers).to_string(),
+        ua: &request_user_agent(&headers),
+    });
 
     Ok((
         StatusCode::CREATED,

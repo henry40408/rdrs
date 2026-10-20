@@ -167,17 +167,29 @@ pub fn masquerade_stopped(
     );
 }
 
+/// Arguments of [`passkey_registered`].
+pub struct PasskeyRegistered<'a> {
+    pub secret: &'a [u8],
+    pub token: &'a str,
+    pub user_id: i64,
+    pub passkey_id: i64,
+    pub name: &'a str,
+    pub ip: &'a str,
+    pub ua: &'a str,
+}
+
 /// A passkey was registered: an independent credential that survives a
 /// password change. Logged with request `ip`/`user_agent` for tracing.
-pub fn passkey_registered(
-    secret: &[u8],
-    token: &str,
-    user_id: i64,
-    passkey_id: i64,
-    name: &str,
-    ip: &str,
-    ua: &str,
-) {
+pub fn passkey_registered(event: &PasskeyRegistered<'_>) {
+    let PasskeyRegistered {
+        secret,
+        token,
+        user_id,
+        passkey_id,
+        name,
+        ip,
+        ua,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "passkey.registered",
@@ -342,7 +354,15 @@ mod tests {
         session_token_rotated(SECRET, "tok3", "tok4");
         session_reauthenticated(SECRET, "tok4", 1, "password");
         session_reauthenticated(SECRET, "tok4", 1, "forward_auth");
-        passkey_registered(SECRET, "tok4", 1, 7, "MacBook", "127.0.0.1", "test-agent");
+        passkey_registered(&PasskeyRegistered {
+            secret: SECRET,
+            token: "tok4",
+            user_id: 1,
+            passkey_id: 7,
+            name: "MacBook",
+            ip: "127.0.0.1",
+            ua: "test-agent",
+        });
         passkey_removed(SECRET, "tok4", 1, 7);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
         invite_issued(SECRET, "tok5", 2, 1, "account_created", Utc::now());
