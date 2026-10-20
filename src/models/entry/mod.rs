@@ -888,18 +888,20 @@ pub async fn upsert_entry_id(db: &Db, entry: &EntryUpsert<'_>) -> AppResult<Upse
 }
 
 /// Transactional [`upsert_entry_id`] for feed sync's atomic unit of work.
-#[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry_id_tx(
     tx: &mut Tx<'_>,
-    feed_id: i64,
-    guid: &str,
-    title: Option<&str>,
-    link: Option<&str>,
-    content: Option<&str>,
-    summary: Option<&str>,
-    author: Option<&str>,
-    published_at: Option<DateTime<Utc>>,
+    entry: &EntryUpsert<'_>,
 ) -> AppResult<UpsertOutcome> {
+    let EntryUpsert {
+        feed_id,
+        guid,
+        title,
+        link,
+        content,
+        summary,
+        author,
+        published_at,
+    } = *entry;
     // Seconds-truncated NaiveDateTime: SQLite cursor TEXT, PG `timestamp`
     // (a raw string bind is rejected by PG's `timestamptz`).
     let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));

@@ -301,14 +301,16 @@ pub async fn refresh_feed(
 
             match entry::upsert_entry_id_tx(
                 &mut tx,
-                feed_id,
-                &guid,
-                title.as_deref(),
-                link.as_deref(),
-                content.as_deref(),
-                summary.as_deref(),
-                author.as_deref(),
-                published_at,
+                &entry::EntryUpsert {
+                    feed_id,
+                    guid: &guid,
+                    title: title.as_deref(),
+                    link: link.as_deref(),
+                    content: content.as_deref(),
+                    summary: summary.as_deref(),
+                    author: author.as_deref(),
+                    published_at,
+                },
             )
             .await?
             {
