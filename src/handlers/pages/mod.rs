@@ -430,7 +430,7 @@ async fn maybe_build_reading_pane(
     entry_id: Option<i64>,
 ) -> Option<ReadingPaneView> {
     let entry_id = entry_id?;
-    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await
         .ok()??;
     let (has_save, has_kagi) = crate::handlers::entries::load_pane_action_flags(state, user_id)
@@ -440,7 +440,7 @@ async fn maybe_build_reading_pane(
         state,
         crate::handlers::entries::ReadingPaneRequest {
             user_id,
-            ewf: &ewf,
+            entry_with_feed: &entry_with_feed,
             has_save,
             has_kagi,
             view: crate::handlers::entries::ContentView::Full,
@@ -1497,15 +1497,15 @@ mod tests {
 
     #[test]
     fn row_view_decodes_hex_entity_in_title() {
-        let ewf = ewf_with_title("Collabora&#x27;s CODE 26.04 Release");
-        let row = row_view_from(&ewf, None);
+        let entry_with_feed = ewf_with_title("Collabora&#x27;s CODE 26.04 Release");
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.title, "Collabora's CODE 26.04 Release");
     }
 
     #[test]
     fn row_view_decodes_decimal_and_named_entities() {
-        let ewf = ewf_with_title("Tom &amp; Jerry&#39;s &quot;day&quot;");
-        let row = row_view_from(&ewf, None);
+        let entry_with_feed = ewf_with_title("Tom &amp; Jerry&#39;s &quot;day&quot;");
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.title, "Tom & Jerry's \"day\"");
     }
 
@@ -1606,38 +1606,38 @@ mod tests {
 
     #[test]
     fn feed_initial_uppercases_first_char() {
-        let mut ewf = ewf_with_title("anything");
-        ewf.feed_title = Some("delta".to_string());
-        let row = row_view_from(&ewf, None);
+        let mut entry_with_feed = ewf_with_title("anything");
+        entry_with_feed.feed_title = Some("delta".to_string());
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.feed_initial(), "D");
     }
 
     #[test]
     fn feed_initial_handles_empty_title() {
-        let mut ewf = ewf_with_title("anything");
-        ewf.feed_title = Some(String::new());
-        let row = row_view_from(&ewf, None);
+        let mut entry_with_feed = ewf_with_title("anything");
+        entry_with_feed.feed_title = Some(String::new());
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.feed_initial(), "?");
     }
 
     #[test]
     fn feed_initial_uppercases_unicode() {
-        let mut ewf = ewf_with_title("anything");
-        ewf.feed_title = Some("über".to_string());
-        let row = row_view_from(&ewf, None);
+        let mut entry_with_feed = ewf_with_title("anything");
+        entry_with_feed.feed_title = Some("über".to_string());
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.feed_initial(), "Ü");
     }
 
     #[test]
     fn feed_color_index_is_stable_and_bounded() {
-        let mut ewf = ewf_with_title("anything");
-        ewf.entry.feed_id = 13;
-        let row = row_view_from(&ewf, None);
+        let mut entry_with_feed = ewf_with_title("anything");
+        entry_with_feed.entry.feed_id = 13;
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.feed_color_index(), 1); // 13 % 6 == 1
 
         // rem_euclid (not %) keeps the index non-negative for any id.
-        ewf.entry.feed_id = -1;
-        let row = row_view_from(&ewf, None);
+        entry_with_feed.entry.feed_id = -1;
+        let row = row_view_from(&entry_with_feed, None);
         assert_eq!(row.feed_color_index(), 5); // (-1).rem_euclid(6) == 5
         assert!(row.feed_color_index() < 6);
     }

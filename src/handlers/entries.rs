@@ -244,7 +244,7 @@ pub async fn entry_fragment(
         return Ok(response);
     }
 
-    let mut ewf = found.ok_or(AppError::EntryNotFound)?;
+    let mut entry_with_feed = found.ok_or(AppError::EntryNotFound)?;
     let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
         .await?
         .get(&entry_id)
@@ -252,7 +252,7 @@ pub async fn entry_fragment(
 
     // Optimistic; tied to `mark_read` so speculative loads render true state.
     if mark_read {
-        ewf.entry.read_at = Some(chrono::Utc::now());
+        entry_with_feed.entry.read_at = Some(chrono::Utc::now());
     }
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
@@ -265,7 +265,7 @@ pub async fn entry_fragment(
         &state,
         ReadingPaneRequest {
             user_id,
-            ewf: &ewf,
+            entry_with_feed: &entry_with_feed,
             has_save,
             has_kagi,
             view,
@@ -273,7 +273,7 @@ pub async fn entry_fragment(
         },
     )
     .await?;
-    let row = row_view_from(&ewf, status);
+    let row = row_view_from(&entry_with_feed, status);
 
     // After the render only to stay off the critical path.
     if mark_read {
@@ -299,7 +299,7 @@ pub async fn summary_fragment(
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<SummaryFragment> {
     let user_id = auth_user.user.id;
-    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
     // has_save/has_kagi are irrelevant to the summary container.
@@ -307,7 +307,7 @@ pub async fn summary_fragment(
         &state,
         ReadingPaneRequest {
             user_id,
-            ewf: &ewf,
+            entry_with_feed: &entry_with_feed,
             has_save: false,
             has_kagi: false,
             view: ContentView::Full,
@@ -388,7 +388,7 @@ pub(crate) enum RenderPurpose {
 /// Request for [`build_reading_pane_view`].
 pub(crate) struct ReadingPaneRequest<'a> {
     pub user_id: i64,
-    pub ewf: &'a entry::EntryWithFeed,
+    pub entry_with_feed: &'a entry::EntryWithFeed,
     pub has_save: bool,
     pub has_kagi: bool,
     pub view: ContentView,
@@ -403,27 +403,32 @@ pub(crate) async fn build_reading_pane_view(
 ) -> AppResult<ReadingPaneView> {
     let ReadingPaneRequest {
         user_id,
-        ewf,
+        entry_with_feed,
         has_save,
         has_kagi,
         view,
         purpose,
     } = request;
-    let entry_id = ewf.entry.id;
-    let stored_full = ewf.entry.full_content.as_deref().filter(|s| !s.is_empty());
+    let entry_id = entry_with_feed.entry.id;
+    let stored_full = entry_with_feed
+        .entry
+        .full_content
+        .as_deref()
+        .filter(|s| !s.is_empty());
     let showing_full = matches!(view, ContentView::Full) && stored_full.is_some();
     let raw_content = if showing_full {
         stored_full.unwrap_or("")
     } else {
-        ewf.entry
+        entry_with_feed
+            .entry
             .content
             .as_deref()
-            .or(ewf.entry.summary.as_deref())
+            .or(entry_with_feed.entry.summary.as_deref())
             .unwrap_or("")
     };
 
-    let base_url = Some(ewf.content_base_url());
-    let referrer = ewf.custom_referrer.as_deref();
+    let base_url = Some(entry_with_feed.content_base_url());
+    let referrer = entry_with_feed.custom_referrer.as_deref();
     let proxy_base_url = state.config.public_base_url.as_deref();
     let content_html = sanitize_html(
         raw_content,
@@ -447,23 +452,27 @@ pub(crate) async fn build_reading_pane_view(
         // Same-origin page, so a root-relative URL suffices.
         base_url: None,
     }
-    .maybe_inject(content_html, entry_id, ewf.entry.created_at);
+    .maybe_inject(content_html, entry_id, entry_with_feed.entry.created_at);
 
     let (summary_text, summary_in_flight, summary_error) =
         resolve_summary(state, user_id, entry_id).await?;
 
-    let published_at = ewf.entry.published_at;
+    let published_at = entry_with_feed.entry.published_at;
     Ok(ReadingPaneView {
         id: entry_id,
-        title: ewf.entry.title.as_deref().map_or_else(
+        title: entry_with_feed.entry.title.as_deref().map_or_else(
             || "(no title)".to_string(),
             crate::services::decode_html_entities,
         ),
-        link: ewf.entry.link.as_deref().map(strip_tracking_params),
-        feed_title: ewf.feed_title.clone().unwrap_or_default(),
-        feed_id: ewf.entry.feed_id,
-        feed_has_icon: ewf.feed_has_icon,
-        author: ewf
+        link: entry_with_feed
+            .entry
+            .link
+            .as_deref()
+            .map(strip_tracking_params),
+        feed_title: entry_with_feed.feed_title.clone().unwrap_or_default(),
+        feed_id: entry_with_feed.entry.feed_id,
+        feed_has_icon: entry_with_feed.feed_has_icon,
+        author: entry_with_feed
             .entry
             .author
             .as_deref()
@@ -471,8 +480,8 @@ pub(crate) async fn build_reading_pane_view(
         published_at_iso: published_at.map(|t| t.to_rfc3339()),
         published_relative: format_relative_time(published_at).0,
         content_html,
-        is_read: ewf.entry.read_at.is_some(),
-        is_starred: ewf.entry.starred_at.is_some(),
+        is_read: entry_with_feed.entry.read_at.is_some(),
+        is_starred: entry_with_feed.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
         summary_error,
@@ -611,7 +620,7 @@ async fn set_starred_state(
     desired_starred: bool,
     csrf_token: String,
 ) -> AppResult<EntryActionMulti> {
-    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let mut entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
     let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
@@ -619,17 +628,22 @@ async fn set_starred_state(
         .get(&entry_id)
         .copied();
 
-    let changed = ewf.entry.starred_at.is_some() != desired_starred;
+    let changed = entry_with_feed.entry.starred_at.is_some() != desired_starred;
 
-    ewf.entry.starred_at = if desired_starred {
-        Some(ewf.entry.starred_at.unwrap_or_else(chrono::Utc::now))
+    entry_with_feed.entry.starred_at = if desired_starred {
+        Some(
+            entry_with_feed
+                .entry
+                .starred_at
+                .unwrap_or_else(chrono::Utc::now),
+        )
     } else {
         None
     };
 
     let pane_star_form = Some(PaneStarFormView {
-        id: ewf.entry.id,
-        is_starred: ewf.entry.starred_at.is_some(),
+        id: entry_with_feed.entry.id,
+        is_starred: entry_with_feed.entry.starred_at.is_some(),
     });
 
     if changed {
@@ -645,7 +659,7 @@ async fn set_starred_state(
     }
 
     Ok(EntryActionMulti {
-        r: row_view_from(&ewf, status),
+        r: row_view_from(&entry_with_feed, status),
         flash: None,
         pane_star_form,
         csrf_token,
@@ -698,7 +712,7 @@ async fn set_read_state(
     desired_read: bool,
     csrf_token: String,
 ) -> AppResult<EntryActionMulti> {
-    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let mut entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
     let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
@@ -706,10 +720,15 @@ async fn set_read_state(
         .get(&entry_id)
         .copied();
 
-    let changed = ewf.entry.read_at.is_some() != desired_read;
+    let changed = entry_with_feed.entry.read_at.is_some() != desired_read;
 
-    ewf.entry.read_at = if desired_read {
-        Some(ewf.entry.read_at.unwrap_or_else(chrono::Utc::now))
+    entry_with_feed.entry.read_at = if desired_read {
+        Some(
+            entry_with_feed
+                .entry
+                .read_at
+                .unwrap_or_else(chrono::Utc::now),
+        )
     } else {
         None
     };
@@ -738,7 +757,7 @@ async fn set_read_state(
     }
 
     Ok(EntryActionMulti {
-        r: row_view_from(&ewf, status),
+        r: row_view_from(&entry_with_feed, status),
         flash,
         pane_star_form: None,
         csrf_token,
@@ -755,7 +774,7 @@ pub async fn summarize_entry_form(
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
-    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
 
@@ -763,7 +782,7 @@ pub async fn summarize_entry_form(
     entry_summary::upsert_pending(&state.db, user_id, entry_id).await?;
 
     // Empty link is a sentinel; the worker reports the error.
-    let entry_link = ewf
+    let entry_link = entry_with_feed
         .entry
         .link
         .as_deref()
@@ -846,10 +865,10 @@ pub async fn fetch_full_content_form(
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
-    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let mut entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
-    let link = ewf
+    let link = entry_with_feed
         .entry
         .link
         .clone()
@@ -862,7 +881,7 @@ pub async fn fetch_full_content_form(
             // Stored raw; the pane sanitises it like any other body.
             entry::set_full_content_for_user(&state.db, user_id, entry_id, &extracted.content)
                 .await?;
-            ewf.entry.full_content = Some(extracted.content);
+            entry_with_feed.entry.full_content = Some(extracted.content);
             FlashPayload {
                 level: "success",
                 message: "Fetched full content.".to_string(),
@@ -877,7 +896,7 @@ pub async fn fetch_full_content_form(
         &state,
         ReadingPaneRequest {
             user_id,
-            ewf: &ewf,
+            entry_with_feed: &entry_with_feed,
             has_save,
             has_kagi,
             view: ContentView::Full,
@@ -907,7 +926,7 @@ pub async fn save_entry_form(
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
-    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
     let save_config = user_settings::get_save_services_config(
@@ -918,7 +937,7 @@ pub async fn save_entry_form(
     .await?
     .usable()?;
 
-    let link = ewf
+    let link = entry_with_feed
         .entry
         .link
         .as_deref()
@@ -932,8 +951,8 @@ pub async fn save_entry_form(
 
     let bookmark = BookmarkData {
         url: link,
-        title: ewf.entry.title.clone(),
-        description: ewf.entry.summary.clone(),
+        title: entry_with_feed.entry.title.clone(),
+        description: entry_with_feed.entry.summary.clone(),
         tags: vec![],
     };
 
@@ -977,7 +996,7 @@ pub async fn save_entry_form(
         &state,
         ReadingPaneRequest {
             user_id,
-            ewf: &ewf,
+            entry_with_feed: &entry_with_feed,
             has_save,
             has_kagi,
             view: ContentView::Full,
