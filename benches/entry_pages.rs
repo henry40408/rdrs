@@ -212,22 +212,24 @@ async fn drain_misses(pool: &SqlitePool, cold: bool) -> i64 {
     total
 }
 
-/// Cold-cache misses of one GET, with the sidebar cache in the given state.
-async fn misses_of(
-    server: &TestServer,
-    state: &rdrs::AppState,
-    pool: &SqlitePool,
+/// One cold-cache GET to measure, with the sidebar cache in the given state.
+struct MissProbe<'a> {
+    server: &'a TestServer,
+    state: &'a rdrs::AppState,
+    pool: &'a SqlitePool,
     user_id: i64,
-    path: &str,
+    path: &'a str,
     sidebar_primed: bool,
-) -> i64 {
-    state.sidebar_cache.bust(user_id);
-    if sidebar_primed {
-        server.get("/categories").await;
+}
+
+async fn misses_of(probe: MissProbe<'_>) -> i64 {
+    probe.state.sidebar_cache.bust(probe.user_id);
+    if probe.sidebar_primed {
+        probe.server.get("/categories").await;
     }
-    go_cold(pool).await;
-    server.get(path).await;
-    read_misses(pool).await
+    go_cold(probe.pool).await;
+    probe.server.get(probe.path).await;
+    read_misses(probe.pool).await
 }
 
 #[tokio::main]
@@ -329,8 +331,16 @@ async fn main() {
         "label", "route", "misses miss", "misses hit"
     );
     for (name, path) in &routes {
-        let miss = misses_of(&server, &bench_state, &pool, user_id, path, false).await;
-        let hit = misses_of(&server, &bench_state, &pool, user_id, path, true).await;
+        let probe = |sidebar_primed| MissProbe {
+            server: &server,
+            state: &bench_state,
+            pool: &pool,
+            user_id,
+            path,
+            sidebar_primed,
+        };
+        let miss = misses_of(probe(false)).await;
+        let hit = misses_of(probe(true)).await;
         println!("{:<10} {:<26} {miss:>12} {hit:>12}", args.label, name);
     }
 }
