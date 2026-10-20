@@ -123,13 +123,19 @@ pub async fn stream_contents(
         // Absolute: rendered inside another app with a different host.
         base_url: proxy_base_url,
     };
+    let options = ItemOptions {
+        secret,
+        no_content,
+        proxy_base_url,
+        pixel,
+    };
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret, no_content, proxy_base_url, pixel)
+            entry_with_feed_to_greader_item(ewf, status, options)
         })
         .collect();
 
@@ -363,13 +369,19 @@ async fn fetch_items_by_ids(
         secret,
         base_url: proxy_base_url,
     };
+    let options = ItemOptions {
+        secret,
+        no_content: false,
+        proxy_base_url,
+        pixel,
+    };
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret, false, proxy_base_url, pixel)
+            entry_with_feed_to_greader_item(ewf, status, options)
         })
         .collect();
 
@@ -448,16 +460,28 @@ fn merge_summary_statuses(
     merged
 }
 
-/// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
+/// Settings shared by every item of one response.
 /// `secret` signs proxy URLs; `no_content` skips sanitization (RDRS extension).
+#[derive(Clone, Copy)]
+struct ItemOptions<'a> {
+    secret: &'a [u8],
+    no_content: bool,
+    proxy_base_url: Option<&'a str>,
+    pixel: PixelContext<'a>,
+}
+
+/// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
 fn entry_with_feed_to_greader_item(
     ewf: &entry::EntryWithFeed,
     summary_status: Option<String>,
-    secret: &[u8],
-    no_content: bool,
-    proxy_base_url: Option<&str>,
-    pixel: PixelContext<'_>,
+    options: ItemOptions<'_>,
 ) -> GReaderItem {
+    let ItemOptions {
+        secret,
+        no_content,
+        proxy_base_url,
+        pixel,
+    } = options;
     let e = &ewf.entry;
 
     let mut categories = vec!["user/-/state/com.google/reading-list".to_string()];
