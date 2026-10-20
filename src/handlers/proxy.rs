@@ -10,6 +10,7 @@ use url::Url;
 use crate::{
     AppState,
     error::{AppError, AppResult},
+    services::fetch::HttpVersion,
     services::http::{RetryConfig, send_with_retry_on_error},
     services::{verify_signature, verify_signature_with_referrer},
 };
@@ -128,7 +129,7 @@ pub async fn proxy_image(
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
         let mut req = state
             .fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(&url_str)
             .header("User-Agent", &user_agent);
         if let Some(ref referrer) = referrer {

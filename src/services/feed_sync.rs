@@ -7,7 +7,7 @@ use url::Url;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
-use crate::services::fetch::Fetcher;
+use crate::services::fetch::{Fetcher, HttpVersion};
 use crate::services::http::{FEED_SYNC_TIMEOUT, RetryConfig, send_with_retry_on_error};
 use crate::services::icon_fetcher;
 use crate::utils::datetime::parse_timestamp;
@@ -59,7 +59,12 @@ pub async fn refresh_feed(
 
     // `http1_only()` is client-level, so the per-feed HTTP/2 opt-out selects a
     // separate shared client.
-    let client = fetcher.client(feed_data.http2_disabled);
+    let http_version = if feed_data.http2_disabled {
+        HttpVersion::Http1Only
+    } else {
+        HttpVersion::Negotiated
+    };
+    let client = fetcher.client(http_version);
 
     let mut headers = HeaderMap::new();
 

@@ -3,7 +3,7 @@ use scraper::{Html, Selector};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::fetch::Fetcher;
+use crate::services::fetch::{Fetcher, HttpVersion};
 use crate::services::http::{RetryConfig, send_with_retry_on_error};
 
 #[derive(Debug, Clone)]
@@ -31,7 +31,7 @@ pub async fn discover_feed(
 
     let response = send_with_retry_on_error(&retry_config, || {
         fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(&url_owned)
             .header(USER_AGENT, user_agent)
     })
@@ -67,7 +67,7 @@ pub async fn discover_feed(
 
     let feed_response = send_with_retry_on_error(&retry_config, || {
         fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(&feed_url)
             .header(USER_AGENT, user_agent)
     })
