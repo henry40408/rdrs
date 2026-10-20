@@ -283,15 +283,15 @@ pub async fn update_fetch_result(db: &Db, result: &FetchResult<'_>) -> AppResult
 }
 
 /// Transactional [`update_fetch_result`], so readers never see a half-applied feed sync.
-pub async fn update_fetch_result_tx(
-    tx: &mut Tx<'_>,
-    id: i64,
-    fetched_at: DateTime<Utc>,
-    fetch_error: Option<&str>,
-    etag: Option<&str>,
-    last_modified: Option<&str>,
-    feed_updated_at: Option<DateTime<Utc>>,
-) -> AppResult<()> {
+pub async fn update_fetch_result_tx(tx: &mut Tx<'_>, result: &FetchResult<'_>) -> AppResult<()> {
+    let FetchResult {
+        id,
+        fetched_at,
+        fetch_error,
+        etag,
+        last_modified,
+        feed_updated_at,
+    } = *result;
     let now = Utc::now();
     db_execute_tx!(
         tx,

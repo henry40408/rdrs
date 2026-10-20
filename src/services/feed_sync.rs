@@ -330,12 +330,12 @@ pub async fn refresh_feed(
 
         feed::update_fetch_result_tx(
             &mut tx,
-            feed_id,
-            Utc::now(),
-            None,
-            new_etag.as_deref(),
-            new_last_modified.as_deref(),
-            effective_updated_at,
+            &feed::FetchResult {
+                etag: new_etag.as_deref(),
+                last_modified: new_last_modified.as_deref(),
+                feed_updated_at: effective_updated_at,
+                ..feed::FetchResult::new(feed_id, Utc::now())
+            },
         )
         .await?;
 
