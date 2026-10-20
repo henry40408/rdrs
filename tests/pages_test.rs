@@ -3211,6 +3211,21 @@ async fn test_feeds_page_filter_errors_only_renders_error_rows() {
 }
 
 #[tokio::test]
+async fn test_feeds_page_unknown_sort_cannot_inject_link_parameters() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let body = common::get_ok(&app.server, "/feeds?sort=title%26category=5").await;
+
+    assert!(
+        body.contains("/feeds?sort=title&#38;filter=errors"),
+        "{body}"
+    );
+    assert!(!body.contains("category=5"), "{body}");
+}
+
+#[tokio::test]
 async fn test_feeds_page_filter_by_category_excludes_other_rows() {
     let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
