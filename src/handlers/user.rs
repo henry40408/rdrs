@@ -155,6 +155,8 @@ pub struct ChromeData {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    /// See [`crate::services::CachedChrome::unread_by_feed`].
+    pub unread_by_feed: std::sync::Arc<std::collections::HashMap<i64, i64>>,
     pub sidebar_prefs: user_settings::SidebarPrefs,
     /// See [`crate::services::CachedChrome::offline_keep`].
     pub offline_keep: i64,
@@ -186,6 +188,7 @@ pub async fn read_chrome_data(
             categories: cached.categories,
             total_unread: cached.total_unread,
             total_summarized: cached.total_summarized,
+            unread_by_feed: cached.unread_by_feed,
             sidebar_prefs: cached.sidebar_prefs,
             offline_keep: cached.offline_keep,
             original_user_is_admin,
@@ -208,17 +211,24 @@ pub async fn read_chrome_data(
     let cats = category::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
-    let unread_by_cat = entry::count_unread_by_category(&state.db, user_id)
+    // One scan of unread entries yields both the per-feed counts `/feeds` shows
+    // and, summed per category, the sidebar's.
+    let feeds = crate::models::feed::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
+    let unread_by_feed = entry::count_unread_by_feed(&state.db, user_id)
+        .await
+        .unwrap_or_default();
+    let mut unread_by_cat: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    for f in &feeds {
+        *unread_by_cat.entry(f.category_id).or_insert(0) +=
+            unread_by_feed.get(&f.id).copied().unwrap_or(0);
+    }
     let total_unread: i64 = unread_by_cat.values().sum();
     let total_summarized = crate::models::entry_summary::count_completed(&state.db, user_id)
         .await
         .unwrap_or(0);
-    let has_feeds = crate::models::feed::count_by_user(&state.db, user_id)
-        .await
-        .unwrap_or(0)
-        > 0;
+    let has_feeds = !feeds.is_empty();
     let categories: Vec<SidebarCategoryDto> = cats
         .into_iter()
         .map(|c| SidebarCategoryDto {
@@ -232,6 +242,7 @@ pub async fn read_chrome_data(
         categories,
         total_unread,
         total_summarized,
+        unread_by_feed: std::sync::Arc::new(unread_by_feed),
         sidebar_prefs,
         offline_keep,
     };
@@ -248,6 +259,7 @@ pub async fn read_chrome_data(
         categories: fresh.categories,
         total_unread: fresh.total_unread,
         total_summarized: fresh.total_summarized,
+        unread_by_feed: fresh.unread_by_feed,
         sidebar_prefs: fresh.sidebar_prefs,
         offline_keep: fresh.offline_keep,
         original_user_is_admin,

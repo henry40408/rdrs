@@ -1342,6 +1342,8 @@ pub struct AppLayoutContext {
     /// drop another account's cached articles before any network call.
     pub offline_key: String,
     pub offline_keep: i64,
+    /// Per-feed unread counts from the sidebar cache, for `/feeds`.
+    pub unread_by_feed: std::sync::Arc<std::collections::HashMap<i64, i64>>,
 }
 
 /// Build the shared layout context for a logged-in page.
@@ -1392,6 +1394,7 @@ pub async fn build_app_layout(
         csrf_token: auth_user.csrf_token.clone(),
         offline_key: crate::secret::offline_id(&state.config.secret, auth_user.user.id),
         offline_keep: chrome.offline_keep,
+        unread_by_feed: chrome.unread_by_feed,
     }
 }
 

@@ -13,7 +13,7 @@ use crate::error::AppError;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::user_settings;
-use crate::models::{category, entry, feed};
+use crate::models::{category, feed};
 
 /// `/feeds` filter/sort query; the URL is the source of truth.
 #[derive(serde::Deserialize)]
@@ -32,6 +32,7 @@ pub async fn feeds_page(
 ) -> (Flash, FeedsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
+    let unread_map = layout.unread_by_feed.clone();
 
     // Gated on the setting, so an opted-in reader sees the column even when empty.
     let open_rate_shown = user_settings::get_pixel_tracking_enabled_at(&state.db, user_id)
@@ -44,9 +45,6 @@ pub async fn feeds_page(
             .await
             .unwrap_or_default();
         let all_feeds = feed::list_by_user(&state.db, user_id)
-            .await
-            .unwrap_or_default();
-        let unread_map = entry::count_unread_by_feed(&state.db, user_id)
             .await
             .unwrap_or_default();
         let open_rates: std::collections::HashMap<i64, crate::models::entry_open::FeedOpenRate> =

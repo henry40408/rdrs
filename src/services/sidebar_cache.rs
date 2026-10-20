@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use moka::ops::compute::Op;
@@ -13,6 +15,8 @@ pub struct CachedChrome {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    /// `feed_id` -> unread count; lets `/feeds` skip its own full-table count.
+    pub unread_by_feed: Arc<HashMap<i64, i64>>,
     /// How the client orders and filters the category / feed lists.
     pub sidebar_prefs: crate::models::user_settings::SidebarPrefs,
     /// Entries kept readable offline; same row as `sidebar_prefs`, so free to carry.
@@ -140,6 +144,7 @@ mod tests {
             }],
             total_unread: unread,
             total_summarized: 0,
+            unread_by_feed: Arc::default(),
             sidebar_prefs: crate::models::user_settings::SidebarPrefs::default(),
             offline_keep: crate::models::user_settings::OFFLINE_KEEP_OFF,
         }
