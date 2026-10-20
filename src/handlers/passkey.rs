@@ -126,12 +126,14 @@ pub async fn finish_registration(
     let name = req.name;
     let new_passkey = passkey::create_passkey(
         &state.db,
-        user_id,
-        &credential_id,
-        &public_key_json,
-        0,
-        &name,
-        transports.as_deref(),
+        &passkey::NewPasskey {
+            user_id,
+            credential_id: &credential_id,
+            public_key: &public_key_json,
+            counter: 0,
+            name: &name,
+            transports: transports.as_deref(),
+        },
     )
     .await?;
 

@@ -20,15 +20,25 @@ pub struct Passkey {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
-pub async fn create_passkey(
-    db: &Db,
-    user_id: i64,
-    credential_id: &[u8],
-    public_key: &[u8],
-    counter: i64,
-    name: &str,
-    transports: Option<&str>,
-) -> AppResult<Passkey> {
+/// Fields of a passkey to insert; input to [`create_passkey`].
+pub struct NewPasskey<'a> {
+    pub user_id: i64,
+    pub credential_id: &'a [u8],
+    pub public_key: &'a [u8],
+    pub counter: i64,
+    pub name: &'a str,
+    pub transports: Option<&'a str>,
+}
+
+pub async fn create_passkey(db: &Db, new: &NewPasskey<'_>) -> AppResult<Passkey> {
+    let NewPasskey {
+        user_id,
+        credential_id,
+        public_key,
+        counter,
+        name,
+        transports,
+    } = *new;
     query_one!(
         db,
         Passkey,
@@ -135,12 +145,14 @@ mod tests {
 
         let passkey = create_passkey(
             &db,
-            user.id,
-            &credential_id,
-            &public_key,
-            0,
-            "My Passkey",
-            Some("usb,nfc"),
+            &NewPasskey {
+                user_id: user.id,
+                credential_id: &credential_id,
+                public_key: &public_key,
+                counter: 0,
+                name: "My Passkey",
+                transports: Some("usb,nfc"),
+            },
         )
         .await
         .unwrap();
@@ -164,12 +176,32 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        create_passkey(&db, user.id, &[1], &[1], 0, "Passkey 1", None)
-            .await
-            .unwrap();
-        create_passkey(&db, user.id, &[2], &[2], 0, "Passkey 2", None)
-            .await
-            .unwrap();
+        create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "Passkey 1",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
+        create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user.id,
+                credential_id: &[2],
+                public_key: &[2],
+                counter: 0,
+                name: "Passkey 2",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let passkeys = list_by_user(&db, user.id).await.unwrap();
         assert_eq!(passkeys.len(), 2);
@@ -180,9 +212,19 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Passkey", None)
-            .await
-            .unwrap();
+        let passkey = create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "Passkey",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(passkey.counter, 0);
         assert!(passkey.last_used_at.is_none());
 
@@ -198,9 +240,19 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Old Name", None)
-            .await
-            .unwrap();
+        let passkey = create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "Old Name",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
         rename_passkey(&db, passkey.id, user.id, "New Name")
             .await
             .unwrap();
@@ -214,9 +266,19 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Passkey", None)
-            .await
-            .unwrap();
+        let passkey = create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "Passkey",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
         delete_passkey(&db, passkey.id, user.id).await.unwrap();
 
         let found = find_by_id(&db, passkey.id).await.unwrap();
@@ -229,9 +291,19 @@ mod tests {
         let user1 = seed_user(&db, "user1", Role::User).await;
         let user2 = seed_user(&db, "user2", Role::User).await;
 
-        let passkey = create_passkey(&db, user1.id, &[1], &[1], 0, "Passkey", None)
-            .await
-            .unwrap();
+        let passkey = create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user1.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "Passkey",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let result = delete_passkey(&db, passkey.id, user2.id).await;
         assert!(matches!(result, Err(AppError::PasskeyNotFound)));
@@ -244,12 +316,32 @@ mod tests {
         let user1 = seed_user(&db, "user1", Role::User).await;
         let user2 = seed_user(&db, "user2", Role::User).await;
 
-        create_passkey(&db, user1.id, &[1], &[1], 0, "User1 Passkey", None)
-            .await
-            .unwrap();
-        create_passkey(&db, user2.id, &[2], &[2], 0, "User2 Passkey", None)
-            .await
-            .unwrap();
+        create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user1.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "User1 Passkey",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
+        create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user2.id,
+                credential_id: &[2],
+                public_key: &[2],
+                counter: 0,
+                name: "User2 Passkey",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let mine = list_by_user(&db, user1.id).await.unwrap();
         assert_eq!(mine.len(), 1);
@@ -262,9 +354,19 @@ mod tests {
         let user1 = seed_user(&db, "user1", Role::User).await;
         let user2 = seed_user(&db, "user2", Role::User).await;
 
-        let passkey = create_passkey(&db, user1.id, &[1], &[1], 0, "Passkey", None)
-            .await
-            .unwrap();
+        let passkey = create_passkey(
+            &db,
+            &NewPasskey {
+                user_id: user1.id,
+                credential_id: &[1],
+                public_key: &[1],
+                counter: 0,
+                name: "Passkey",
+                transports: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let result = rename_passkey(&db, passkey.id, user2.id, "New Name").await;
         assert!(matches!(result, Err(AppError::PasskeyNotFound)));
