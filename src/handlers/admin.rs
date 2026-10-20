@@ -248,8 +248,7 @@ pub async fn create_user_form(
     .await;
 
     match result {
-        // Bare URL only: `/admin` detects it via `pages::extract_invite_link`.
-        Ok(path) => FlashRedirect::success("/admin", invite_url(&state, &path)),
+        Ok(path) => FlashRedirect::invite_link("/admin", invite_url(&state, &path)),
         Err(AppError::UsernameExists) => {
             FlashRedirect::error("/admin", "That username is already taken.")
         }
@@ -287,7 +286,7 @@ pub async fn reissue_invite_form(
     .await;
 
     match result {
-        Ok(path) => FlashRedirect::success("/admin", invite_url(&state, &path)),
+        Ok(path) => FlashRedirect::invite_link("/admin", invite_url(&state, &path)),
         _ => FlashRedirect::error("/admin", "Failed to issue a link."),
     }
 }
