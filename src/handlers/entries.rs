@@ -157,7 +157,7 @@ fn deny_storage(response: &mut Response) {
 
 /// Counts cached between the early bust and the detached write would keep the
 /// old unread state for the whole TTL, so bust and notify again once it lands.
-fn bust_after_write(state: &AppState, user_id: i64) {
+fn refresh_sidebar_after_write(state: &AppState, user_id: i64) {
     state.sidebar_cache.bust(user_id);
     state.events.emit_sidebar(user_id);
 }
@@ -169,7 +169,7 @@ fn dispatch_mark_read_on_open(state: &AppState, user_id: i64, entry_id: i64) {
         if let Err(e) = entry::mark_as_read(&task_state.db, entry_id).await {
             tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
         }
-        bust_after_write(&task_state, user_id);
+        refresh_sidebar_after_write(&task_state, user_id);
     });
     state.sidebar_cache.bust(user_id);
     state.events.emit_sidebar(user_id);
@@ -706,7 +706,7 @@ async fn set_read_state(
             {
                 tracing::warn!(event = "entry.set_read_failed", entry_id, error = %e, "async set_read failed");
             }
-            bust_after_write(&task_state, user_id);
+            refresh_sidebar_after_write(&task_state, user_id);
         });
         state.sidebar_cache.bust(user_id);
         state.events.emit_sidebar(user_id);
