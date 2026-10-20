@@ -3136,6 +3136,7 @@ dependencies = [
  "image",
  "ipnet",
  "libmimalloc-sys",
+ "libsqlite3-sys",
  "lol_html",
  "mimalloc",
  "moka",

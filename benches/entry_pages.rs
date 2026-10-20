@@ -1,30 +1,37 @@
-//! Server-side latency benchmark for the entry-list pages and the `/feeds`,
-//! `/categories` and `/statistics` pages (handler, queries, render) through the
-//! real router; `dom-bench` covers the browser side.
+//! Page-cache-miss benchmark for the entry-list pages and the `/feeds`,
+//! `/categories` and `/statistics` pages, through the real router.
 //!
 //! ```text
-//! RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- [--label before] [--entries 2000] [--iterations 200]
+//! RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- [--label before] [--entries 20000]
 //!     [--categories 4] [--feeds-per-category 5]
 //! ```
 //!
-//! Seeds one account (by default 4 categories × 5 feeds, some with a fetch error
-//! or an old date so the Errors/Stale filters have rows) into in-memory SQLite and prints
-//! p50/p90/mean per route in µs. Compare only on the same machine, with
-//! interleaved before/after runs.
+//! Seeds one account (some feeds with a fetch error or an old date so the
+//! Errors/Stale filters have rows) into a file-backed `SQLite` database with the
+//! app's pragmas, except `mmap_size=0` so every page read goes through the pager.
+//! Before each request the pager caches of all pool connections are emptied, then
+//! the request's `SQLITE_DBSTATUS_CACHE_MISS` count is summed over the pool. A
+//! cold cache stands in for a Raspberry Pi whose database exceeds its RAM; unlike
+//! wall clock on an SSD machine, the count does not depend on the machine. Each route
+//! prints the misses with the sidebar cache busted (`miss`) and primed (`hit`);
+//! the admin DB figures of `/statistics` are primed once before measuring.
+//!
+//! The unsafe FFI is confined to this bench; the library keeps `unsafe_code = "deny"`.
+#![allow(unsafe_code)]
 
 #[path = "../tests/common/mod.rs"]
 mod common;
 
-use std::time::{Duration, Instant};
-
 use axum_test::TestServer;
+use rdrs::config::Backend;
+use rdrs::db::DbInner;
 use rdrs::models::{category, entry, entry_summary, feed};
 use rdrs::{Db, Role, create_router};
+use sqlx::SqlitePool;
 
 struct Args {
     label: String,
     entries: usize,
-    iterations: usize,
     categories: usize,
     feeds_per_category: usize,
 }
@@ -32,8 +39,7 @@ struct Args {
 fn parse_args() -> Args {
     let mut args = Args {
         label: "run".to_string(),
-        entries: 2000,
-        iterations: 200,
+        entries: 20_000,
         categories: 4,
         feeds_per_category: 5,
     };
@@ -46,7 +52,6 @@ fn parse_args() -> Args {
         };
         match arg.as_str() {
             "--entries" => args.entries = number(),
-            "--iterations" => args.iterations = number(),
             "--categories" => args.categories = number(),
             "--feeds-per-category" => args.feeds_per_category = number(),
             "--label" => args.label = it.next().expect("--label needs a value"),
@@ -61,9 +66,9 @@ fn parse_args() -> Args {
     args
 }
 
-/// Returns the first feed and category, for the scoped pages to aim at, and a
-/// mid-list entry for the per-entry routes.
-async fn seed(db: &Db, args: &Args) -> (i64, i64, i64) {
+/// Returns the user, the first feed and category, for the scoped pages to aim
+/// at, and a mid-list entry for the per-entry routes.
+async fn seed(db: &Db, args: &Args) -> (i64, i64, i64, i64) {
     let n = args.entries;
     let user = common::seed_account(db, "bench", "vulture-mango-77-quilt", Role::Admin).await;
     let content = "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>".repeat(12);
@@ -107,7 +112,8 @@ async fn seed(db: &Db, args: &Args) -> (i64, i64, i64) {
         )
         .await
         .unwrap();
-        if i == n / 2 {
+        // A read entry: opening an unread one spawns a detached mark-read write.
+        if i == n / 2 - n / 2 % 3 {
             mid_entry = e.id;
         }
         if i % 3 == 0 {
@@ -128,7 +134,7 @@ async fn seed(db: &Db, args: &Args) -> (i64, i64, i64) {
         }
     }
     entry::mark_read_by_ids(db, user.id, &read).await.unwrap();
-    (feeds[0], first_category.unwrap(), mid_entry)
+    (user.id, feeds[0], first_category.unwrap(), mid_entry)
 }
 
 /// Gives the Errors and Stale filters of `/feeds` something to match: every 7th
@@ -160,19 +166,90 @@ fn hidden_value(html: &str, name: &str) -> Option<String> {
     Some(html[start..start + len].to_string())
 }
 
-fn micros(d: Duration) -> f64 {
-    d.as_secs_f64() * 1e6
+/// Empties the pager cache of every pool connection and zeroes its miss counter.
+async fn go_cold(pool: &SqlitePool) {
+    drain_misses(pool, true).await;
+}
+
+/// Cache misses since the last call, summed over every pool connection.
+async fn read_misses(pool: &SqlitePool) -> i64 {
+    drain_misses(pool, false).await
+}
+
+async fn drain_misses(pool: &SqlitePool, cold: bool) -> i64 {
+    let mut held = Vec::new();
+    for _ in 0..pool.options().get_max_connections() {
+        held.push(pool.acquire().await.unwrap());
+    }
+    let mut total = 0;
+    for conn in &mut held {
+        if cold {
+            sqlx::query("PRAGMA mmap_size = 0")
+                .execute(&mut **conn)
+                .await
+                .unwrap();
+            sqlx::query("PRAGMA shrink_memory")
+                .execute(&mut **conn)
+                .await
+                .unwrap();
+        }
+        let mut handle = conn.lock_handle().await.unwrap();
+        let (mut current, mut highwater) = (0, 0);
+        // SAFETY: the pointer is the live connection locked by `handle`, and
+        // the two out-pointers are valid for the call.
+        let rc = unsafe {
+            libsqlite3_sys::sqlite3_db_status(
+                handle.as_raw_handle().as_ptr(),
+                libsqlite3_sys::SQLITE_DBSTATUS_CACHE_MISS,
+                &raw mut current,
+                &raw mut highwater,
+                1,
+            )
+        };
+        assert_eq!(rc, libsqlite3_sys::SQLITE_OK);
+        total += i64::from(current);
+    }
+    total
+}
+
+/// Cold-cache misses of one GET, with the sidebar cache in the given state.
+async fn misses_of(
+    server: &TestServer,
+    state: &rdrs::AppState,
+    pool: &SqlitePool,
+    user_id: i64,
+    path: &str,
+    sidebar_primed: bool,
+) -> i64 {
+    state.sidebar_cache.bust(user_id);
+    if sidebar_primed {
+        server.get("/categories").await;
+    }
+    go_cold(pool).await;
+    server.get(path).await;
+    read_misses(pool).await
 }
 
 #[tokio::main]
 async fn main() {
     let args = parse_args();
-    let state = common::test_state(common::default_test_config()).await;
-    let (feed_id, category_id, mid_entry) = seed(&state.db, &args).await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("bench.sqlite3");
+    let mut state = common::test_state(common::default_test_config()).await;
+    state.db = Db::connect(db_path.to_str().unwrap(), Backend::Sqlite)
+        .await
+        .unwrap();
+    let DbInner::Sqlite(pool) = state.db.inner().clone() else {
+        unreachable!("the bench connects SQLite");
+    };
+    let (user_id, feed_id, category_id, mid_entry) = seed(&state.db, &args).await;
+    let bench_state = state.clone();
     let mut server = TestServer::builder()
         .save_cookies()
         .build(create_router(state));
     common::login(&mut server, "bench").await;
+    // Fills `AdminDbStatsCache` (60 s TTL) so no route pays for it.
+    server.get("/statistics").await;
 
     let mut routes = vec![
         ("unread", "/".to_string()),
@@ -202,8 +279,7 @@ async fn main() {
         ("feeds ?filter=errors", "/feeds?filter=errors".to_string()),
         ("feeds ?filter=stale", "/feeds?filter=stale".to_string()),
         ("categories", "/categories".to_string()),
-        // The bench user is an admin, so these measure the steady state with
-        // the cached site-wide DB figures (`AdminDbStatsCache`, 60 s TTL).
+        // The bench user is an admin; the cached site-wide DB figures are primed above.
         ("statistics", "/statistics".to_string()),
         (
             "statistics ?period=30d",
@@ -249,30 +325,12 @@ async fn main() {
     }
 
     println!(
-        "{:<10} {:<26} {:>10} {:>10} {:>10} {:>9}",
-        "label", "route", "p50 µs", "p90 µs", "mean µs", "bytes"
+        "{:<10} {:<26} {:>12} {:>12}",
+        "label", "route", "misses miss", "misses hit"
     );
     for (name, path) in &routes {
-        let bytes = common::get_ok(&server, path).await.len();
-        for _ in 0..args.iterations / 10 {
-            server.get(path).await;
-        }
-        let mut samples = Vec::with_capacity(args.iterations);
-        for _ in 0..args.iterations {
-            let start = Instant::now();
-            server.get(path).await;
-            samples.push(start.elapsed());
-        }
-        samples.sort();
-        let mean = samples.iter().sum::<Duration>() / u32::try_from(samples.len()).unwrap();
-        println!(
-            "{:<10} {:<26} {:>10.1} {:>10.1} {:>10.1} {:>9}",
-            args.label,
-            name,
-            micros(samples[samples.len() / 2]),
-            micros(samples[samples.len() * 9 / 10]),
-            micros(mean),
-            bytes
-        );
+        let miss = misses_of(&server, &bench_state, &pool, user_id, path, false).await;
+        let hit = misses_of(&server, &bench_state, &pool, user_id, path, true).await;
+        println!("{:<10} {:<26} {miss:>12} {hit:>12}", args.label, name);
     }
 }
