@@ -4481,3 +4481,26 @@ async fn test_settings_page_groups_and_forward_auth() {
         "expected RDRS_AUTH_PROXY_LOGOUT_URL in body"
     );
 }
+
+/// `/feeds` takes its unread counts from the sidebar cache, so a mark-read must
+/// bust that cache or the page would keep showing the old count.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feeds_page_unread_count_follows_mark_read() {
+    let app = app_with_wombats(3).await;
+
+    let before = common::get_ok(&app.server, "/feeds").await;
+    assert!(before.contains("<strong>3</strong>"), "{before}");
+
+    app.server.post("/entries/1/read").await.assert_status_ok();
+
+    // The write is detached; the cache is busted again once it lands.
+    let mut after = String::new();
+    for _ in 0..100 {
+        after = common::get_ok(&app.server, "/feeds").await;
+        if after.contains("<strong>2</strong>") {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("/feeds kept the old unread count: {after}");
+}
