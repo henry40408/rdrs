@@ -119,14 +119,16 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         db,
-        feed.id,
-        &format!("guid-{slug}"),
-        Some(&format!("Title for {slug}")),
-        Some(&format!("https://example.com/{slug}")),
-        Some(&format!("<p>Body for {slug}.</p>")),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: &format!("guid-{slug}"),
+            title: Some(&format!("Title for {slug}")),
+            link: Some(&format!("https://example.com/{slug}")),
+            content: Some(&format!("<p>Body for {slug}.</p>")),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -156,14 +158,16 @@ async fn seed_entry_with_text(db: &Db, username: &str, slug: &str, title: &str, 
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         db,
-        feed.id,
-        &format!("guid-{slug}"),
-        Some(title),
-        Some(&format!("https://example.com/{slug}")),
-        Some(body),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: &format!("guid-{slug}"),
+            title: Some(title),
+            link: Some(&format!("https://example.com/{slug}")),
+            content: Some(body),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1283,27 +1287,31 @@ async fn test_category_entries_page() {
     .unwrap();
     let (a, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed1.id,
-        "guid-ce-a",
-        Some("Entry A"),
-        Some("https://x/ce/a"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed1.id,
+            guid: "guid-ce-a",
+            title: Some("Entry A"),
+            link: Some("https://x/ce/a"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (b, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed2.id,
-        "guid-ce-b",
-        Some("Entry B"),
-        Some("https://x/ce/b"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed2.id,
+            guid: "guid-ce-b",
+            title: Some("Entry B"),
+            link: Some("https://x/ce/b"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1487,14 +1495,16 @@ async fn test_category_entries_page_load_more_fragment() {
     for i in 0..3 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("guid-clm-{i}"),
-            Some(&format!("Entry {i}")),
-            Some(&format!("https://x/clm/{i}")),
-            None,
-            None,
-            None,
-            None,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-clm-{i}"),
+                title: Some(&format!("Entry {i}")),
+                link: Some(&format!("https://x/clm/{i}")),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
@@ -1559,14 +1569,16 @@ async fn test_category_entries_page_pane_fragment() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-cpane-0",
-        Some("Pane Entry"),
-        Some("https://x/cpane/0"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-cpane-0",
+            title: Some("Pane Entry"),
+            link: Some("https://x/cpane/0"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1641,14 +1653,16 @@ async fn test_feed_entries_page_pane_fragment() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fp-0",
-        Some("FP Entry"),
-        Some("https://x/fp/0"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fp-0",
+            title: Some("FP Entry"),
+            link: Some("https://x/fp/0"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1778,27 +1792,31 @@ async fn test_category_mark_read_scoped_search() {
     .unwrap();
     let (matching, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-mr-match",
-        Some("Widget Roundup"),
-        Some("https://x/mr/match"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-mr-match",
+            title: Some("Widget Roundup"),
+            link: Some("https://x/mr/match"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (other, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-mr-other",
-        Some("Something Else"),
-        Some("https://x/mr/other"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-mr-other",
+            title: Some("Something Else"),
+            link: Some("https://x/mr/other"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1884,14 +1902,16 @@ async fn test_category_mark_read_scoped_search_syntax() {
     ] {
         let (e, _) = rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            guid,
-            Some(title),
-            Some(&format!("https://x/ms/{guid}")),
-            None,
-            None,
-            None,
-            None,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid,
+                title: Some(title),
+                link: Some(&format!("https://x/ms/{guid}")),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
@@ -1990,28 +2010,32 @@ async fn test_sidebar_category_feeds_endpoint() {
     for i in 0..2 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("guid-sf-{i}"),
-            Some(&format!("SF Entry {i}")),
-            Some(&format!("https://x/sf/{i}")),
-            None,
-            None,
-            None,
-            None,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-sf-{i}"),
+                title: Some(&format!("SF Entry {i}")),
+                link: Some(&format!("https://x/sf/{i}")),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
     }
     rdrs::models::entry::upsert_entry(
         &app.db,
-        other_feed.id,
-        "guid-sf-other",
-        Some("Other Entry"),
-        Some("https://x/sf/other"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: other_feed.id,
+            guid: "guid-sf-other",
+            title: Some("Other Entry"),
+            link: Some("https://x/sf/other"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -2113,14 +2137,16 @@ async fn test_category_entries_hides_mark_above_while_searching() {
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-ma-0",
-        Some("Widget News"),
-        Some("https://x/ma/0"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-ma-0",
+            title: Some("Widget News"),
+            link: Some("https://x/ma/0"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -2188,27 +2214,31 @@ async fn test_feed_mark_read_scoped_search() {
     .unwrap();
     let (matching, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fmr-match",
-        Some("Widget Roundup"),
-        Some("https://x/fmr/match"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fmr-match",
+            title: Some("Widget Roundup"),
+            link: Some("https://x/fmr/match"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (other, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fmr-other",
-        Some("Something Else"),
-        Some("https://x/fmr/other"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fmr-other",
+            title: Some("Something Else"),
+            link: Some("https://x/fmr/other"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -2292,27 +2322,31 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     .unwrap();
     let (matching_unread, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-mc-unread",
-        Some("Widget Roundup Unread"),
-        Some("https://x/mc/unread"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-mc-unread",
+            title: Some("Widget Roundup Unread"),
+            link: Some("https://x/mc/unread"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (matching_read, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-mc-read",
-        Some("Widget Roundup Read"),
-        Some("https://x/mc/read"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-mc-read",
+            title: Some("Widget Roundup Read"),
+            link: Some("https://x/mc/read"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -2402,27 +2436,31 @@ async fn test_feed_entries_page() {
     .unwrap();
     let (a, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fe-a",
-        Some("First Entry"),
-        Some("https://x/a"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fe-a",
+            title: Some("First Entry"),
+            link: Some("https://x/a"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (b, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fe-b",
-        Some("Second Entry"),
-        Some("https://x/b"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fe-b",
+            title: Some("Second Entry"),
+            link: Some("https://x/b"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -2548,40 +2586,46 @@ async fn test_feed_entries_page_status_filter() {
     .unwrap();
     let (u, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fst-u",
-        Some("Unread Entry"),
-        Some("https://x/fst/u"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fst-u",
+            title: Some("Unread Entry"),
+            link: Some("https://x/fst/u"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (r, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fst-r",
-        Some("Read Entry"),
-        Some("https://x/fst/r"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fst-r",
+            title: Some("Read Entry"),
+            link: Some("https://x/fst/r"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (s, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-fst-s",
-        Some("Starred Entry"),
-        Some("https://x/fst/s"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-fst-s",
+            title: Some("Starred Entry"),
+            link: Some("https://x/fst/s"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -2782,14 +2826,16 @@ async fn test_feed_entries_page_load_more_fragment() {
     for i in 0..3 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("guid-lm-{i}"),
-            Some(&format!("Entry {i}")),
-            Some(&format!("https://x/lm/{i}")),
-            None,
-            None,
-            None,
-            None,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-lm-{i}"),
+                title: Some(&format!("Entry {i}")),
+                link: Some(&format!("https://x/lm/{i}")),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
@@ -3389,40 +3435,46 @@ async fn test_unread_page_renders_entry_rows() {
 
     let (_e1, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-entry-one",
-        Some("Entry One"),
-        Some("https://blog.example/one"),
-        Some("<p>Content one</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-entry-one",
+            title: Some("Entry One"),
+            link: Some("https://blog.example/one"),
+            content: Some("<p>Content one</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-entry-two",
-        Some("Entry Two"),
-        Some("https://blog.example/two"),
-        Some("<p>Content two</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-entry-two",
+            title: Some("Entry Two"),
+            link: Some("https://blog.example/two"),
+            content: Some("<p>Content two</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (e3, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-entry-three",
-        Some("Read Already"),
-        Some("https://blog.example/three"),
-        Some("<p>Content three</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-entry-three",
+            title: Some("Read Already"),
+            link: Some("https://blog.example/three"),
+            content: Some("<p>Content three</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -3524,40 +3576,46 @@ async fn test_entries_page_renders_ssr_rows() {
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-e1",
-        Some("Entries Alpha"),
-        Some("https://entries.example/alpha"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-e1",
+            title: Some("Entries Alpha"),
+            link: Some("https://entries.example/alpha"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-e2",
-        Some("Entries Beta"),
-        Some("https://entries.example/beta"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-e2",
+            title: Some("Entries Beta"),
+            link: Some("https://entries.example/beta"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-e3",
-        Some("Entries Gamma"),
-        Some("https://entries.example/gamma"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-e3",
+            title: Some("Entries Gamma"),
+            link: Some("https://entries.example/gamma"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -3619,40 +3677,46 @@ async fn test_read_entries_page_renders_ssr_rows() {
     .unwrap();
     let (e1, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-r1",
-        Some("Read Alpha"),
-        Some("https://read.example/alpha"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-r1",
+            title: Some("Read Alpha"),
+            link: Some("https://read.example/alpha"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (e2, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-r2",
-        Some("Read Beta"),
-        Some("https://read.example/beta"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-r2",
+            title: Some("Read Beta"),
+            link: Some("https://read.example/beta"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (e3, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-r3",
-        Some("Unread One"),
-        Some("https://read.example/unread"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-r3",
+            title: Some("Unread One"),
+            link: Some("https://read.example/unread"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -3726,40 +3790,46 @@ async fn test_starred_entries_page_renders_ssr_rows() {
     .unwrap();
     let (e1, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-s1",
-        Some("Starred Alpha"),
-        Some("https://starred.example/alpha"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-s1",
+            title: Some("Starred Alpha"),
+            link: Some("https://starred.example/alpha"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (e2, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-s2",
-        Some("Starred Beta"),
-        Some("https://starred.example/beta"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-s2",
+            title: Some("Starred Beta"),
+            link: Some("https://starred.example/beta"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-s3",
-        Some("Unstarred One"),
-        Some("https://starred.example/unstarred"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-s3",
+            title: Some("Unstarred One"),
+            link: Some("https://starred.example/unstarred"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -3836,40 +3906,46 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
     .unwrap();
     let (e1, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-sum1",
-        Some("Summarized Alpha"),
-        Some("https://sum.example/alpha"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-sum1",
+            title: Some("Summarized Alpha"),
+            link: Some("https://sum.example/alpha"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     let (e2, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-sum2",
-        Some("Summarized Beta"),
-        Some("https://sum.example/beta"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-sum2",
+            title: Some("Summarized Beta"),
+            link: Some("https://sum.example/beta"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
     rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-sum3",
-        Some("No Summary One"),
-        Some("https://sum.example/nosummary"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-sum3",
+            title: Some("No Summary One"),
+            link: Some("https://sum.example/nosummary"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -3958,18 +4034,15 @@ async fn test_unread_load_more_uses_keyset_cursor() {
     for i in 0..60u32 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("kg-{i}"),
-            Some(&format!("K {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
-                    .unwrap(),
-            ),
+            &rdrs::models::entry::EntryUpsert {
+                title: Some(&format!("K {i}")),
+                published_at: Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
+                        .unwrap(),
+                ),
+                ..rdrs::models::entry::EntryUpsert::new(feed.id, &format!("kg-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -4068,18 +4141,15 @@ async fn seed_paging_account(app: &mut TestApp, name: &str, count: u32) -> i64 {
     for i in 0..count {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("pg-{i}"),
-            Some(&format!("P {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
-                    .unwrap(),
-            ),
+            &rdrs::models::entry::EntryUpsert {
+                title: Some(&format!("P {i}")),
+                published_at: Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
+                        .unwrap(),
+                ),
+                ..rdrs::models::entry::EntryUpsert::new(feed.id, &format!("pg-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -4219,18 +4289,15 @@ async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
     for i in 0..160u32 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("sn-{i}"),
-            Some(&format!("S {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 1, i / 3600, (i / 60) % 60, i % 60)
-                    .unwrap(),
-            ),
+            &rdrs::models::entry::EntryUpsert {
+                title: Some(&format!("S {i}")),
+                published_at: Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1, i / 3600, (i / 60) % 60, i % 60)
+                        .unwrap(),
+                ),
+                ..rdrs::models::entry::EntryUpsert::new(feed.id, &format!("sn-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -4334,18 +4401,15 @@ async fn test_scoped_load_more_form_targets_its_own_list() {
     for i in 0..160u32 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("lm-{i}"),
-            Some(&format!("L {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 1, i / 3600, (i / 60) % 60, i % 60)
-                    .unwrap(),
-            ),
+            &rdrs::models::entry::EntryUpsert {
+                title: Some(&format!("L {i}")),
+                published_at: Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1, i / 3600, (i / 60) % 60, i % 60)
+                        .unwrap(),
+                ),
+                ..rdrs::models::entry::EntryUpsert::new(feed.id, &format!("lm-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -4408,14 +4472,10 @@ async fn test_load_more_snapshot_is_inert_on_non_unread_views() {
     for i in 0..5u32 {
         let (e, _) = rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("in-{i}"),
-            Some(&format!("I {i}")),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &rdrs::models::entry::EntryUpsert {
+                title: Some(&format!("I {i}")),
+                ..rdrs::models::entry::EntryUpsert::new(feed.id, &format!("in-{i}"))
+            },
         )
         .await
         .unwrap();

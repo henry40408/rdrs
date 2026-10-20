@@ -1049,33 +1049,8 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
 }
 
 /// Upsert and return the full [`Entry`] plus whether it was new.
-#[allow(clippy::too_many_arguments)]
-pub async fn upsert_entry(
-    db: &Db,
-    feed_id: i64,
-    guid: &str,
-    title: Option<&str>,
-    link: Option<&str>,
-    content: Option<&str>,
-    summary: Option<&str>,
-    author: Option<&str>,
-    published_at: Option<DateTime<Utc>>,
-) -> AppResult<(Entry, bool)> {
-    let (id, is_new) = match upsert_entry_id(
-        db,
-        &EntryUpsert {
-            feed_id,
-            guid,
-            title,
-            link,
-            content,
-            summary,
-            author,
-            published_at,
-        },
-    )
-    .await?
-    {
+pub async fn upsert_entry(db: &Db, upsert: &EntryUpsert<'_>) -> AppResult<(Entry, bool)> {
+    let (id, is_new) = match upsert_entry_id(db, upsert).await? {
         UpsertOutcome::Inserted(id) => (id, true),
         UpsertOutcome::Updated(id) | UpsertOutcome::Unchanged(id) => (id, false),
         UpsertOutcome::SkippedTombstoned => {

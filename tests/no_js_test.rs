@@ -390,14 +390,16 @@ async fn seed_entry(db: &Db) -> (i64, i64) {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         db,
-        feed.id,
-        "guid-no-js",
-        Some("E"),
-        Some("https://x/n"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-no-js",
+            title: Some("E"),
+            link: Some("https://x/n"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();

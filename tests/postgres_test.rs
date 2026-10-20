@@ -95,14 +95,12 @@ async fn pg_dialect_smoke() {
     ] {
         let (e, _) = entry::upsert_entry(
             &db,
-            feed_id,
-            guid,
-            Some("t"),
-            Some("l"),
-            None,
-            None,
-            None,
-            Some(utc(pub_at)),
+            &entry::EntryUpsert {
+                title: Some("t"),
+                link: Some("l"),
+                published_at: Some(utc(pub_at)),
+                ..entry::EntryUpsert::new(feed_id, guid)
+            },
         )
         .await
         .unwrap();
@@ -391,27 +389,19 @@ async fn pg_dialect_smoke() {
     // concurrently and race.
     entry::upsert_entry(
         &db,
-        feed_id,
-        "guid-rust-news",
-        Some("rust news"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            title: Some("rust news"),
+            ..entry::EntryUpsert::new(feed_id, "guid-rust-news")
+        },
     )
     .await
     .unwrap();
     let (rust_read, _) = entry::upsert_entry(
         &db,
-        feed_id,
-        "guid-rust-read",
-        Some("rust read already"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            title: Some("rust read already"),
+            ..entry::EntryUpsert::new(feed_id, "guid-rust-read")
+        },
     )
     .await
     .unwrap();
@@ -420,14 +410,10 @@ async fn pg_dialect_smoke() {
         .unwrap();
     entry::upsert_entry(
         &db,
-        feed_id,
-        "guid-go-news",
-        Some("go news"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            title: Some("go news"),
+            ..entry::EntryUpsert::new(feed_id, "guid-go-news")
+        },
     )
     .await
     .unwrap();
@@ -460,27 +446,21 @@ async fn pg_dialect_smoke() {
     // `models::entry::mod`'s unit tests for the SQLite-side mirror).
     entry::upsert_entry(
         &db,
-        feed_id,
-        "guid-old",
-        Some("old"),
-        None,
-        None,
-        None,
-        None,
-        Some(utc("2025-06-01T00:00:00Z")),
+        &entry::EntryUpsert {
+            title: Some("old"),
+            published_at: Some(utc("2025-06-01T00:00:00Z")),
+            ..entry::EntryUpsert::new(feed_id, "guid-old")
+        },
     )
     .await
     .unwrap();
     entry::upsert_entry(
         &db,
-        feed_id,
-        "guid-new",
-        Some("new"),
-        None,
-        None,
-        None,
-        None,
-        Some(utc("2026-03-01T00:00:00Z")),
+        &entry::EntryUpsert {
+            title: Some("new"),
+            published_at: Some(utc("2026-03-01T00:00:00Z")),
+            ..entry::EntryUpsert::new(feed_id, "guid-new")
+        },
     )
     .await
     .unwrap();
@@ -643,14 +623,16 @@ async fn pg_dialect_smoke() {
     // An entry created after the opt-in records; the seeded backlog does not.
     let (fresh, _) = entry::upsert_entry(
         &db,
-        feed_id,
-        "pg-pixel-fresh",
-        Some("Fresh"),
-        Some("https://example.com/pg-pixel-fresh"),
-        Some("<p>Fresh.</p>"),
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            feed_id,
+            guid: "pg-pixel-fresh",
+            title: Some("Fresh"),
+            link: Some("https://example.com/pg-pixel-fresh"),
+            content: Some("<p>Fresh.</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();

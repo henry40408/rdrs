@@ -37,14 +37,16 @@ async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64,
 
     let (e, _) = entry::upsert_entry(
         db,
-        feed.id,
-        &format!("{username}-guid-1"),
-        Some("Test Entry"),
-        Some("https://example.com/entry/1"),
-        Some("<p>Content</p>"),
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: &format!("{username}-guid-1"),
+            title: Some("Test Entry"),
+            link: Some("https://example.com/entry/1"),
+            content: Some("<p>Content</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();

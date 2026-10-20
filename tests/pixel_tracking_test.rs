@@ -42,14 +42,16 @@ async fn seed_feed(db: &Db, username: &str, label: &str, count: usize) -> Vec<i6
     for i in 0..count {
         let (entry, _) = rdrs::models::entry::upsert_entry(
             db,
-            feed.id,
-            &format!("guid-{username}-{label}-{i}"),
-            Some(&format!("Entry {i}")),
-            Some(&format!("https://example.com/{username}/{label}/{i}")),
-            Some(&format!("<p>Body {i}.</p>")),
-            None,
-            None,
-            Some(chrono::Utc::now()),
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-{username}-{label}-{i}"),
+                title: Some(&format!("Entry {i}")),
+                link: Some(&format!("https://example.com/{username}/{label}/{i}")),
+                content: Some(&format!("<p>Body {i}.</p>")),
+                summary: None,
+                author: None,
+                published_at: Some(chrono::Utc::now()),
+            },
         )
         .await
         .unwrap();

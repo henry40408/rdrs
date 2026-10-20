@@ -3787,14 +3787,16 @@ async fn test_entry_fragment_renders_reading_pane() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-frag-test",
-        Some("Hello World"),
-        Some("https://x/post"),
-        Some("<p>Body text here</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-frag-test",
+            title: Some("Hello World"),
+            link: Some("https://x/post"),
+            content: Some("<p>Body text here</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -3923,14 +3925,16 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-doc-nav",
-        Some("Hello World"),
-        Some("https://x/post"),
-        Some("<p>Body text here</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-doc-nav",
+            title: Some("Hello World"),
+            link: Some("https://x/post"),
+            content: Some("<p>Body text here</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4013,14 +4017,16 @@ async fn test_entry_fragment_speculative_load_does_not_mark_read() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-spec",
-        Some("Hello World"),
-        Some("https://x/spec"),
-        Some("<p>Body</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-spec",
+            title: Some("Hello World"),
+            link: Some("https://x/spec"),
+            content: Some("<p>Body</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4248,14 +4254,16 @@ async fn test_entry_fragment_404_for_other_user() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-bob-entry",
-        Some("Bob's Entry"),
-        Some("https://b/post"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-bob-entry",
+            title: Some("Bob's Entry"),
+            link: Some("https://b/post"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4310,14 +4318,16 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-star-test",
-        Some("E"),
-        Some("https://x/p"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-star-test",
+            title: Some("E"),
+            link: Some("https://x/p"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4400,14 +4410,16 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-unstar-test",
-        Some("E"),
-        Some("https://x/u"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-unstar-test",
+            title: Some("E"),
+            link: Some("https://x/u"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4481,14 +4493,16 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-read-test",
-        Some("E"),
-        Some("https://x/r"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-read-test",
+            title: Some("E"),
+            link: Some("https://x/r"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4568,14 +4582,16 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-unread-test",
-        Some("E"),
-        Some("https://x/u"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-unread-test",
+            title: Some("E"),
+            link: Some("https://x/u"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4661,14 +4677,16 @@ async fn test_star_entry_form_404_for_other_user() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-bob-star",
-        Some("Bob Entry"),
-        Some("https://bob/entry"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-bob-star",
+            title: Some("Bob Entry"),
+            link: Some("https://bob/entry"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4737,14 +4755,16 @@ async fn test_read_entry_form_404_for_other_user() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-bob-read",
-        Some("Bob Entry"),
-        Some("https://bob/entry"),
-        None,
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-bob-read",
+            title: Some("Bob Entry"),
+            link: Some("https://bob/entry"),
+            content: None,
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4810,14 +4830,16 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     .unwrap();
     let (entry, _) = rdrs::models::entry::upsert_entry(
         &app.db,
-        feed.id,
-        "guid-sum-test",
-        Some("Summarizable Entry"),
-        Some("https://x/sum-post"),
-        Some("<p>Content to summarize</p>"),
-        None,
-        None,
-        None,
+        &rdrs::models::entry::EntryUpsert {
+            feed_id: feed.id,
+            guid: "guid-sum-test",
+            title: Some("Summarizable Entry"),
+            link: Some("https://x/sum-post"),
+            content: Some("<p>Content to summarize</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -4890,14 +4912,16 @@ async fn test_entries_load_more_returns_row_fragments() {
     for i in 0..75i64 {
         rdrs::models::entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("guid-lm-{i}"),
-            Some(&format!("LM Entry {i}")),
-            Some(&format!("https://lm/{i}")),
-            None,
-            None,
-            None,
-            None,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-lm-{i}"),
+                title: Some(&format!("LM Entry {i}")),
+                link: Some(&format!("https://lm/{i}")),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();

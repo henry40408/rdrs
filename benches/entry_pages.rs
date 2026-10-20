@@ -101,14 +101,16 @@ async fn seed(db: &Db, args: &Args) -> (i64, i64, i64, i64) {
         let minutes = i64::try_from(i).unwrap();
         let (e, _) = entry::upsert_entry(
             db,
-            feeds[i % feeds.len()],
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            Some(&format!("https://example.com/{i}")),
-            Some(&content),
-            Some("A short summary."),
-            None,
-            Some(now - chrono::Duration::minutes(minutes)),
+            &entry::EntryUpsert {
+                feed_id: feeds[i % feeds.len()],
+                guid: &format!("guid-{i}"),
+                title: Some(&format!("Entry {i}")),
+                link: Some(&format!("https://example.com/{i}")),
+                content: Some(&content),
+                summary: Some("A short summary."),
+                author: None,
+                published_at: Some(now - chrono::Duration::minutes(minutes)),
+            },
         )
         .await
         .unwrap();

@@ -39,14 +39,16 @@ async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
         let published = chrono::Utc::now() - chrono::Duration::hours(i);
         let (e, _) = entry::upsert_entry(
             db,
-            feed.id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry Title {i}")),
-            Some(&format!("https://example.com/entry/{i}")),
-            Some(&format!("<p>Entry content {i}</p>")),
-            Some(&format!("Summary for entry {i}")),
-            None,
-            Some(published),
+            &entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-{i}"),
+                title: Some(&format!("Entry Title {i}")),
+                link: Some(&format!("https://example.com/entry/{i}")),
+                content: Some(&format!("<p>Entry content {i}</p>")),
+                summary: Some(&format!("Summary for entry {i}")),
+                author: None,
+                published_at: Some(published),
+            },
         )
         .await
         .unwrap();
@@ -95,14 +97,16 @@ async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
     for i in 1..=3 {
         let (e, _) = entry::upsert_entry(
             db,
-            feed.id,
-            &format!("other-guid-{i}"),
-            Some(&format!("Other Entry {i}")),
-            Some(&format!("https://other.com/entry/{i}")),
-            Some(&format!("<p>Other content {i}</p>")),
-            None,
-            None,
-            None,
+            &entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("other-guid-{i}"),
+                title: Some(&format!("Other Entry {i}")),
+                link: Some(&format!("https://other.com/entry/{i}")),
+                content: Some(&format!("<p>Other content {i}</p>")),
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
@@ -115,14 +119,11 @@ async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
 async fn setup_entry_without_link(db: &Db, feed_id: i64) -> i64 {
     let (e, _) = entry::upsert_entry(
         db,
-        feed_id,
-        "no-link-guid",
-        Some("Entry Without Link"),
-        None,
-        Some("<p>Content without link</p>"),
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            title: Some("Entry Without Link"),
+            content: Some("<p>Content without link</p>"),
+            ..entry::EntryUpsert::new(feed_id, "no-link-guid")
+        },
     )
     .await
     .unwrap();
@@ -250,14 +251,16 @@ async fn test_list_entries_with_continuation() {
         let published = chrono::Utc::now() - chrono::Duration::hours(6 - i);
         entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry Title {i}")),
-            Some(&format!("https://example.com/entry/{i}")),
-            Some(&format!("<p>Entry content {i}</p>")),
-            None,
-            None,
-            Some(published),
+            &entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-{i}"),
+                title: Some(&format!("Entry Title {i}")),
+                link: Some(&format!("https://example.com/entry/{i}")),
+                content: Some(&format!("<p>Entry content {i}</p>")),
+                summary: None,
+                author: None,
+                published_at: Some(published),
+            },
         )
         .await
         .unwrap();
@@ -1412,14 +1415,16 @@ async fn test_stream_contents_with_continuation() {
         let published = chrono::Utc::now() - chrono::Duration::hours(6 - i);
         entry::upsert_entry(
             &app.db,
-            feed.id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry Title {i}")),
-            Some(&format!("https://example.com/entry/{i}")),
-            Some(&format!("<p>Entry content {i}</p>")),
-            None,
-            None,
-            Some(published),
+            &entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-{i}"),
+                title: Some(&format!("Entry Title {i}")),
+                link: Some(&format!("https://example.com/entry/{i}")),
+                content: Some(&format!("<p>Entry content {i}</p>")),
+                summary: None,
+                author: None,
+                published_at: Some(published),
+            },
         )
         .await
         .unwrap();
@@ -1838,14 +1843,16 @@ async fn test_stored_full_content_survives_a_re_render_and_toggles() {
     let (user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (e, _) = entry::upsert_entry(
         &app.db,
-        feed_id,
-        "full-content-guid",
-        Some("Fetchable"),
-        Some("https://example.com/article"),
-        Some("<p>Just the feed summary.</p>"),
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            feed_id,
+            guid: "full-content-guid",
+            title: Some("Fetchable"),
+            link: Some("https://example.com/article"),
+            content: Some("<p>Just the feed summary.</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -1913,14 +1920,16 @@ async fn test_storing_full_content_again_replaces_it() {
     let (user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (e, _) = entry::upsert_entry(
         &app.db,
-        feed_id,
-        "refetch-guid",
-        Some("Refetchable"),
-        Some("https://example.com/article"),
-        Some("<p>Feed summary.</p>"),
-        None,
-        None,
-        None,
+        &entry::EntryUpsert {
+            feed_id,
+            guid: "refetch-guid",
+            title: Some("Refetchable"),
+            link: Some("https://example.com/article"),
+            content: Some("<p>Feed summary.</p>"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();

@@ -32,15 +32,19 @@ async fn seed_entries(db: &Db, username: &str, count: usize) -> Vec<i64> {
     for i in 0..count {
         let (entry, _) = rdrs::models::entry::upsert_entry(
             db,
-            feed.id,
-            &format!("guid-{username}-{i}"),
-            Some(&format!("Entry {i}")),
-            Some(&format!("https://example.com/{username}/{i}")),
-            Some(&format!("<p>Body {i}.</p>")),
-            None,
-            None,
-            // Ascending published_at, so the last seeded entry is the newest.
-            Some(chrono::Utc::now() - chrono::Duration::minutes((count - i) as i64)),
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid: &format!("guid-{username}-{i}"),
+                title: Some(&format!("Entry {i}")),
+                link: Some(&format!("https://example.com/{username}/{i}")),
+                content: Some(&format!("<p>Body {i}.</p>")),
+                summary: None,
+                author: None,
+                // Ascending published_at, so the last seeded entry is the newest.
+                published_at: Some(
+                    chrono::Utc::now() - chrono::Duration::minutes((count - i) as i64),
+                ),
+            },
         )
         .await
         .unwrap();

@@ -86,14 +86,12 @@ async fn seed_offline_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
     for i in 0..count {
         let (entry, _) = upsert_entry(
             db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            Some("body"),
-            None,
-            None,
-            Some(Utc::now() - chrono::Duration::minutes((count - i) as i64)),
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                content: Some("body"),
+                published_at: Some(Utc::now() - chrono::Duration::minutes((count - i) as i64)),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -200,14 +198,16 @@ async fn test_upsert_entry() {
 
     let (entry, is_new) = upsert_entry(
         &db,
-        feed_id,
-        "guid-123",
-        Some("Test Entry"),
-        Some("https://example.com/entry"),
-        Some("Content"),
-        Some("Summary"),
-        Some("Author"),
-        Some(Utc::now()),
+        &EntryUpsert {
+            feed_id,
+            guid: "guid-123",
+            title: Some("Test Entry"),
+            link: Some("https://example.com/entry"),
+            content: Some("Content"),
+            summary: Some("Summary"),
+            author: Some("Author"),
+            published_at: Some(Utc::now()),
+        },
     )
     .await
     .unwrap();
@@ -219,14 +219,16 @@ async fn test_upsert_entry() {
 
     let (updated, is_new) = upsert_entry(
         &db,
-        feed_id,
-        "guid-123",
-        Some("Updated Title"),
-        Some("https://example.com/entry"),
-        Some("Updated Content"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            feed_id,
+            guid: "guid-123",
+            title: Some("Updated Title"),
+            link: Some("https://example.com/entry"),
+            content: Some("Updated Content"),
+            summary: None,
+            author: None,
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -245,14 +247,10 @@ async fn test_mark_as_read() {
 
     let (entry, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-123",
-        Some("Test"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Test"),
+            ..EntryUpsert::new(feed_id, "guid-123")
+        },
     )
     .await
     .unwrap();
@@ -403,14 +401,10 @@ async fn test_count_unread() {
     for i in 0..5 {
         let (entry, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some("Test"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &EntryUpsert {
+                title: Some("Test"),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -434,27 +428,21 @@ async fn test_search_entries_by_title() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-1",
-        Some("Rust Programming Guide"),
-        None,
-        Some("Content about Rust"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Rust Programming Guide"),
+            content: Some("Content about Rust"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-2",
-        Some("Python Tutorial"),
-        None,
-        Some("Content about Python"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Python Tutorial"),
+            content: Some("Content about Python"),
+            ..EntryUpsert::new(feed_id, "guid-2")
+        },
     )
     .await
     .unwrap();
@@ -482,27 +470,21 @@ async fn test_search_entries_by_content() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-1",
-        Some("Entry 1"),
-        None,
-        Some("This article discusses WebAssembly"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Entry 1"),
+            content: Some("This article discusses WebAssembly"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-2",
-        Some("Entry 2"),
-        None,
-        Some("This article discusses JavaScript"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Entry 2"),
+            content: Some("This article discusses JavaScript"),
+            ..EntryUpsert::new(feed_id, "guid-2")
+        },
     )
     .await
     .unwrap();
@@ -527,14 +509,11 @@ async fn test_search_case_insensitive() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-1",
-        Some("UPPERCASE Title"),
-        None,
-        Some("lowercase content"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("UPPERCASE Title"),
+            content: Some("lowercase content"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
@@ -569,27 +548,21 @@ async fn test_search_combined_with_filters() {
 
     let (entry1, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-1",
-        Some("Rust Article"),
-        None,
-        Some("Content"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Rust Article"),
+            content: Some("Content"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
     let (entry2, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-2",
-        Some("Rust Tutorial"),
-        None,
-        Some("Content"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Rust Tutorial"),
+            content: Some("Content"),
+            ..EntryUpsert::new(feed_id, "guid-2")
+        },
     )
     .await
     .unwrap();
@@ -632,14 +605,11 @@ async fn test_search_pagination() {
     for i in 0..5 {
         upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Rust Article {i}")),
-            None,
-            Some("Content"),
-            None,
-            None,
-            None,
+            &EntryUpsert {
+                title: Some(&format!("Rust Article {i}")),
+                content: Some("Content"),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -678,27 +648,19 @@ async fn query_is_unread_returns_only_unread() {
 
     let (alpha, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-alpha",
-        Some("alpha"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("alpha"),
+            ..EntryUpsert::new(feed_id, "guid-alpha")
+        },
     )
     .await
     .unwrap();
     let (beta, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-beta",
-        Some("beta"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("beta"),
+            ..EntryUpsert::new(feed_id, "guid-beta")
+        },
     )
     .await
     .unwrap();
@@ -729,41 +691,29 @@ async fn query_boolean_and_negation() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-rust",
-        Some("rust"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("rust"),
+            ..EntryUpsert::new(feed_id, "guid-rust")
+        },
     )
     .await
     .unwrap();
     let (rust_weekly, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-rust-weekly",
-        Some("rust weekly"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("rust weekly"),
+            ..EntryUpsert::new(feed_id, "guid-rust-weekly")
+        },
     )
     .await
     .unwrap();
     mark_as_read(&db, rust_weekly.id).await.unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-go",
-        Some("go"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("go"),
+            ..EntryUpsert::new(feed_id, "guid-go")
+        },
     )
     .await
     .unwrap();
@@ -795,40 +745,36 @@ async fn query_negated_author_includes_null_author_entries() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-jane",
-        Some("jane's post"),
-        None,
-        None,
-        None,
-        Some("jane"),
-        None,
+        &EntryUpsert {
+            title: Some("jane's post"),
+            author: Some("jane"),
+            ..EntryUpsert::new(feed_id, "guid-jane")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-bob",
-        Some("bob's post"),
-        None,
-        None,
-        None,
-        Some("bob"),
-        None,
+        &EntryUpsert {
+            title: Some("bob's post"),
+            author: Some("bob"),
+            ..EntryUpsert::new(feed_id, "guid-bob")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-anon",
-        Some("anonymous post"),
-        None,
-        None,
-        None,
-        None, // no author (NULL)
-        None,
+        &EntryUpsert {
+            feed_id,
+            guid: "guid-anon",
+            title: Some("anonymous post"),
+            link: None,
+            content: None,
+            summary: None,
+            author: None, // no author (NULL)
+            published_at: None,
+        },
     )
     .await
     .unwrap();
@@ -870,27 +816,19 @@ async fn query_feed_name_fuzzy_match() {
 
     upsert_entry(
         &db,
-        rust_feed_id,
-        "guid-1",
-        Some("Post from Rust Blog"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Post from Rust Blog"),
+            ..EntryUpsert::new(rust_feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        other_feed_id,
-        "guid-2",
-        Some("Post from other feed"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Post from other feed"),
+            ..EntryUpsert::new(other_feed_id, "guid-2")
+        },
     )
     .await
     .unwrap();
@@ -919,27 +857,21 @@ async fn query_after_date_filters() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-old",
-        Some("old"),
-        None,
-        None,
-        None,
-        None,
-        Some(chrono::Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
+        &EntryUpsert {
+            title: Some("old"),
+            published_at: Some(chrono::Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
+            ..EntryUpsert::new(feed_id, "guid-old")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-new",
-        Some("new"),
-        None,
-        None,
-        None,
-        None,
-        Some(chrono::Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
+        &EntryUpsert {
+            title: Some("new"),
+            published_at: Some(chrono::Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
+            ..EntryUpsert::new(feed_id, "guid-new")
+        },
     )
     .await
     .unwrap();
@@ -968,27 +900,19 @@ async fn query_escapes_literal_percent() {
 
     upsert_entry(
         &db,
-        feed_id,
-        "guid-off",
-        Some("50% off"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("50% off"),
+            ..EntryUpsert::new(feed_id, "guid-off")
+        },
     )
     .await
     .unwrap();
     upsert_entry(
         &db,
-        feed_id,
-        "guid-dollars",
-        Some("50 dollars"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("50 dollars"),
+            ..EntryUpsert::new(feed_id, "guid-dollars")
+        },
     )
     .await
     .unwrap();
@@ -1018,28 +942,22 @@ async fn search_matches_plain_text_across_tags_not_attributes() {
     // (a) term split across inline tags — must match via content_text.
     upsert_entry(
         &db,
-        feed_id,
-        "a",
-        Some("x"),
-        None,
-        Some("超<b>少女</b>登場"),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("x"),
+            content: Some("超<b>少女</b>登場"),
+            ..EntryUpsert::new(feed_id, "a")
+        },
     )
     .await
     .unwrap();
     // (b) term only inside an href attribute — must NOT match.
     upsert_entry(
         &db,
-        feed_id,
-        "b",
-        Some("y"),
-        None,
-        Some(r#"<a href="/超少女">z</a>"#),
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("y"),
+            content: Some(r#"<a href="/超少女">z</a>"#),
+            ..EntryUpsert::new(feed_id, "b")
+        },
     )
     .await
     .unwrap();
@@ -1074,54 +992,38 @@ async fn test_mark_read_by_ids() {
 
     let (entry1, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-1",
-        Some("Entry 1"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Entry 1"),
+            ..EntryUpsert::new(feed_id, "guid-1")
+        },
     )
     .await
     .unwrap();
     let (entry2, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-2",
-        Some("Entry 2"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Entry 2"),
+            ..EntryUpsert::new(feed_id, "guid-2")
+        },
     )
     .await
     .unwrap();
     let (entry3, _) = upsert_entry(
         &db,
-        feed_id,
-        "guid-3",
-        Some("Entry 3"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Entry 3"),
+            ..EntryUpsert::new(feed_id, "guid-3")
+        },
     )
     .await
     .unwrap();
 
     let (other_entry, _) = upsert_entry(
         &db,
-        feed2_id,
-        "guid-4",
-        Some("Other Entry"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("Other Entry"),
+            ..EntryUpsert::new(feed2_id, "guid-4")
+        },
     )
     .await
     .unwrap();
@@ -1423,22 +1325,30 @@ async fn test_star_unstar_and_mark_unread_by_ids_tx() {
     let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
     let feed2_id = create_test_feed(&db, category2_id, "https://example2.com/feed.xml").await;
 
-    let (e1, _) = upsert_entry(&db, feed_id, "g1", Some("E1"), None, None, None, None, None)
-        .await
-        .unwrap();
-    let (e2, _) = upsert_entry(&db, feed_id, "g2", Some("E2"), None, None, None, None, None)
-        .await
-        .unwrap();
+    let (e1, _) = upsert_entry(
+        &db,
+        &EntryUpsert {
+            title: Some("E1"),
+            ..EntryUpsert::new(feed_id, "g1")
+        },
+    )
+    .await
+    .unwrap();
+    let (e2, _) = upsert_entry(
+        &db,
+        &EntryUpsert {
+            title: Some("E2"),
+            ..EntryUpsert::new(feed_id, "g2")
+        },
+    )
+    .await
+    .unwrap();
     let (other, _) = upsert_entry(
         &db,
-        feed2_id,
-        "g3",
-        Some("E3"),
-        None,
-        None,
-        None,
-        None,
-        None,
+        &EntryUpsert {
+            title: Some("E3"),
+            ..EntryUpsert::new(feed2_id, "g3")
+        },
     )
     .await
     .unwrap();
@@ -1518,14 +1428,11 @@ async fn test_find_position_counts_within_filter() {
         let published = Utc::now() + chrono::Duration::seconds(i * 10);
         let (entry, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(published),
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -1569,14 +1476,11 @@ async fn test_find_position_stops_counting_at_the_limit() {
         let published = Utc::now() + chrono::Duration::seconds(i);
         let (entry, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(published),
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -1607,14 +1511,11 @@ async fn test_find_neighbors_starred_only() {
         let published = Utc::now() + chrono::Duration::seconds(i * 10);
         let (entry, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(published),
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -1666,14 +1567,11 @@ async fn test_find_neighbors_unread_only_read_after() {
         let published = Utc::now() + chrono::Duration::seconds(i * 10);
         let (entry, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(published),
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -1746,14 +1644,11 @@ async fn test_find_neighbors_read_only() {
         let published = Utc::now() + chrono::Duration::seconds(i * 10);
         let (entry, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("guid-{i}"),
-            Some(&format!("Entry {i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(published),
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
         )
         .await
         .unwrap();
@@ -2411,18 +2306,15 @@ async fn test_continuation_walk_is_gapless_unfiltered() {
     for i in 0..5 {
         upsert_entry(
             &db,
-            feed_id,
-            &format!("g{i}"),
-            Some(&format!("T{i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 1 + i as u32, 0, 0, 0)
-                    .unwrap(),
-            ),
+            &EntryUpsert {
+                title: Some(&format!("T{i}")),
+                published_at: Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1 + i as u32, 0, 0, 0)
+                        .unwrap(),
+                ),
+                ..EntryUpsert::new(feed_id, &format!("g{i}"))
+            },
         )
         .await
         .unwrap();
@@ -2485,18 +2377,15 @@ async fn test_summarized_at_pages_by_summary_creation() {
     for i in 0..5u32 {
         let (e, _) = upsert_entry(
             &db,
-            feed_id,
-            &format!("g{i}"),
-            Some(&format!("T{i}")),
-            None,
-            None,
-            None,
-            None,
-            Some(
-                chrono::Utc
-                    .with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0)
-                    .unwrap(),
-            ),
+            &EntryUpsert {
+                title: Some(&format!("T{i}")),
+                published_at: Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1 + i, 0, 0, 0)
+                        .unwrap(),
+                ),
+                ..EntryUpsert::new(feed_id, &format!("g{i}"))
+            },
         )
         .await
         .unwrap();

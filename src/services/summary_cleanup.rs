@@ -159,14 +159,16 @@ mod tests {
 
         let (entry, _) = entry::upsert_entry(
             &db,
-            feed_id,
-            "guid-1",
-            Some("Entry"),
-            Some("https://example.com"),
-            None,
-            None,
-            None,
-            None,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "guid-1",
+                title: Some("Entry"),
+                link: Some("https://example.com"),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();
@@ -234,14 +236,16 @@ mod tests {
 
         let (entry_obj, _) = entry::upsert_entry(
             &db,
-            feed_id,
-            "guid-1",
-            Some("Entry"),
-            Some("https://example.com"),
-            None,
-            None,
-            None,
-            None,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "guid-1",
+                title: Some("Entry"),
+                link: Some("https://example.com"),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
         )
         .await
         .unwrap();

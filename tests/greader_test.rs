@@ -67,14 +67,12 @@ async fn create_test_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
         let link = format!("https://example.com/entry/{i}");
         let (e, _) = entry::upsert_entry(
             db,
-            feed_id,
-            &guid,
-            Some(&title),
-            Some(&link),
-            Some("Content"),
-            None,
-            None,
-            None,
+            &entry::EntryUpsert {
+                title: Some(&title),
+                link: Some(&link),
+                content: Some("Content"),
+                ..entry::EntryUpsert::new(feed_id, &guid)
+            },
         )
         .await
         .unwrap();
