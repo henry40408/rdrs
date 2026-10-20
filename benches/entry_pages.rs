@@ -1,11 +1,14 @@
-//! Server-side latency benchmark for the entry-list pages (handler, queries,
-//! render) through the real router; `dom-bench` covers the browser side.
+//! Server-side latency benchmark for the entry-list pages and the `/feeds`,
+//! `/categories` and `/statistics` pages (handler, queries, render) through the
+//! real router; `dom-bench` covers the browser side.
 //!
 //! ```text
 //! RDRS_FAST_HASH=1 cargo bench --bench entry_pages -- [--label before] [--entries 2000] [--iterations 200]
+//!     [--categories 4] [--feeds-per-category 5]
 //! ```
 //!
-//! Seeds one account (4 categories × 5 feeds) into in-memory SQLite and prints
+//! Seeds one account (by default 4 categories × 5 feeds, some with a fetch error
+//! or an old date so the Errors/Stale filters have rows) into in-memory SQLite and prints
 //! p50/p90/mean per route in µs. Compare only on the same machine, with
 //! interleaved before/after runs.
 
@@ -22,6 +25,8 @@ struct Args {
     label: String,
     entries: usize,
     iterations: usize,
+    categories: usize,
+    feeds_per_category: usize,
 }
 
 fn parse_args() -> Args {
@@ -29,6 +34,8 @@ fn parse_args() -> Args {
         label: "run".to_string(),
         entries: 2000,
         iterations: 200,
+        categories: 4,
+        feeds_per_category: 5,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -40,28 +47,35 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--entries" => args.entries = number(),
             "--iterations" => args.iterations = number(),
+            "--categories" => args.categories = number(),
+            "--feeds-per-category" => args.feeds_per_category = number(),
             "--label" => args.label = it.next().expect("--label needs a value"),
             // `cargo bench` passes `--bench` to every harness-less target.
             _ => {}
         }
     }
+    assert!(
+        args.categories > 0 && args.feeds_per_category > 0,
+        "--categories and --feeds-per-category must be at least 1"
+    );
     args
 }
 
 /// Returns the first feed and category, for the scoped pages to aim at, and a
 /// mid-list entry for the per-entry routes.
-async fn seed(db: &Db, n: usize) -> (i64, i64, i64) {
+async fn seed(db: &Db, args: &Args) -> (i64, i64, i64) {
+    let n = args.entries;
     let user = common::seed_account(db, "bench", "vulture-mango-77-quilt", Role::Admin).await;
     let content = "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>".repeat(12);
 
     let mut feeds = Vec::new();
     let mut first_category = None;
-    for c in 0..4 {
+    for c in 0..args.categories {
         let cat = category::create_category(db, user.id, &format!("Category {c}"))
             .await
             .unwrap();
         first_category.get_or_insert(cat.id);
-        for f in 0..5 {
+        for f in 0..args.feeds_per_category {
             let url = format!("https://feed{c}-{f}.example.com/rss");
             let title = format!("Feed {c}-{f}");
             let params = feed::CreateFeedParams {
@@ -75,6 +89,7 @@ async fn seed(db: &Db, n: usize) -> (i64, i64, i64) {
     }
 
     let now = chrono::Utc::now();
+    mark_fetch_states(db, &feeds, now).await;
     let mut read = Vec::new();
     let mut mid_entry = 0;
     for i in 0..n {
@@ -116,6 +131,27 @@ async fn seed(db: &Db, n: usize) -> (i64, i64, i64) {
     (feeds[0], first_category.unwrap(), mid_entry)
 }
 
+/// Gives the Errors and Stale filters of `/feeds` something to match: every 7th
+/// feed failed its last fetch, every 5th has not published for 120 days, the
+/// rest published recently.
+async fn mark_fetch_states(db: &Db, feeds: &[i64], now: chrono::DateTime<chrono::Utc>) {
+    for (i, &id) in feeds.iter().enumerate() {
+        let error = (i % 7 == 0).then_some("connection refused");
+        let age_days = if i % 5 == 0 { 120 } else { 1 + (i % 20) as i64 };
+        feed::update_fetch_result(
+            db,
+            id,
+            now,
+            error,
+            None,
+            None,
+            Some(now - chrono::Duration::days(age_days)),
+        )
+        .await
+        .unwrap();
+    }
+}
+
 /// The first hidden input called `name`, as the Load-More form submits it.
 fn hidden_value(html: &str, name: &str) -> Option<String> {
     let marker = format!(r#"name="{name}" value=""#);
@@ -132,7 +168,7 @@ fn micros(d: Duration) -> f64 {
 async fn main() {
     let args = parse_args();
     let state = common::test_state(common::default_test_config()).await;
-    let (feed_id, category_id, mid_entry) = seed(&state.db, args.entries).await;
+    let (feed_id, category_id, mid_entry) = seed(&state.db, &args).await;
     let mut server = TestServer::builder()
         .save_cookies()
         .build(create_router(state));
@@ -160,6 +196,23 @@ async fn main() {
         ("search content", "/search?q=adipiscing".to_string()),
         // What search-as-you-type fetches per keystroke.
         ("search live", "/search?q=Entry&fragment=1".to_string()),
+        // The list pages that load every feed or category of the account.
+        ("feeds", "/feeds".to_string()),
+        ("feeds ?category", format!("/feeds?category={category_id}")),
+        ("feeds ?filter=errors", "/feeds?filter=errors".to_string()),
+        ("feeds ?filter=stale", "/feeds?filter=stale".to_string()),
+        ("categories", "/categories".to_string()),
+        // The bench user is an admin, so these measure the steady state with
+        // the cached site-wide DB figures (`AdminDbStatsCache`, 60 s TTL).
+        ("statistics", "/statistics".to_string()),
+        (
+            "statistics ?period=30d",
+            "/statistics?period=30d".to_string(),
+        ),
+        (
+            "statistics ?period=all",
+            "/statistics?period=all".to_string(),
+        ),
     ];
     // The reading pane and its toolbar lookups, for a mid-list entry. `position`
     // (the "12 / 48" counts) has no counterpart before it existed.
