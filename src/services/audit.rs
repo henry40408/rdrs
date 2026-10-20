@@ -111,17 +111,29 @@ pub fn api_tokens_destroyed(user_id: i64, reason: &str, count: Option<u64>) {
     );
 }
 
+/// Arguments of [`masquerade_started`].
+pub struct MasqueradeStarted<'a> {
+    pub secret: &'a [u8],
+    pub token: &'a str,
+    pub new_token: &'a str,
+    pub actor_user_id: i64,
+    pub target_user_id: i64,
+    pub ip: &'a str,
+    pub ua: &'a str,
+}
+
 /// An admin started masquerading as another user (a privilege change).
 /// `sid`/`new_sid` bracket the token rotation so correlation survives it.
-pub fn masquerade_started(
-    secret: &[u8],
-    token: &str,
-    new_token: &str,
-    actor_user_id: i64,
-    target_user_id: i64,
-    ip: &str,
-    ua: &str,
-) {
+pub fn masquerade_started(event: &MasqueradeStarted<'_>) {
+    let MasqueradeStarted {
+        secret,
+        token,
+        new_token,
+        actor_user_id,
+        target_user_id,
+        ip,
+        ua,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "masquerade.started",
@@ -317,7 +329,15 @@ mod tests {
         sessions_destroyed_bulk(1, "admin_disable", None);
         api_tokens_destroyed(1, "revoke_token", None);
         api_tokens_destroyed(1, "revoke_all", Some(2));
-        masquerade_started(SECRET, "tok", "tok2", 1, 2, "127.0.0.1", "test-agent");
+        masquerade_started(&MasqueradeStarted {
+            secret: SECRET,
+            token: "tok",
+            new_token: "tok2",
+            actor_user_id: 1,
+            target_user_id: 2,
+            ip: "127.0.0.1",
+            ua: "test-agent",
+        });
         masquerade_stopped(SECRET, "tok2", "tok3", 1, 1);
         session_token_rotated(SECRET, "tok3", "tok4");
         session_reauthenticated(SECRET, "tok4", 1, "password");

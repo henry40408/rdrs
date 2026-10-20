@@ -433,15 +433,15 @@ pub async fn start_masquerade_form(
             let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
             let ip = state.config.client_ip(peer, &headers).to_string();
             let user_agent = request_user_agent(&headers);
-            audit::masquerade_started(
-                &state.config.secret,
-                &session_token,
-                &new_token,
+            audit::masquerade_started(&audit::MasqueradeStarted {
+                secret: &state.config.secret,
+                token: &session_token,
+                new_token: &new_token,
                 actor_user_id,
                 target_user_id,
-                &ip,
-                &user_agent,
-            );
+                ip: &ip,
+                ua: &user_agent,
+            });
             (
                 rotated_cookies(&state, &new_token),
                 FlashRedirect::info("/", "You are now masquerading as another user."),
