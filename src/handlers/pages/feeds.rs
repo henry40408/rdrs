@@ -134,8 +134,8 @@ pub async fn feeds_page(
         (row_views, cat_options, total_feed_count)
     };
 
-    let active_filter_raw = query.filter.as_deref().unwrap_or("all").to_string();
-    let active_sort = query.sort.as_deref().unwrap_or("title").to_string();
+    let active_filter = normalize_filter(query.filter.as_deref());
+    let active_sort = normalize_sort(query.sort.as_deref());
     let active_category = query.category.as_deref().and_then(|s| {
         if s.is_empty() {
             None
@@ -147,54 +147,29 @@ pub async fn feeds_page(
     if let Some(cid) = active_category {
         rows.retain(|r| r.category_id == cid);
     }
-    match active_filter_raw.as_str() {
+    match active_filter {
         "errors" => rows.retain(|r| r.fetch_error.is_some()),
         "stale" => rows.retain(|r| r.freshness_key == "stale"),
         _ => {}
     }
-    match active_sort.as_str() {
+    match active_sort {
         "unread" => rows.sort_by_key(|b| std::cmp::Reverse(b.unread_count)),
         "category" => rows.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
         // Ascending (least-opened first); feeds without a rate sort last.
         "open_rate" => rows.sort_by_key(|a| (a.open_rate_percent.is_none(), a.open_rate_percent)),
         _ => rows.sort_by_key(|a| a.title.to_lowercase()),
     }
-    let active_filter = match active_filter_raw.as_str() {
-        "errors" | "stale" | "all" => active_filter_raw,
-        _ => "all".to_string(),
-    };
-
-    let cat_param = active_category
-        .map(|c| format!("category={c}&"))
-        .unwrap_or_default();
     // This exact view, for row forms and the edit link to come back to.
-    let return_to = {
-        let mut q = url::form_urlencoded::Serializer::new(String::new());
-        if let Some(c) = active_category {
-            q.append_pair("category", &c.to_string());
-        }
-        q.append_pair("sort", &active_sort);
-        q.append_pair("filter", &active_filter);
-        format!("/feeds?{}", q.finish())
-    };
+    let return_to = feeds_url(active_category, active_sort, active_filter);
     let edit_query = crate::handlers::return_to::return_to_query(&return_to);
-    let filter_links = vec![
-        FeedFilterLink {
-            label: "All",
-            href: format!("/feeds?{cat_param}sort={active_sort}&filter=all"),
-            active: active_filter == "all",
-        },
-        FeedFilterLink {
-            label: "Errors",
-            href: format!("/feeds?{cat_param}sort={active_sort}&filter=errors"),
-            active: active_filter == "errors",
-        },
-        FeedFilterLink {
-            label: "Stale",
-            href: format!("/feeds?{cat_param}sort={active_sort}&filter=stale"),
-            active: active_filter == "stale",
-        },
-    ];
+    let filter_links = [("All", "all"), ("Errors", "errors"), ("Stale", "stale")]
+        .into_iter()
+        .map(|(label, filter)| FeedFilterLink {
+            label,
+            href: feeds_url(active_category, active_sort, filter),
+            active: active_filter == filter,
+        })
+        .collect();
 
     (
         flash,
@@ -218,6 +193,36 @@ pub async fn feeds_page(
             min_tracked_for_rate: crate::models::entry_open::MIN_TRACKED_FOR_RATE,
         },
     )
+}
+
+/// Unknown values fall back to the default so a crafted `sort` never reaches
+/// the links built from it.
+fn normalize_sort(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("unread") => "unread",
+        Some("category") => "category",
+        Some("open_rate") => "open_rate",
+        _ => "title",
+    }
+}
+
+fn normalize_filter(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("errors") => "errors",
+        Some("stale") => "stale",
+        _ => "all",
+    }
+}
+
+/// One query-string builder for every link to this view, so each value is encoded.
+fn feeds_url(category: Option<i64>, sort: &str, filter: &str) -> String {
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    if let Some(c) = category {
+        q.append_pair("category", &c.to_string());
+    }
+    q.append_pair("sort", sort);
+    q.append_pair("filter", filter);
+    format!("/feeds?{}", q.finish())
 }
 
 /// `?return_to=` on pages reached from a filtered list.
@@ -369,8 +374,8 @@ pub struct FeedsTemplate {
     pub feeds: Vec<FeedRowView>,
     pub categories: Vec<FeedCategoryOption>,
     pub total_feed_count: i64,
-    pub active_filter: String,
-    pub active_sort: String,
+    pub active_filter: &'static str,
+    pub active_sort: &'static str,
     pub active_category_id: Option<i64>,
     pub filter_links: Vec<FeedFilterLink>,
     /// This filtered view, posted back by row forms as `return_to`.
@@ -455,7 +460,33 @@ pub struct FeedsImportTemplate {
 
 #[cfg(test)]
 mod tests {
-    use super::referrer_suggestions;
+    use super::{feeds_url, normalize_filter, normalize_sort, referrer_suggestions};
+
+    #[test]
+    fn feeds_url_keeps_parameter_order_and_omits_missing_category() {
+        assert_eq!(
+            feeds_url(None, "title", "all"),
+            "/feeds?sort=title&filter=all"
+        );
+        assert_eq!(
+            feeds_url(Some(5), "unread", "errors"),
+            "/feeds?category=5&sort=unread&filter=errors"
+        );
+    }
+
+    #[test]
+    fn normalize_sort_rejects_injected_parameters() {
+        assert_eq!(normalize_sort(Some("title&category=5")), "title");
+        assert_eq!(normalize_sort(Some("")), "title");
+        assert_eq!(normalize_sort(None), "title");
+        assert_eq!(normalize_sort(Some("open_rate")), "open_rate");
+    }
+
+    #[test]
+    fn normalize_filter_falls_back_to_all() {
+        assert_eq!(normalize_filter(Some("stale")), "stale");
+        assert_eq!(normalize_filter(Some("nope")), "all");
+    }
 
     #[test]
     fn referrer_suggestion_leads_with_the_site_the_feed_describes() {
