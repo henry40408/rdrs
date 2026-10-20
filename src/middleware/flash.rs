@@ -19,44 +19,66 @@ pub enum FlashLevel {
     Warning,
 }
 
+/// What a flash carries beyond its text; `/admin` reads `InviteLink` instead of
+/// guessing from the message.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlashKind {
+    #[default]
+    Plain,
+    /// The message is a one-time invite URL, shown once on `/admin`.
+    InviteLink,
+}
+
+impl FlashKind {
+    // serde's `skip_serializing_if` hands the field over by reference.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_plain(&self) -> bool {
+        *self == Self::Plain
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlashMessage {
     pub level: FlashLevel,
     pub message: String,
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "FlashKind::is_plain")]
+    pub kind: FlashKind,
 }
 
 impl FlashMessage {
-    pub fn success(message: impl Into<String>) -> Self {
+    fn new(level: FlashLevel, message: impl Into<String>) -> Self {
         Self {
-            level: FlashLevel::Success,
+            level,
             message: message.into(),
             timestamp: Utc::now(),
+            kind: FlashKind::Plain,
         }
+    }
+
+    pub fn success(message: impl Into<String>) -> Self {
+        Self::new(FlashLevel::Success, message)
     }
 
     pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            level: FlashLevel::Error,
-            message: message.into(),
-            timestamp: Utc::now(),
-        }
+        Self::new(FlashLevel::Error, message)
     }
 
     pub fn info(message: impl Into<String>) -> Self {
-        Self {
-            level: FlashLevel::Info,
-            message: message.into(),
-            timestamp: Utc::now(),
-        }
+        Self::new(FlashLevel::Info, message)
     }
 
     pub fn warning(message: impl Into<String>) -> Self {
+        Self::new(FlashLevel::Warning, message)
+    }
+
+    /// A one-time invite URL; see [`FlashKind::InviteLink`].
+    pub fn invite_link(url: impl Into<String>) -> Self {
         Self {
-            level: FlashLevel::Warning,
-            message: message.into(),
-            timestamp: Utc::now(),
+            kind: FlashKind::InviteLink,
+            ..Self::new(FlashLevel::Success, url)
         }
     }
 
@@ -386,6 +408,10 @@ impl FlashRedirect {
     pub fn warning(location: impl Into<String>, message: impl Into<String>) -> Self {
         Self::to(location, FlashMessage::warning(message))
     }
+
+    pub fn invite_link(location: impl Into<String>, url: impl Into<String>) -> Self {
+        Self::to(location, FlashMessage::invite_link(url))
+    }
 }
 
 impl IntoResponse for FlashRedirect {
@@ -399,6 +425,23 @@ mod tests {
     use super::*;
 
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn a_flash_without_a_kind_is_plain() {
+        let old = r#"{"level":"success","message":"Saved."}"#;
+        let message: FlashMessage = serde_json::from_str(old).unwrap();
+        assert_eq!(message.kind, FlashKind::Plain);
+    }
+
+    #[test]
+    fn only_a_marked_flash_serializes_its_kind() {
+        let plain = serde_json::to_string(&FlashMessage::success("Saved.")).unwrap();
+        assert!(!plain.contains("kind"), "{plain}");
+
+        let link = serde_json::to_string(&FlashMessage::invite_link("/invite/abc")).unwrap();
+        let back: FlashMessage = serde_json::from_str(&link).unwrap();
+        assert_eq!(back.kind, FlashKind::InviteLink);
+    }
 
     fn signed(payload: &str) -> String {
         sign_set_cookie(

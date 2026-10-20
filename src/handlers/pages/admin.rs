@@ -4,21 +4,18 @@ use axum::extract::State;
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
-use crate::middleware::flash::Flash;
+use crate::middleware::flash::{Flash, FlashKind, FlashMessage};
 
 /// Pull a one-time invite link out of the flash. The message is replaced, not
-/// dropped: `Flash` only clears the cookie when messages remain, so an empty
-/// list would leave the link to reappear on the next load.
-fn extract_invite_link(flash: &mut Flash) -> Option<String> {
-    let link = flash
-        .messages
+/// dropped, so the page still confirms the action without echoing the link
+/// through the flash banner.
+fn extract_invite_link(messages: &mut Vec<FlashMessage>) -> Option<String> {
+    let link = messages
         .iter()
-        .find(|m| m.message.contains("/invite/"))
+        .find(|m| m.kind == FlashKind::InviteLink)
         .map(|m| m.message.clone())?;
 
-    flash.messages = vec![crate::middleware::flash::FlashMessage::success(
-        "Account link ready.",
-    )];
+    *messages = vec![FlashMessage::success("Account link ready.")];
     Some(link)
 }
 
@@ -27,7 +24,7 @@ pub async fn admin_page(
     State(state): State<AppState>,
     mut flash: Flash,
 ) -> (Flash, AdminTemplate) {
-    let invite_link = extract_invite_link(&mut flash);
+    let invite_link = extract_invite_link(&mut flash.messages);
     let auth_user = PageAuthUser {
         user: admin.user.clone(),
         session: admin.session.clone(),
@@ -125,4 +122,30 @@ pub struct AdminTemplate {
     pub can_create_account: bool,
     /// Show the re-auth form up front, before any destructive action.
     pub needs_reauth: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_invite_link_takes_the_marked_message_and_replaces_it() {
+        let mut messages = vec![FlashMessage::invite_link("/invite/abc")];
+
+        assert_eq!(
+            extract_invite_link(&mut messages).as_deref(),
+            Some("/invite/abc")
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].message, "Account link ready.");
+        assert_eq!(messages[0].kind, FlashKind::Plain);
+    }
+
+    #[test]
+    fn extract_invite_link_ignores_plain_text_that_mentions_a_link() {
+        let mut messages = vec![FlashMessage::error("Bad link /invite/abc was rejected.")];
+
+        assert_eq!(extract_invite_link(&mut messages), None);
+        assert_eq!(messages[0].message, "Bad link /invite/abc was rejected.");
+    }
 }
