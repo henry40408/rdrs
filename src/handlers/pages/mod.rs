@@ -315,16 +315,29 @@ fn scoped_search(q: Option<&str>) -> ScopedSearch {
     }
 }
 
-/// [`build_entries_page`], but an unparseable search lists nothing.
-async fn build_searched_entries_page(
-    state: &AppState,
+/// Request for [`build_searched_entries_page`].
+struct SearchedEntriesPage<'a> {
     user_id: i64,
-    mut filter: entry::EntryFilter,
-    search: &ScopedSearch,
+    filter: entry::EntryFilter,
+    search: &'a ScopedSearch,
     sort: entry::EntrySortOrder,
     page_size: i64,
     cursor: Option<entry::ContinuationCursor>,
+}
+
+/// [`build_entries_page`], but an unparseable search lists nothing.
+async fn build_searched_entries_page(
+    state: &AppState,
+    request: SearchedEntriesPage<'_>,
 ) -> (Vec<EntryRowView>, Option<String>) {
+    let SearchedEntriesPage {
+        user_id,
+        mut filter,
+        search,
+        sort,
+        page_size,
+        cursor,
+    } = request;
     if search.error.is_some() {
         return (Vec::new(), None);
     }
@@ -525,12 +538,14 @@ pub async fn unread_page(
             .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_searched_entries_page(
             &state,
-            user_id,
-            filter,
-            &search,
-            entry::EntrySortOrder::PublishedAt,
-            page_size,
-            cursor,
+            SearchedEntriesPage {
+                user_id,
+                filter,
+                search: &search,
+                sort: entry::EntrySortOrder::PublishedAt,
+                page_size,
+                cursor,
+            },
         )
         .await;
         return (
@@ -550,12 +565,14 @@ pub async fn unread_page(
 
     let (entries, next_cursor) = build_searched_entries_page(
         &state,
-        user_id,
-        filter,
-        &search,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        None,
+        SearchedEntriesPage {
+            user_id,
+            filter,
+            search: &search,
+            sort: entry::EntrySortOrder::PublishedAt,
+            page_size,
+            cursor: None,
+        },
     )
     .await;
 
@@ -647,7 +664,15 @@ async fn entries_tab_page(
     };
     let search = scoped_search(query.q.as_deref());
     let (entries, next_cursor) = build_searched_entries_page(
-        &state, user_id, tab.filter, &search, tab.sort, page_size, cursor,
+        &state,
+        SearchedEntriesPage {
+            user_id,
+            filter: tab.filter,
+            search: &search,
+            sort: tab.sort,
+            page_size,
+            cursor,
+        },
     )
     .await;
 
@@ -972,12 +997,14 @@ async fn scoped_entries_page(
 
     let (entries, next_cursor) = build_searched_entries_page(
         &state,
-        user_id,
-        filter,
-        &search,
-        entry::EntrySortOrder::PublishedAt,
-        page_size,
-        cursor,
+        SearchedEntriesPage {
+            user_id,
+            filter,
+            search: &search,
+            sort: entry::EntrySortOrder::PublishedAt,
+            page_size,
+            cursor,
+        },
     )
     .await;
 
