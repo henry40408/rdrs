@@ -21,6 +21,13 @@ use crate::utils::url_validation::{FetchPolicy, UrlValidationError, is_private_i
 /// target.
 const MAX_REDIRECTS: usize = 5;
 
+/// Which HTTP versions a client may negotiate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpVersion {
+    Negotiated,
+    Http1Only,
+}
+
 /// Pooled HTTP client whose redirects and DNS answers obey a [`FetchPolicy`].
 /// Cheap to clone.
 #[derive(Debug, Clone)]
@@ -59,11 +66,10 @@ impl Fetcher {
 
     /// The client for a feed, honouring its HTTP/2 opt-out (`http1_only()` is
     /// client-level, hence two pools).
-    pub fn client(&self, http2_disabled: bool) -> &reqwest::Client {
-        if http2_disabled {
-            &self.client_h1
-        } else {
-            &self.client
+    pub fn client(&self, http_version: HttpVersion) -> &reqwest::Client {
+        match http_version {
+            HttpVersion::Http1Only => &self.client_h1,
+            HttpVersion::Negotiated => &self.client,
         }
     }
 
@@ -279,7 +285,7 @@ mod tests {
 
         let fetcher = Fetcher::new(FetchPolicy::parse("127.0.0.1").unwrap()).unwrap();
         let err = fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(format!("{}/feed.xml", server.uri()))
             .send()
             .await
@@ -309,7 +315,7 @@ mod tests {
 
         let fetcher = Fetcher::new(FetchPolicy::parse("127.0.0.1").unwrap()).unwrap();
         let body = fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(format!("{}/feed.xml", server.uri()))
             .send()
             .await
@@ -332,7 +338,7 @@ mod tests {
 
         let fetcher = Fetcher::new(FetchPolicy::parse("127.0.0.1").unwrap()).unwrap();
         let err = fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(format!("{}/start", server.uri()))
             .send()
             .await
@@ -352,6 +358,9 @@ mod tests {
     #[test]
     fn the_http1_only_client_is_a_separate_pool() {
         let fetcher = Fetcher::default();
-        assert!(!std::ptr::eq(fetcher.client(true), fetcher.client(false)));
+        assert!(!std::ptr::eq(
+            fetcher.client(HttpVersion::Http1Only),
+            fetcher.client(HttpVersion::Negotiated)
+        ));
     }
 }

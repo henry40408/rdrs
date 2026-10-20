@@ -3,7 +3,7 @@ use reqwest::header::USER_AGENT;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::fetch::Fetcher;
+use crate::services::fetch::{Fetcher, HttpVersion};
 use crate::services::http::{RetryConfig, send_with_retry_on_error};
 
 /// Upper bound on element nodes in a fetched document; `dom_smoothie` rejects
@@ -51,7 +51,7 @@ async fn fetch_and_extract_validated(
     let url_owned = url.to_string();
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
         fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(&url_owned)
             .header(USER_AGENT, user_agent)
     })

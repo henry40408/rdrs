@@ -3,7 +3,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::error::AppResult;
-use crate::services::fetch::Fetcher;
+use crate::services::fetch::{Fetcher, HttpVersion};
 use crate::services::http::{ICON_TIMEOUT, RetryConfig, send_with_retry_on_error};
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256KB
@@ -81,7 +81,7 @@ async fn fetch_image(
 
     let response = match send_with_retry_on_error(&retry_config, || {
         fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(&url_owned)
             .timeout(ICON_TIMEOUT)
             .header(USER_AGENT, user_agent)
@@ -180,7 +180,7 @@ async fn fetch_favicon(
 
     let html = match send_with_retry_on_error(&retry_config, || {
         fetcher
-            .client(false)
+            .client(HttpVersion::Negotiated)
             .get(&site_url_owned)
             .timeout(ICON_TIMEOUT)
             .header(USER_AGENT, user_agent)
