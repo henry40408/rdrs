@@ -173,6 +173,43 @@ async fn test_admin_database_stats_are_served_from_the_cache() {
     );
 }
 
+/// Collects formatted log lines; the test runtime is single-threaded, so a
+/// thread-local default subscriber sees everything the handler logs.
+#[derive(Clone, Default)]
+struct LogBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_statistics_page_renders_and_logs_when_queries_fail() {
+    let (app, _) = app_signed_in_as("admin").await;
+    rdrs::db_execute!(&app.db, "DROP TABLE entry").unwrap();
+
+    let logs = LogBuffer::default();
+    let writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let body = common::get_ok(&app.server, "/statistics").await;
+    assert!(body.contains("Total Entries"), "page must still render");
+
+    let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(logged.contains("statistics.query_failed"), "{logged}");
+    assert!(logged.contains("overview"), "{logged}");
+}
+
 #[tokio::test]
 async fn test_statistics_page_user_no_sitewide() {
     let (app, _) = app_signed_in_as("user").await;

@@ -3,6 +3,7 @@ use axum::extract::{Query, State};
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
+use crate::error::AppResult;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::entry_open::FeedOpenRate;
@@ -268,6 +269,20 @@ fn admin_database_view(stats: Option<AdminDatabaseStats>) -> Option<AdminDatabas
     })
 }
 
+/// The page degrades to empty sections rather than failing, so a broken query
+/// would otherwise look like an empty database; log it to keep it visible.
+fn log_failure<T>(what: &'static str, result: AppResult<T>) -> Option<T> {
+    result
+        .inspect_err(|e| {
+            tracing::error!(event = "statistics.query_failed", query = what, error = %e, "statistics query failed");
+        })
+        .ok()
+}
+
+fn log_and_default<T: Default>(what: &'static str, result: AppResult<T>) -> T {
+    log_failure(what, result).unwrap_or_default()
+}
+
 /// `GET /statistics`.
 pub async fn statistics_page(
     auth_user: PageAuthUser,
@@ -299,37 +314,43 @@ pub async fn statistics_page(
     let chart_from_c = chart_from.clone();
 
     let (overview, daily, cats, feeds, admin_counts, admin_entry_stats, admin_db_stats) = {
-        let overview =
+        let overview = log_and_default(
+            "overview",
             crate::models::statistics::get_personal_overview(&state.db, user_id, &from_c, &to_c)
-                .await
-                .unwrap_or_default();
-        let daily = crate::models::statistics::get_daily_read_counts(
-            &state.db,
-            user_id,
-            &chart_from_c,
-            &to_c,
-        )
-        .await
-        .unwrap_or_default();
-        let cats =
+                .await,
+        );
+        let daily = log_and_default(
+            "daily_read_counts",
+            crate::models::statistics::get_daily_read_counts(
+                &state.db,
+                user_id,
+                &chart_from_c,
+                &to_c,
+            )
+            .await,
+        );
+        let cats = log_and_default(
+            "entries_by_category",
             crate::models::statistics::get_entries_by_category(&state.db, user_id, &from_c, &to_c)
-                .await
-                .unwrap_or_default();
-        let feeds =
-            crate::models::statistics::get_top_feeds(&state.db, user_id, &from_c, &to_c, 10)
-                .await
-                .unwrap_or_default();
+                .await,
+        );
+        let feeds = log_and_default(
+            "top_feeds",
+            crate::models::statistics::get_top_feeds(&state.db, user_id, &from_c, &to_c, 10).await,
+        );
         let admin_counts = if show_admin_stats {
-            crate::models::statistics::get_admin_counts(&state.db)
-                .await
-                .ok()
+            log_failure(
+                "admin_counts",
+                crate::models::statistics::get_admin_counts(&state.db).await,
+            )
         } else {
             None
         };
         let admin_entry_stats = if show_admin_stats {
-            crate::models::statistics::get_admin_entry_stats(&state.db, &from_c, &to_c)
-                .await
-                .ok()
+            log_failure(
+                "admin_entry_stats",
+                crate::models::statistics::get_admin_entry_stats(&state.db, &from_c, &to_c).await,
+            )
         } else {
             None
         };
@@ -338,9 +359,10 @@ pub async fn statistics_page(
             if let Some(cached) = state.admin_db_stats_cache.get(&()) {
                 Some(cached)
             } else {
-                let fresh = crate::models::statistics::get_admin_database_stats(&state.db)
-                    .await
-                    .ok();
+                let fresh = log_failure(
+                    "admin_database_stats",
+                    crate::models::statistics::get_admin_database_stats(&state.db).await,
+                );
                 if let Some(stats) = fresh.clone() {
                     state.admin_db_stats_cache.insert((), stats);
                 }
@@ -374,20 +396,21 @@ pub async fn statistics_page(
     let top_feeds = top_feed_views(feeds);
 
     // Ignores the period filter: open rate is only meaningful since opt-in.
-    let open_rate_feeds = open_rate_views(
-        crate::models::entry_open::open_rates_by_feed(&state.db, user_id)
-            .await
-            .unwrap_or_default(),
-    );
+    let open_rate_feeds = open_rate_views(log_and_default(
+        "open_rates",
+        crate::models::entry_open::open_rates_by_feed(&state.db, user_id).await,
+    ));
 
-    let tracked_since = crate::models::entry_open::tracking_window(&state.db, user_id)
-        .await
-        .unwrap_or(crate::models::entry_open::TrackingWindow {
-            enabled_at: None,
-            oldest_tracked: None,
-        })
-        .tracked_since()
-        .map(|t| t.format("%Y-%m-%d").to_string());
+    let tracked_since = log_failure(
+        "tracking_window",
+        crate::models::entry_open::tracking_window(&state.db, user_id).await,
+    )
+    .unwrap_or(crate::models::entry_open::TrackingWindow {
+        enabled_at: None,
+        oldest_tracked: None,
+    })
+    .tracked_since()
+    .map(|t| t.format("%Y-%m-%d").to_string());
 
     let admin = admin_stats_view(admin_counts, admin_entry_stats);
     let admin_db = admin_database_view(admin_db_stats);
