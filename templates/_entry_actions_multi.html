@@ -2,9 +2,9 @@
 {# Row actions (read / unread / star / unstar): re-renders only the two stateful
    forms plus an `entry-read` class directive. Both forms always ship so the
    response is action-agnostic; selectors missing from the page are skipped. #}
-<template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}</template>
-<template data-swap-target="#entry-row-{{ r.id }} .entry-star-form">{% call macros::row_star_form(r.id, r.is_starred, csrf_token) %}{% endcall %}</template>
-<template data-class-target="#entry-row-{{ r.id }}" data-class-{% if r.is_read %}add{% else %}remove{% endif %}="entry-read"></template>
+<template data-swap-target="#entry-row-{{ row.id }} .entry-marker">{% call macros::row_marker_form(row.id, row.is_read, csrf_token) %}{% endcall %}</template>
+<template data-swap-target="#entry-row-{{ row.id }} .entry-star-form">{% call macros::row_star_form(row.id, row.is_starred, csrf_token) %}{% endcall %}</template>
+<template data-class-target="#entry-row-{{ row.id }}" data-class-{% if row.is_read %}add{% else %}remove{% endif %}="entry-read"></template>
 {% if let Some(f) = flash.as_ref() %}
 <template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
 {% endif %}

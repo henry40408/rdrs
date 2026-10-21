@@ -27,7 +27,7 @@
         </div>
     {% endif %}
 {% else %}
-    {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
+    {% for row in entries %}{% include "_entry_row.html" %}{% endfor %}
     {% if let Some(after) = next_cursor %}
         <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
             <input type="hidden" name="after" value="{{ after }}">
