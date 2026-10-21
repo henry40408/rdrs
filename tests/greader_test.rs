@@ -1549,6 +1549,158 @@ async fn test_quickadd_success() {
     );
 }
 
+async fn mount_rss_fixture() -> MockServer {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(".*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+    mock_server
+}
+
+async fn category_name_of(db: &Db, user_id: i64, feed_url: &str) -> String {
+    let f = find_feed(db, user_id, feed_url).await;
+    category::find_by_id_and_user(db, f.category_id, user_id)
+        .await
+        .unwrap()
+        .expect("category should exist")
+        .name
+}
+
+#[tokio::test]
+async fn test_subscription_edit_answers_ok() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    let feed_url = "https://example.com/feed.xml";
+    create_test_feed(&app.db, user_id, "Tech", feed_url).await;
+
+    let form = [
+        ("ac", "edit".to_string()),
+        ("s", format!("feed/{feed_url}")),
+        ("t", "Renamed".to_string()),
+    ];
+    let response = post_subscription_edit(&app, &form).await;
+    response.assert_status_ok();
+    assert_eq!(response.text(), "OK");
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_title_overrides_the_discovered_one() {
+    let mock_server = mount_rss_fixture().await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+
+    let feed_url = mock_server.uri();
+    let form = [
+        ("ac", "subscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+        ("t", "My Own Title".to_string()),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    let created = find_feed(&app.db, user_id, &feed_url).await;
+    assert_eq!(created.title.as_deref(), Some("My Own Title"));
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_lands_in_the_first_category() {
+    let mock_server = mount_rss_fixture().await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    category::create_category(&app.db, user_id, "Extra")
+        .await
+        .unwrap();
+    let categories_before = category::list_by_user(&app.db, user_id).await.unwrap();
+
+    let feed_url = mock_server.uri();
+    let form = [
+        ("ac", "subscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    let created = find_feed(&app.db, user_id, &feed_url).await;
+    assert_eq!(created.category_id, categories_before[0].id);
+    let categories_after = category::list_by_user(&app.db, user_id).await.unwrap();
+    assert_eq!(categories_after.len(), categories_before.len());
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_recreates_uncategorized_for_a_user_with_none() {
+    let mock_server = mount_rss_fixture().await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    for cat in category::list_by_user(&app.db, user_id).await.unwrap() {
+        category::delete_category(&app.db, cat.id, user_id)
+            .await
+            .unwrap();
+    }
+
+    let feed_url = mock_server.uri();
+    let form = [
+        ("ac", "subscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    assert_eq!(
+        category_name_of(&app.db, user_id, &feed_url).await,
+        "Uncategorized"
+    );
+}
+
+#[tokio::test]
+async fn test_quickadd_lands_in_the_first_category() {
+    let mock_server = mount_rss_fixture().await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    category::create_category(&app.db, user_id, "Extra")
+        .await
+        .unwrap();
+    let categories_before = category::list_by_user(&app.db, user_id).await.unwrap();
+
+    let feed_url = mock_server.uri();
+    app.server
+        .post("/reader/api/0/subscription/quickadd")
+        .form(&[("quickadd", feed_url.clone())])
+        .await
+        .assert_status_ok();
+
+    let created = find_feed(&app.db, user_id, &feed_url).await;
+    assert_eq!(created.category_id, categories_before[0].id);
+    let categories_after = category::list_by_user(&app.db, user_id).await.unwrap();
+    assert_eq!(categories_after.len(), categories_before.len());
+}
+
+#[tokio::test]
+async fn test_quickadd_recreates_uncategorized_for_a_user_with_none() {
+    let mock_server = mount_rss_fixture().await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    for cat in category::list_by_user(&app.db, user_id).await.unwrap() {
+        category::delete_category(&app.db, cat.id, user_id)
+            .await
+            .unwrap();
+    }
+
+    let feed_url = mock_server.uri();
+    app.server
+        .post("/reader/api/0/subscription/quickadd")
+        .form(&[("quickadd", feed_url.clone())])
+        .await
+        .assert_status_ok();
+
+    assert_eq!(
+        category_name_of(&app.db, user_id, &feed_url).await,
+        "Uncategorized"
+    );
+}
+
 // ============================================================================
 // SSE: GReader writes must announce sidebar changes
 //
