@@ -1221,6 +1221,189 @@ async fn test_subscription_edit_add_label_moves_category() {
     assert_eq!(cat_name, "NewCat");
 }
 
+/// POST `subscription/edit` with `form`, returning the response.
+async fn post_subscription_edit(app: &TestApp, form: &[(&str, String)]) -> axum_test::TestResponse {
+    app.server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await
+}
+
+/// A feed with every editable field set, so a test can see which survive an edit.
+async fn create_fully_populated_feed(db: &Db, user_id: i64, feed_url: &str) -> feed::Feed {
+    let cat = category::create_category(db, user_id, "Tech")
+        .await
+        .unwrap();
+    feed::create_feed(
+        db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: feed_url,
+            title: Some("Old Title"),
+            description: Some("Old description"),
+            site_url: Some("https://old.example.com"),
+            custom_user_agent: Some("OldAgent/1.0"),
+            http2_disabled: Some(true),
+            custom_referrer: Some("https://old.example.com/"),
+        },
+    )
+    .await
+    .unwrap()
+}
+
+async fn find_feed(db: &Db, user_id: i64, feed_url: &str) -> feed::Feed {
+    feed::find_by_url_for_user(db, feed_url, user_id)
+        .await
+        .unwrap()
+        .expect("feed should exist")
+}
+
+#[tokio::test]
+async fn test_subscription_edit_title_only_keeps_other_fields() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    let feed_url = "https://example.com/full.xml";
+    let before = create_fully_populated_feed(&app.db, user_id, feed_url).await;
+
+    let form = [
+        ("ac", "edit".to_string()),
+        ("s", format!("feed/{feed_url}")),
+        ("t", "New Title".to_string()),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    let after = find_feed(&app.db, user_id, feed_url).await;
+    assert_eq!(after.title.as_deref(), Some("New Title"));
+    assert_eq!(after.category_id, before.category_id);
+    assert_eq!(after.description.as_deref(), Some("Old description"));
+    assert_eq!(after.site_url.as_deref(), Some("https://old.example.com"));
+    assert_eq!(after.custom_user_agent.as_deref(), Some("OldAgent/1.0"));
+    assert!(after.http2_disabled);
+    assert_eq!(
+        after.custom_referrer.as_deref(),
+        Some("https://old.example.com/")
+    );
+}
+
+#[tokio::test]
+async fn test_subscription_edit_replaces_every_extension_field() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    let feed_url = "https://example.com/full.xml";
+    create_fully_populated_feed(&app.db, user_id, feed_url).await;
+
+    let form = [
+        ("ac", "edit".to_string()),
+        ("s", format!("feed/{feed_url}")),
+        ("description", "New description".to_string()),
+        ("site_url", "https://new.example.com".to_string()),
+        ("custom_user_agent", "NewAgent/2.0".to_string()),
+        ("http2_disabled", "false".to_string()),
+        ("custom_referrer", "https://new.example.com/".to_string()),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    let after = find_feed(&app.db, user_id, feed_url).await;
+    assert_eq!(after.title.as_deref(), Some("Old Title"));
+    assert_eq!(after.description.as_deref(), Some("New description"));
+    assert_eq!(after.site_url.as_deref(), Some("https://new.example.com"));
+    assert_eq!(after.custom_user_agent.as_deref(), Some("NewAgent/2.0"));
+    assert!(!after.http2_disabled);
+    assert_eq!(
+        after.custom_referrer.as_deref(),
+        Some("https://new.example.com/")
+    );
+}
+
+#[tokio::test]
+async fn test_subscription_edit_empty_referrer_clears_it() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    let feed_url = "https://example.com/full.xml";
+    create_fully_populated_feed(&app.db, user_id, feed_url).await;
+
+    let form = [
+        ("ac", "edit".to_string()),
+        ("s", format!("feed/{feed_url}")),
+        ("custom_referrer", String::new()),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    let after = find_feed(&app.db, user_id, feed_url).await;
+    assert_eq!(after.custom_referrer, None);
+}
+
+#[tokio::test]
+async fn test_subscription_edit_existing_label_reuses_its_category() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    let feed_url = "https://example.com/move.xml";
+    create_test_feed(&app.db, user_id, "OldCat", feed_url).await;
+    let target = category::create_category(&app.db, user_id, "Target")
+        .await
+        .unwrap();
+
+    let form = [
+        ("ac", "edit".to_string()),
+        ("s", format!("feed/{feed_url}")),
+        ("a", "user/-/label/Target".to_string()),
+    ];
+    post_subscription_edit(&app, &form).await.assert_status_ok();
+
+    assert_eq!(
+        find_feed(&app.db, user_id, feed_url).await.category_id,
+        target.id
+    );
+    let cats = category::list_by_user(&app.db, user_id).await.unwrap();
+    assert_eq!(cats.iter().filter(|c| c.name == "Target").count(), 1);
+}
+
+#[tokio::test]
+async fn test_subscription_edit_requires_a_stream_id() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
+
+    for action in ["edit", "unsubscribe"] {
+        let form = [("ac", action.to_string())];
+        post_subscription_edit(&app, &form)
+            .await
+            .assert_status(StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn test_subscription_edit_rejects_a_stream_id_without_feed_prefix() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+    let feed_url = "https://example.com/feed.xml";
+    create_test_feed(&app.db, user_id, "Tech", feed_url).await;
+
+    for action in ["edit", "unsubscribe"] {
+        let form = [("ac", action.to_string()), ("s", feed_url.to_string())];
+        post_subscription_edit(&app, &form)
+            .await
+            .assert_status(StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(find_feed(&app.db, user_id, feed_url).await.url, feed_url);
+}
+
+#[tokio::test]
+async fn test_subscription_unsubscribe_of_an_unknown_feed_is_not_found() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
+
+    let form = [
+        ("ac", "unsubscribe".to_string()),
+        (
+            "s",
+            "feed/https://does-not-exist.example.com/rss".to_string(),
+        ),
+    ];
+    post_subscription_edit(&app, &form)
+        .await
+        .assert_status(StatusCode::NOT_FOUND);
+}
+
 // --- Part B — wiremock subscribe / quickadd success tests ---
 
 #[tokio::test]
