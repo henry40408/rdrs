@@ -31,6 +31,17 @@ fn effective_feed_updated_at(
         .max()
 }
 
+async fn record_fetch_error(db: &Db, feed_id: i64, error_msg: &str) -> AppResult<()> {
+    feed::update_fetch_result(
+        db,
+        &feed::FetchResult {
+            fetch_error: Some(error_msg),
+            ..feed::FetchResult::new(feed_id, Utc::now())
+        },
+    )
+    .await
+}
+
 pub async fn refresh_feed(
     db: Db,
     feed_id: i64,
@@ -45,15 +56,7 @@ pub async fn refresh_feed(
     // guard.
     let parsed_url = Url::parse(&feed_data.url).map_err(|_e| AppError::InvalidUrl)?;
     if let Err(e) = fetcher.validate(&parsed_url) {
-        let error_msg = e.to_string();
-        let _ = feed::update_fetch_result(
-            &db,
-            &feed::FetchResult {
-                fetch_error: Some(&error_msg),
-                ..feed::FetchResult::new(feed_id, Utc::now())
-            },
-        )
-        .await;
+        let _ = record_fetch_error(&db, feed_id, &e.to_string()).await;
         return Err(AppError::InvalidUrl);
     }
 
@@ -99,14 +102,7 @@ pub async fn refresh_feed(
         Ok(resp) => resp,
         Err(e) => {
             let error_msg = e.to_string();
-            let _ = feed::update_fetch_result(
-                &db,
-                &feed::FetchResult {
-                    fetch_error: Some(&error_msg),
-                    ..feed::FetchResult::new(feed_id, Utc::now())
-                },
-            )
-            .await;
+            let _ = record_fetch_error(&db, feed_id, &error_msg).await;
             return Err(AppError::FetchError(error_msg));
         }
     };
@@ -135,14 +131,7 @@ pub async fn refresh_feed(
 
     if !status.is_success() {
         let error_msg = format!("HTTP {status}");
-        feed::update_fetch_result(
-            &db,
-            &feed::FetchResult {
-                fetch_error: Some(&error_msg),
-                ..feed::FetchResult::new(feed_id, Utc::now())
-            },
-        )
-        .await?;
+        record_fetch_error(&db, feed_id, &error_msg).await?;
         return Err(AppError::FetchError(error_msg));
     }
 
@@ -163,14 +152,7 @@ pub async fn refresh_feed(
         Ok(text) => text,
         Err(e) => {
             let error_msg = e.to_string();
-            let _ = feed::update_fetch_result(
-                &db,
-                &feed::FetchResult {
-                    fetch_error: Some(&error_msg),
-                    ..feed::FetchResult::new(feed_id, Utc::now())
-                },
-            )
-            .await;
+            let _ = record_fetch_error(&db, feed_id, &error_msg).await;
             return Err(AppError::FetchError(error_msg));
         }
     };
@@ -188,14 +170,7 @@ pub async fn refresh_feed(
         Ok(feed) => feed,
         Err(e) => {
             let error_msg = e.to_string();
-            let _ = feed::update_fetch_result(
-                &db,
-                &feed::FetchResult {
-                    fetch_error: Some(&error_msg),
-                    ..feed::FetchResult::new(feed_id, Utc::now())
-                },
-            )
-            .await;
+            let _ = record_fetch_error(&db, feed_id, &error_msg).await;
             return Err(AppError::FeedParseError(error_msg));
         }
     };
