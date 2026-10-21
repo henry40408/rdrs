@@ -35,27 +35,36 @@ fn ewf_with_base_parts(link: Option<&str>, site_url: Option<&str>) -> EntryWithF
 
 #[test]
 fn content_base_url_prefers_the_entry_link() {
-    let ewf = ewf_with_base_parts(
+    let entry_with_feed = ewf_with_base_parts(
         Some("https://site.example/post"),
         Some("https://site.example/"),
     );
-    assert_eq!(ewf.content_base_url(), "https://site.example/post");
+    assert_eq!(
+        entry_with_feed.content_base_url(),
+        "https://site.example/post"
+    );
 }
 
 #[test]
 fn content_base_url_falls_back_to_site_then_feed() {
-    let ewf = ewf_with_base_parts(None, Some("https://site.example/"));
-    assert_eq!(ewf.content_base_url(), "https://site.example/");
+    let entry_with_feed = ewf_with_base_parts(None, Some("https://site.example/"));
+    assert_eq!(entry_with_feed.content_base_url(), "https://site.example/");
 
-    let ewf = ewf_with_base_parts(None, None);
-    assert_eq!(ewf.content_base_url(), "https://feed.example/atom.xml");
+    let entry_with_feed = ewf_with_base_parts(None, None);
+    assert_eq!(
+        entry_with_feed.content_base_url(),
+        "https://feed.example/atom.xml"
+    );
 }
 
 #[test]
 fn content_base_url_treats_empty_strings_as_absent() {
     // Nullable columns can also hold "".
-    let ewf = ewf_with_base_parts(Some(""), Some(""));
-    assert_eq!(ewf.content_base_url(), "https://feed.example/atom.xml");
+    let entry_with_feed = ewf_with_base_parts(Some(""), Some(""));
+    assert_eq!(
+        entry_with_feed.content_base_url(),
+        "https://feed.example/atom.xml"
+    );
 }
 
 async fn create_test_category(db: &Db, user_id: i64, name: &str) -> i64 {
@@ -1906,13 +1915,13 @@ async fn composite_cursor_walks_non_monotonic_data_without_skip() {
         if page.is_empty() {
             break;
         }
-        for ewf in &page {
+        for entry_with_feed in &page {
             assert!(
-                !seen.contains(&ewf.entry.id),
+                !seen.contains(&entry_with_feed.entry.id),
                 "duplicate id {}",
-                ewf.entry.id
+                entry_with_feed.entry.id
             );
-            seen.push(ewf.entry.id);
+            seen.push(entry_with_feed.entry.id);
         }
         let last = page.last().unwrap();
         let sort_ts = fetch_sort_ts(&db, last.entry.id, EntrySortOrder::PublishedAt)
@@ -1988,13 +1997,13 @@ async fn composite_cursor_walks_non_monotonic_data_oldest_first_without_skip() {
         if page.is_empty() {
             break;
         }
-        for ewf in &page {
+        for entry_with_feed in &page {
             assert!(
-                !seen.contains(&ewf.entry.id),
+                !seen.contains(&entry_with_feed.entry.id),
                 "duplicate id {}",
-                ewf.entry.id
+                entry_with_feed.entry.id
             );
-            seen.push(ewf.entry.id);
+            seen.push(entry_with_feed.entry.id);
         }
         let last = page.last().unwrap();
         let sort_ts = fetch_sort_ts(&db, last.entry.id, EntrySortOrder::PublishedAt)
@@ -2051,8 +2060,8 @@ async fn legacy_bare_i64_cursor_still_paginates() {
 
     // 4 entries below the boundary id
     assert_eq!(page.len(), 4);
-    for ewf in &page {
-        assert!(ewf.entry.id < max_id);
+    for entry_with_feed in &page {
+        assert!(entry_with_feed.entry.id < max_id);
     }
 }
 

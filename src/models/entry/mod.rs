@@ -1137,7 +1137,7 @@ pub async fn set_starred_for_user(
     }
     Ok(find_by_id_for_user(db, user_id, entry_id)
         .await?
-        .map(|ewf| (ewf, changed)))
+        .map(|entry_with_feed| (entry_with_feed, changed)))
 }
 
 /// Store the raw "Fetch Full Content" HTML, scoped to the owner; overwrites any
@@ -1188,7 +1188,7 @@ pub async fn set_read_for_user(
     }
     Ok(find_by_id_for_user(db, user_id, entry_id)
         .await?
-        .map(|ewf| (ewf, changed)))
+        .map(|entry_with_feed| (entry_with_feed, changed)))
 }
 
 /// Batch query entries by IDs with feed info, verifying user ownership.

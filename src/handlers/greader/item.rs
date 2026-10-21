@@ -131,11 +131,11 @@ pub async fn stream_contents(
     };
     let items: Vec<GReaderItem> = entries
         .iter()
-        .map(|ewf| {
+        .map(|entry_with_feed| {
             let status = summary_statuses
-                .get(&ewf.entry.id)
+                .get(&entry_with_feed.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, options)
+            entry_with_feed_to_greader_item(entry_with_feed, status, options)
         })
         .collect();
 
@@ -377,11 +377,11 @@ async fn fetch_items_by_ids(
     };
     let items: Vec<GReaderItem> = entries
         .iter()
-        .map(|ewf| {
+        .map(|entry_with_feed| {
             let status = summary_statuses
-                .get(&ewf.entry.id)
+                .get(&entry_with_feed.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, options)
+            entry_with_feed_to_greader_item(entry_with_feed, status, options)
         })
         .collect();
 
@@ -452,9 +452,9 @@ fn merge_summary_statuses(
     entries: &[entry::EntryWithFeed],
 ) -> HashMap<i64, entry_summary::SummaryStatus> {
     let mut merged = db_statuses.clone();
-    for ewf in entries {
-        if let Some(cached_status) = summary_cache.get_status(user_id, ewf.entry.id) {
-            merged.insert(ewf.entry.id, cached_status);
+    for entry_with_feed in entries {
+        if let Some(cached_status) = summary_cache.get_status(user_id, entry_with_feed.entry.id) {
+            merged.insert(entry_with_feed.entry.id, cached_status);
         }
     }
     merged
@@ -472,7 +472,7 @@ struct ItemOptions<'a> {
 
 /// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
 fn entry_with_feed_to_greader_item(
-    ewf: &entry::EntryWithFeed,
+    entry_with_feed: &entry::EntryWithFeed,
     summary_status: Option<String>,
     options: ItemOptions<'_>,
 ) -> GReaderItem {
@@ -482,7 +482,7 @@ fn entry_with_feed_to_greader_item(
         proxy_base_url,
         pixel,
     } = options;
-    let e = &ewf.entry;
+    let e = &entry_with_feed.entry;
 
     let mut categories = vec!["user/-/state/com.google/reading-list".to_string()];
 
@@ -494,7 +494,7 @@ fn entry_with_feed_to_greader_item(
         categories.push("user/-/state/com.google/starred".to_string());
     }
 
-    categories.push(format!("user/-/label/{}", ewf.category_name));
+    categories.push(format!("user/-/label/{}", entry_with_feed.category_name));
 
     let published = e.published_at.unwrap_or(e.created_at).timestamp();
     let updated = e.updated_at.timestamp();
@@ -502,8 +502,8 @@ fn entry_with_feed_to_greader_item(
     let timestamp_usec = (published * 1_000_000).to_string();
 
     let link = e.link.as_deref().unwrap_or("");
-    let base_url = Some(ewf.content_base_url());
-    let referrer = ewf.custom_referrer.as_deref();
+    let base_url = Some(entry_with_feed.content_base_url());
+    let referrer = entry_with_feed.custom_referrer.as_deref();
 
     // Sanitize once for both `summary` and `_content`. The pixel goes on after
     // sanitizing, which would otherwise strip it. See `services::pixel`.
@@ -548,16 +548,16 @@ fn entry_with_feed_to_greader_item(
         }],
         author: e.author.clone().unwrap_or_default(),
         origin: GReaderOrigin {
-            stream_id: format!("feed/{}", ewf.feed_url),
-            title: ewf.feed_title.clone().unwrap_or_default(),
-            html_url: ewf.site_url.clone().unwrap_or_default(),
+            stream_id: format!("feed/{}", entry_with_feed.feed_url),
+            title: entry_with_feed.feed_title.clone().unwrap_or_default(),
+            html_url: entry_with_feed.site_url.clone().unwrap_or_default(),
         },
         // RDRS extensions
         entry_id: e.id,
         feed_id: e.feed_id,
-        category_id: ewf.category_id,
-        category_name: ewf.category_name.clone(),
-        feed_has_icon: ewf.feed_has_icon,
+        category_id: entry_with_feed.category_id,
+        category_name: entry_with_feed.category_name.clone(),
+        feed_has_icon: entry_with_feed.feed_has_icon,
         read_at: e.read_at.map(|dt| dt.to_rfc3339()),
         starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
         published_at: e.published_at.map(|dt| dt.to_rfc3339()),
