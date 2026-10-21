@@ -3,12 +3,14 @@ use axum::extract::{Query, State};
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
+use crate::db::Db;
 use crate::error::AppResult;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
-use crate::models::entry_open::FeedOpenRate;
+use crate::models::entry_open::{self, FeedOpenRate};
 use crate::models::statistics::{
-    AdminCounts, AdminDatabaseStats, AdminEntryStats, CategoryCount, DailyReadCount, FeedCount,
+    self, AdminCounts, AdminDatabaseStats, AdminEntryStats, CategoryCount, DailyReadCount,
+    FeedCount, PersonalOverview,
 };
 
 #[derive(serde::Deserialize)]
@@ -283,6 +285,139 @@ fn log_and_default<T: Default>(what: &'static str, result: AppResult<T>) -> T {
     log_failure(what, result).unwrap_or_default()
 }
 
+/// Admins see site-wide numbers, except while masquerading as another user.
+fn shows_admin_stats(auth_user: &PageAuthUser) -> bool {
+    if auth_user.session.is_masquerading() {
+        return false;
+    }
+    auth_user.user.is_admin()
+}
+
+/// The "all" period charts only the last 90 days; any other period charts its
+/// whole range.
+fn chart_range_start(active_period: &str, from: &str) -> String {
+    if active_period != "all" {
+        return from.to_string();
+    }
+    let today = chrono::Utc::now().date_naive();
+    (today - chrono::Duration::days(90)).to_string()
+}
+
+/// The `from` / `to` inputs to echo back, only for a custom range.
+fn custom_range_inputs(query: &StatisticsQuery, active_period: &str) -> (String, String) {
+    if active_period != "custom" {
+        return (String::new(), String::new());
+    }
+    (
+        query.from.clone().unwrap_or_default(),
+        query.to.clone().unwrap_or_default(),
+    )
+}
+
+/// Date bounds for the statistics queries; the daily chart may start later than
+/// the rest (see [`chart_range_start`]).
+struct StatsRange<'a> {
+    from: &'a str,
+    to: &'a str,
+    chart_from: &'a str,
+}
+
+struct PersonalStats {
+    overview: PersonalOverview,
+    daily: Vec<DailyReadCount>,
+    categories: Vec<CategoryCount>,
+    top_feeds: Vec<FeedCount>,
+}
+
+async fn fetch_personal_stats(db: &Db, user_id: i64, range: &StatsRange<'_>) -> PersonalStats {
+    let StatsRange {
+        from,
+        to,
+        chart_from,
+    } = *range;
+    let overview = log_and_default(
+        "overview",
+        statistics::get_personal_overview(db, user_id, from, to).await,
+    );
+    let daily = log_and_default(
+        "daily_read_counts",
+        statistics::get_daily_read_counts(db, user_id, chart_from, to).await,
+    );
+    let categories = log_and_default(
+        "entries_by_category",
+        statistics::get_entries_by_category(db, user_id, from, to).await,
+    );
+    let top_feeds = log_and_default(
+        "top_feeds",
+        statistics::get_top_feeds(
+            db,
+            &statistics::TopFeedsQuery {
+                user_id,
+                from,
+                to,
+                limit: 10,
+            },
+        )
+        .await,
+    );
+    PersonalStats {
+        overview,
+        daily,
+        categories,
+        top_feeds,
+    }
+}
+
+#[derive(Default)]
+struct AdminStats {
+    counts: Option<AdminCounts>,
+    entry_stats: Option<AdminEntryStats>,
+    db_stats: Option<AdminDatabaseStats>,
+}
+
+async fn fetch_admin_stats(state: &AppState, range: &StatsRange<'_>) -> AdminStats {
+    let counts = log_failure(
+        "admin_counts",
+        statistics::get_admin_counts(&state.db).await,
+    );
+    let entry_stats = log_failure(
+        "admin_entry_stats",
+        statistics::get_admin_entry_stats(&state.db, range.from, range.to).await,
+    );
+    let db_stats = cached_admin_db_stats(state).await;
+    AdminStats {
+        counts,
+        entry_stats,
+        db_stats,
+    }
+}
+
+/// Plain read-through: a concurrent miss just recomputes harmlessly.
+async fn cached_admin_db_stats(state: &AppState) -> Option<AdminDatabaseStats> {
+    if let Some(cached) = state.admin_db_stats_cache.get(&()) {
+        return Some(cached);
+    }
+    let fresh = log_failure(
+        "admin_database_stats",
+        statistics::get_admin_database_stats(&state.db).await,
+    )?;
+    state.admin_db_stats_cache.insert((), fresh.clone());
+    Some(fresh)
+}
+
+async fn fetch_tracked_since(db: &Db, user_id: i64) -> Option<String> {
+    log_failure(
+        "tracking_window",
+        entry_open::tracking_window(db, user_id).await,
+    )
+    .unwrap_or(entry_open::TrackingWindow {
+        enabled_at: None,
+        oldest_tracked: None,
+    })
+    .tracked_since()
+    .map(|t| t.format("%Y-%m-%d").to_string())
+}
+
 /// `GET /statistics`.
 pub async fn statistics_page(
     auth_user: PageAuthUser,
@@ -291,138 +426,45 @@ pub async fn statistics_page(
     Query(query): Query<StatisticsQuery>,
 ) -> (Flash, StatisticsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
-
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-    let show_admin_stats = is_admin && !is_masquerading;
+    let show_admin_stats = shows_admin_stats(&auth_user);
 
     let (from, to, active_period) = resolve_statistics_period(&query);
-    let chart_from = if active_period == "all" {
-        let today = chrono::Utc::now().date_naive();
-        (today - chrono::Duration::days(90)).to_string()
-    } else {
-        from.clone()
+    let chart_from = chart_range_start(&active_period, &from);
+    let range = StatsRange {
+        from: &from,
+        to: &to,
+        chart_from: &chart_from,
     };
 
     let user_id = auth_user.user.id;
-    let from_c = from.clone();
-    let to_c = to.clone();
-    let chart_from_c = chart_from.clone();
-
-    let (overview, daily, cats, feeds, admin_counts, admin_entry_stats, admin_db_stats) = {
-        let overview = log_and_default(
-            "overview",
-            crate::models::statistics::get_personal_overview(&state.db, user_id, &from_c, &to_c)
-                .await,
-        );
-        let daily = log_and_default(
-            "daily_read_counts",
-            crate::models::statistics::get_daily_read_counts(
-                &state.db,
-                user_id,
-                &chart_from_c,
-                &to_c,
-            )
-            .await,
-        );
-        let cats = log_and_default(
-            "entries_by_category",
-            crate::models::statistics::get_entries_by_category(&state.db, user_id, &from_c, &to_c)
-                .await,
-        );
-        let feeds = log_and_default(
-            "top_feeds",
-            crate::models::statistics::get_top_feeds(
-                &state.db,
-                &crate::models::statistics::TopFeedsQuery {
-                    user_id,
-                    from: &from_c,
-                    to: &to_c,
-                    limit: 10,
-                },
-            )
-            .await,
-        );
-        let admin_counts = if show_admin_stats {
-            log_failure(
-                "admin_counts",
-                crate::models::statistics::get_admin_counts(&state.db).await,
-            )
-        } else {
-            None
-        };
-        let admin_entry_stats = if show_admin_stats {
-            log_failure(
-                "admin_entry_stats",
-                crate::models::statistics::get_admin_entry_stats(&state.db, &from_c, &to_c).await,
-            )
-        } else {
-            None
-        };
-        // Plain read-through: a concurrent miss just recomputes harmlessly.
-        let admin_db_stats = if show_admin_stats {
-            if let Some(cached) = state.admin_db_stats_cache.get(&()) {
-                Some(cached)
-            } else {
-                let fresh = log_failure(
-                    "admin_database_stats",
-                    crate::models::statistics::get_admin_database_stats(&state.db).await,
-                );
-                if let Some(stats) = fresh.clone() {
-                    state.admin_db_stats_cache.insert((), stats);
-                }
-                fresh
-            }
-        } else {
-            None
-        };
-        (
-            overview,
-            daily,
-            cats,
-            feeds,
-            admin_counts,
-            admin_entry_stats,
-            admin_db_stats,
-        )
-    };
-
-    let (custom_from, custom_to) = if active_period == "custom" {
-        (
-            query.from.clone().unwrap_or_default(),
-            query.to.clone().unwrap_or_default(),
-        )
+    let personal = fetch_personal_stats(&state.db, user_id, &range).await;
+    let admin_stats = if show_admin_stats {
+        fetch_admin_stats(&state, &range).await
     } else {
-        (String::new(), String::new())
+        AdminStats::default()
     };
 
+    let (custom_from, custom_to) = custom_range_inputs(&query, &active_period);
+
+    let PersonalStats {
+        overview,
+        daily,
+        categories,
+        top_feeds,
+    } = personal;
     let (daily_max, daily_read_counts) = daily_read_views(&daily);
-    let categories = category_views(cats);
-    let top_feeds = top_feed_views(feeds);
+    let categories = category_views(categories);
+    let top_feeds = top_feed_views(top_feeds);
 
     // Ignores the period filter: open rate is only meaningful since opt-in.
     let open_rate_feeds = open_rate_views(log_and_default(
         "open_rates",
-        crate::models::entry_open::open_rates_by_feed(&state.db, user_id).await,
+        entry_open::open_rates_by_feed(&state.db, user_id).await,
     ));
+    let tracked_since = fetch_tracked_since(&state.db, user_id).await;
 
-    let tracked_since = log_failure(
-        "tracking_window",
-        crate::models::entry_open::tracking_window(&state.db, user_id).await,
-    )
-    .unwrap_or(crate::models::entry_open::TrackingWindow {
-        enabled_at: None,
-        oldest_tracked: None,
-    })
-    .tracked_since()
-    .map(|t| t.format("%Y-%m-%d").to_string());
-
-    let admin = admin_stats_view(admin_counts, admin_entry_stats);
-    let admin_db = admin_database_view(admin_db_stats);
+    let admin = admin_stats_view(admin_stats.counts, admin_stats.entry_stats);
+    let admin_db = admin_database_view(admin_stats.db_stats);
 
     (
         flash,
