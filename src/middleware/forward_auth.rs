@@ -164,7 +164,7 @@ pub async fn forward_auth(
             user_id: user.id,
             method: "forward_auth",
             ip: &ip,
-            ua: &user_agent,
+            user_agent: &user_agent,
         });
         Ok(Some(new_session.session_token))
     }

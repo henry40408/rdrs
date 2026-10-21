@@ -230,7 +230,7 @@ pub async fn client_login(
         user_id: user.id,
         method: "client_login",
         ip: &ip,
-        ua: &user_agent,
+        user_agent: &user_agent,
     });
 
     let _ = user; // user info not needed in response

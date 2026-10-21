@@ -145,7 +145,7 @@ pub async fn finish_registration(
         passkey_id: new_passkey.id,
         name: &new_passkey.name,
         ip: &state.config.client_ip(peer, &headers).to_string(),
-        ua: &request_user_agent(&headers),
+        user_agent: &request_user_agent(&headers),
     });
 
     Ok((
@@ -297,7 +297,7 @@ pub async fn finish_authentication(
         user_id: passkey_user_id,
         method: "passkey",
         ip: &ip,
-        ua: &user_agent,
+        user_agent: &user_agent,
     });
 
     let cookie = build_session_cookie(

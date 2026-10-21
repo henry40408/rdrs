@@ -297,7 +297,7 @@ async fn perform_login(
         user_id: user.id,
         method: "password",
         ip: &ip,
-        ua: &user_agent,
+        user_agent: &user_agent,
     });
 
     let cookie = build_session_cookie(

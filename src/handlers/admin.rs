@@ -440,7 +440,7 @@ pub async fn start_masquerade_form(
                 actor_user_id,
                 target_user_id,
                 ip: &ip,
-                ua: &user_agent,
+                user_agent: &user_agent,
             });
             (
                 rotated_cookies(&state, &new_token),

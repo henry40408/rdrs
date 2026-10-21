@@ -19,7 +19,7 @@ pub struct CredentialCreated<'a> {
     pub user_id: i64,
     pub method: &'a str,
     pub ip: &'a str,
-    pub ua: &'a str,
+    pub user_agent: &'a str,
 }
 
 /// A new session was established. `method`: `"password"`, `"passkey"` or
@@ -31,7 +31,7 @@ pub fn session_created(event: &CredentialCreated<'_>) {
         user_id,
         method,
         ip,
-        ua,
+        user_agent,
     } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
@@ -40,7 +40,7 @@ pub fn session_created(event: &CredentialCreated<'_>) {
         user_id,
         method,
         ip = %ip,
-        user_agent = %ua,
+        user_agent = %user_agent,
         "session created"
     );
 }
@@ -54,7 +54,7 @@ pub fn api_token_created(event: &CredentialCreated<'_>) {
         user_id,
         method,
         ip,
-        ua,
+        user_agent,
     } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
@@ -63,7 +63,7 @@ pub fn api_token_created(event: &CredentialCreated<'_>) {
         user_id,
         method,
         ip = %ip,
-        user_agent = %ua,
+        user_agent = %user_agent,
         "API token created"
     );
 }
@@ -138,7 +138,7 @@ pub struct MasqueradeStarted<'a> {
     pub actor_user_id: i64,
     pub target_user_id: i64,
     pub ip: &'a str,
-    pub ua: &'a str,
+    pub user_agent: &'a str,
 }
 
 /// An admin started masquerading as another user (a privilege change).
@@ -151,7 +151,7 @@ pub fn masquerade_started(event: &MasqueradeStarted<'_>) {
         actor_user_id,
         target_user_id,
         ip,
-        ua,
+        user_agent,
     } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
@@ -161,7 +161,7 @@ pub fn masquerade_started(event: &MasqueradeStarted<'_>) {
         actor_user_id,
         target_user_id,
         ip = %ip,
-        user_agent = %ua,
+        user_agent = %user_agent,
         "masquerade started"
     );
 }
@@ -194,7 +194,7 @@ pub struct PasskeyRegistered<'a> {
     pub passkey_id: i64,
     pub name: &'a str,
     pub ip: &'a str,
-    pub ua: &'a str,
+    pub user_agent: &'a str,
 }
 
 /// A passkey was registered: an independent credential that survives a
@@ -207,7 +207,7 @@ pub fn passkey_registered(event: &PasskeyRegistered<'_>) {
         passkey_id,
         name,
         ip,
-        ua,
+        user_agent,
     } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
@@ -217,7 +217,7 @@ pub fn passkey_registered(event: &PasskeyRegistered<'_>) {
         passkey_id,
         passkey_name = %name,
         ip = %ip,
-        user_agent = %ua,
+        user_agent = %user_agent,
         "passkey registered"
     );
 }
@@ -250,14 +250,14 @@ pub fn session_reauthenticated(secret: &[u8], token: &str, user_id: i64, method:
 /// A login attempt failed. Takes only `username_len` so a password typed into
 /// the username field can never be logged. `reason`: `"unknown_user"`,
 /// `"bad_password"` or `"disabled"`.
-pub fn login_failed(username_len: usize, reason: &str, ip: &str, ua: &str) {
+pub fn login_failed(username_len: usize, reason: &str, ip: &str, user_agent: &str) {
     tracing::info!(
         target: AUDIT_TARGET,
         event = "login.failed",
         username_len,
         reason,
         ip = %ip,
-        user_agent = %ua,
+        user_agent = %user_agent,
         "login failed"
     );
 }
@@ -299,14 +299,14 @@ pub fn invite_issued(
 
 /// A link was redeemed and the account's password set; the counterpart of
 /// [`invite_issued`].
-pub fn invite_consumed(secret: &[u8], token: &str, user_id: i64, ip: &str, ua: &str) {
+pub fn invite_consumed(secret: &[u8], token: &str, user_id: i64, ip: &str, user_agent: &str) {
     tracing::info!(
         target: AUDIT_TARGET,
         event = "invite.consumed",
         iid = %audit_id(secret, token),
         user_id,
         ip = %ip,
-        user_agent = %ua,
+        user_agent = %user_agent,
         "account invite redeemed"
     );
 }
@@ -354,7 +354,7 @@ mod tests {
             user_id: 1,
             method,
             ip: "127.0.0.1",
-            ua: "test-agent",
+            user_agent: "test-agent",
         };
         session_created(&credential("password"));
         session_created(&credential("passkey"));
@@ -375,7 +375,7 @@ mod tests {
             actor_user_id: 1,
             target_user_id: 2,
             ip: "127.0.0.1",
-            ua: "test-agent",
+            user_agent: "test-agent",
         });
         masquerade_stopped(SECRET, "tok2", "tok3", 1, 1);
         session_token_rotated(SECRET, "tok3", "tok4");
@@ -388,7 +388,7 @@ mod tests {
             passkey_id: 7,
             name: "MacBook",
             ip: "127.0.0.1",
-            ua: "test-agent",
+            user_agent: "test-agent",
         });
         passkey_removed(SECRET, "tok4", 1, 7);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
