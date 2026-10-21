@@ -20,18 +20,6 @@ ignore = [
     # cooldown until 2026-10-24 03:45 UTC. Drop once ammonia is upgraded.
     # Tracked in https://github.com/henry40408/rdrs/issues/610
     "RUSTSEC-2026-0373",
-    # rustls 0.23.45 (transitive via reqwest -> hyper-rustls/tokio-rustls and
-    # rustls-platform-verifier). Fix 0.23.46 was published 2026-10-14 09:54 UTC
-    # and is inside the 168h cooldown until 2026-10-21 09:54 UTC. Drop all four
-    # once rustls is upgraded. Reachability: src/ has no direct rustls use (no
-    # custom ClientSessionStore, no ECH config); reqwest uses default client
-    # settings. 0348 (brotli cert decompression) and 0349 (ServerHello key
-    # share) apply to any outbound TLS handshake and were not assessed further.
-    # Tracked in https://github.com/henry40408/rdrs/issues/605
-    "RUSTSEC-2026-0346", # client session Debug impls expose TLS secrets
-    "RUSTSEC-2026-0347", # buffered app data sent to outer server after ECH rejection
-    "RUSTSEC-2026-0348", # brotli certificate decompression allocates up to 1 GiB
-    "RUSTSEC-2026-0349", # unauthenticated ServerHello can downgrade key exchange
     # rustls-webpki 0.103.15 and webpki-root-certs 1.0.9 (transitive via
     # reqwest -> rustls / rustls-platform-verifier) trust distrusted emSign
     # intermediates whose private keys are now public. Only outbound TLS
