@@ -30,14 +30,22 @@ pub async fn find(db: &Db, entity_type: &str, entity_id: i64) -> AppResult<Optio
     .map_err(AppError::Database)
 }
 
-pub async fn upsert(
-    db: &Db,
-    entity_type: &str,
-    entity_id: i64,
-    data: &[u8],
-    content_type: &str,
-    source_url: Option<&str>,
-) -> AppResult<()> {
+pub struct ImageUpsert<'a> {
+    pub entity_type: &'a str,
+    pub entity_id: i64,
+    pub data: &'a [u8],
+    pub content_type: &'a str,
+    pub source_url: Option<&'a str>,
+}
+
+pub async fn upsert(db: &Db, image: &ImageUpsert<'_>) -> AppResult<()> {
+    let ImageUpsert {
+        entity_type,
+        entity_id,
+        data,
+        content_type,
+        source_url,
+    } = *image;
     let now = Utc::now();
     db_execute!(
         db,
@@ -165,11 +173,13 @@ mod tests {
         let data = vec![0x89, 0x50, 0x4E, 0x47]; // PNG header
         upsert(
             &db,
-            ENTITY_FEED,
-            1,
-            &data,
-            "image/png",
-            Some("https://example.com/icon.png"),
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &data,
+                content_type: "image/png",
+                source_url: Some("https://example.com/icon.png"),
+            },
         )
         .await
         .unwrap();
@@ -190,18 +200,29 @@ mod tests {
         let db = setup_db().await;
 
         let data1 = vec![0x89, 0x50, 0x4E, 0x47];
-        upsert(&db, ENTITY_FEED, 1, &data1, "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &data1,
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let data2 = vec![0x00, 0x00, 0x01, 0x00]; // ICO header
         upsert(
             &db,
-            ENTITY_FEED,
-            1,
-            &data2,
-            "image/x-icon",
-            Some("https://example.com/favicon.ico"),
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &data2,
+                content_type: "image/x-icon",
+                source_url: Some("https://example.com/favicon.ico"),
+            },
         )
         .await
         .unwrap();
@@ -217,9 +238,18 @@ mod tests {
 
         assert!(!exists(&db, ENTITY_FEED, 1).await.unwrap());
 
-        upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &[1, 2, 3],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(exists(&db, ENTITY_FEED, 1).await.unwrap());
     }
@@ -235,12 +265,30 @@ mod tests {
                 .is_empty()
         );
 
-        upsert(&db, ENTITY_FEED, 1, &[1], "image/png", None)
-            .await
-            .unwrap();
-        upsert(&db, ENTITY_FEED, 3, &[3], "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &[1],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 3,
+                data: &[3],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let set = existing_ids(&db, ENTITY_FEED, &[1, 2, 3, 4]).await.unwrap();
         assert_eq!(set.len(), 2);
@@ -261,9 +309,18 @@ mod tests {
     async fn test_delete_by_entity() {
         let db = setup_db().await;
 
-        upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &[1, 2, 3],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
         assert!(exists(&db, ENTITY_FEED, 1).await.unwrap());
 
         delete_by_entity(&db, ENTITY_FEED, 1).await.unwrap();
@@ -276,9 +333,18 @@ mod tests {
 
         assert!(needs_refresh(&db, ENTITY_FEED, 1, 7).await.unwrap());
 
-        upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: 1,
+                data: &[1, 2, 3],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
         assert!(!needs_refresh(&db, ENTITY_FEED, 1, 7).await.unwrap());
     }
 
@@ -307,16 +373,43 @@ mod tests {
         let db = setup_db().await;
         let live_feed_id = seed_feed(&db).await;
         let missing_feed_id = live_feed_id + 1000;
-        upsert(&db, ENTITY_FEED, live_feed_id, &[1], "image/png", None)
-            .await
-            .unwrap();
-        upsert(&db, ENTITY_FEED, missing_feed_id, &[2], "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: live_feed_id,
+                data: &[1],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: ENTITY_FEED,
+                entity_id: missing_feed_id,
+                data: &[2],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
         // Another entity type with an unrelated id must never be touched.
-        upsert(&db, "other", missing_feed_id, &[3], "image/png", None)
-            .await
-            .unwrap();
+        upsert(
+            &db,
+            &ImageUpsert {
+                entity_type: "other",
+                entity_id: missing_feed_id,
+                data: &[3],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
 
         let deleted = delete_orphaned_feed_images(&db, 500).await.unwrap();
 
@@ -330,9 +423,18 @@ mod tests {
     async fn test_orphan_sweep_respects_the_batch_size() {
         let db = setup_db().await;
         for feed_id in [901, 902, 903] {
-            upsert(&db, ENTITY_FEED, feed_id, &[1], "image/png", None)
-                .await
-                .unwrap();
+            upsert(
+                &db,
+                &ImageUpsert {
+                    entity_type: ENTITY_FEED,
+                    entity_id: feed_id,
+                    data: &[1],
+                    content_type: "image/png",
+                    source_url: None,
+                },
+            )
+            .await
+            .unwrap();
         }
 
         assert_eq!(delete_orphaned_feed_images(&db, 2).await.unwrap(), 2);

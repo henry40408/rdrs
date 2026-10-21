@@ -68,13 +68,23 @@ impl From<WebauthnChallengeRow> for WebauthnChallenge {
     }
 }
 
+pub struct NewChallenge<'a> {
+    pub challenge: &'a [u8],
+    pub user_id: Option<i64>,
+    pub challenge_type: ChallengeType,
+    pub state_data: &'a str,
+}
+
 pub async fn create_challenge(
     db: &Db,
-    challenge: &[u8],
-    user_id: Option<i64>,
-    challenge_type: ChallengeType,
-    state_data: &str,
+    new_challenge: &NewChallenge<'_>,
 ) -> AppResult<WebauthnChallenge> {
+    let NewChallenge {
+        challenge,
+        user_id,
+        challenge_type,
+        state_data,
+    } = *new_challenge;
     let expires_at = Utc::now() + Duration::minutes(CHALLENGE_EXPIRY_MINUTES);
 
     let row = query_one!(
@@ -151,10 +161,12 @@ mod tests {
 
         let challenge = create_challenge(
             &db,
-            &challenge_bytes,
-            Some(user.id),
-            ChallengeType::Registration,
-            state_data,
+            &NewChallenge {
+                challenge: &challenge_bytes,
+                user_id: Some(user.id),
+                challenge_type: ChallengeType::Registration,
+                state_data,
+            },
         )
         .await
         .unwrap();
@@ -173,10 +185,12 @@ mod tests {
         let challenge_bytes = vec![1, 2, 3, 4];
         create_challenge(
             &db,
-            &challenge_bytes,
-            Some(user.id),
-            ChallengeType::Registration,
-            "{}",
+            &NewChallenge {
+                challenge: &challenge_bytes,
+                user_id: Some(user.id),
+                challenge_type: ChallengeType::Registration,
+                state_data: "{}",
+            },
         )
         .await
         .unwrap();
@@ -199,10 +213,12 @@ mod tests {
         let challenge_bytes = vec![5, 6, 7, 8];
         create_challenge(
             &db,
-            &challenge_bytes,
-            None,
-            ChallengeType::Authentication,
-            "{}",
+            &NewChallenge {
+                challenge: &challenge_bytes,
+                user_id: None,
+                challenge_type: ChallengeType::Authentication,
+                state_data: "{}",
+            },
         )
         .await
         .unwrap();

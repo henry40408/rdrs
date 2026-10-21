@@ -317,10 +317,18 @@ mod tests {
         let db = setup_db().await;
         let user_id = seed_user(&db, "testuser", Role::User).await.id;
 
-        let expired =
-            api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
-                .await
-                .unwrap();
+        let expired = api_token::create_api_token(
+            &db,
+            &api_token::NewApiToken {
+                user_id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
         db_execute!(
             &db,
             "UPDATE api_token SET expires_at = datetime('now', '-1 hours') WHERE id = $1",
@@ -328,10 +336,18 @@ mod tests {
         )
         .unwrap();
 
-        let fresh =
-            api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
-                .await
-                .unwrap();
+        let fresh = api_token::create_api_token(
+            &db,
+            &api_token::NewApiToken {
+                user_id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
 
         // Run the api_token sweep directly, as the worker does each tick.
         let swept = api_token::delete_expired(&db).await.unwrap();
@@ -368,10 +384,18 @@ mod tests {
         )
         .unwrap();
 
-        let expired_token =
-            api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
-                .await
-                .unwrap();
+        let expired_token = api_token::create_api_token(
+            &db,
+            &api_token::NewApiToken {
+                user_id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
         db_execute!(
             &db,
             "UPDATE api_token SET expires_at = datetime('now', '-1 hours') WHERE id = $1",
@@ -404,9 +428,18 @@ mod tests {
     #[tokio::test]
     async fn test_sweep_removes_orphaned_feed_images() {
         let db = setup_db().await;
-        image::upsert(&db, image::ENTITY_FEED, 4242, &[1], "image/png", None)
-            .await
-            .unwrap();
+        image::upsert(
+            &db,
+            &image::ImageUpsert {
+                entity_type: image::ENTITY_FEED,
+                entity_id: 4242,
+                data: &[1],
+                content_type: "image/png",
+                source_url: None,
+            },
+        )
+        .await
+        .unwrap();
 
         run_sweeps(&db, 24).await;
 

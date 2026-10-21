@@ -346,9 +346,18 @@ mod tests {
         session::create_session(db, user.id, "ua", "127.0.0.1")
             .await
             .unwrap();
-        api_token::create_api_token(db, user.id, "greader", "label", "ua", "127.0.0.1")
-            .await
-            .unwrap();
+        api_token::create_api_token(
+            db,
+            &api_token::NewApiToken {
+                user_id: user.id,
+                kind: "greader",
+                label: "label",
+                user_agent: "ua",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
         user
     }
 

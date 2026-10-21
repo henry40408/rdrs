@@ -14,13 +14,24 @@ pub struct FetchedImage {
     pub source_url: String,
 }
 
+/// Where to look for a feed's icon, tried in this order: `icon_url`,
+/// `logo_url`, then the site's own favicon.
+pub struct IconCandidates<'a> {
+    pub icon_url: Option<&'a str>,
+    pub logo_url: Option<&'a str>,
+    pub site_url: Option<&'a str>,
+}
+
 pub async fn fetch_feed_icon(
-    icon_url: Option<&str>,
-    logo_url: Option<&str>,
-    site_url: Option<&str>,
+    candidates: &IconCandidates<'_>,
     user_agent: &str,
     fetcher: &Fetcher,
 ) -> AppResult<Option<FetchedImage>> {
+    let IconCandidates {
+        icon_url,
+        logo_url,
+        site_url,
+    } = *candidates;
     if let Some(url) = icon_url
         && let Ok(Some(img)) = fetch_image(url, user_agent, fetcher).await
     {
@@ -502,9 +513,11 @@ mod tests {
 
         let icon_url = format!("{}/a", server.uri());
         let result = fetch_feed_icon(
-            Some(&icon_url),
-            Some("http://169.254.169.254/logo.png"),
-            Some(&server.uri()),
+            &IconCandidates {
+                icon_url: Some(&icon_url),
+                logo_url: Some("http://169.254.169.254/logo.png"),
+                site_url: Some(&server.uri()),
+            },
             "RDRS-Test/1.0",
             &Fetcher::default(),
         )
@@ -541,9 +554,11 @@ mod tests {
         let icon_url = format!("{}/a", server.uri());
         let logo_url = format!("{}/b", server.uri());
         let result = fetch_feed_icon(
-            Some(&icon_url),
-            Some(&logo_url),
-            None,
+            &IconCandidates {
+                icon_url: Some(&icon_url),
+                logo_url: Some(&logo_url),
+                site_url: None,
+            },
             "RDRS-Test/1.0",
             &loopback_fetcher(),
         )
@@ -581,9 +596,11 @@ mod tests {
         let icon_url = format!("{}/a", server.uri());
         let logo_url = format!("{}/b", server.uri());
         let result = fetch_feed_icon(
-            Some(&icon_url),
-            Some(&logo_url),
-            None,
+            &IconCandidates {
+                icon_url: Some(&icon_url),
+                logo_url: Some(&logo_url),
+                site_url: None,
+            },
             "RDRS-Test/1.0",
             &loopback_fetcher(),
         )
@@ -600,9 +617,17 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_feed_icon_all_none() {
-        let result = fetch_feed_icon(None, None, None, "RDRS-Test/1.0", &loopback_fetcher())
-            .await
-            .unwrap();
+        let result = fetch_feed_icon(
+            &IconCandidates {
+                icon_url: None,
+                logo_url: None,
+                site_url: None,
+            },
+            "RDRS-Test/1.0",
+            &loopback_fetcher(),
+        )
+        .await
+        .unwrap();
         assert!(result.is_none());
     }
 

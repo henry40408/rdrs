@@ -433,11 +433,13 @@ async fn test_user_settings_lists_api_tokens() {
 
     rdrs::models::api_token::create_api_token(
         &app.db,
-        admin_id,
-        "greader",
-        "FeedMe/1.0",
-        "FeedMe/1.0",
-        "203.0.113.5",
+        &rdrs::models::api_token::NewApiToken {
+            user_id: admin_id,
+            kind: "greader",
+            label: "FeedMe/1.0",
+            user_agent: "FeedMe/1.0",
+            ip_address: "203.0.113.5",
+        },
     )
     .await
     .unwrap();
@@ -457,11 +459,13 @@ async fn test_api_token_revoke_is_user_scoped() {
 
     let token = rdrs::models::api_token::create_api_token(
         &app.db,
-        admin_id,
-        "greader",
-        "admin-client",
-        "test-agent",
-        "127.0.0.1",
+        &rdrs::models::api_token::NewApiToken {
+            user_id: admin_id,
+            kind: "greader",
+            label: "admin-client",
+            user_agent: "test-agent",
+            ip_address: "127.0.0.1",
+        },
     )
     .await
     .unwrap();
@@ -2067,11 +2071,13 @@ async fn test_sidebar_category_feeds_endpoint() {
 
     rdrs::models::image::upsert(
         &app.db,
-        rdrs::models::image::ENTITY_FEED,
-        feed_id,
-        &[1, 2, 3],
-        "image/png",
-        Some("https://x/icon.png"),
+        &rdrs::models::image::ImageUpsert {
+            entity_type: rdrs::models::image::ENTITY_FEED,
+            entity_id: feed_id,
+            data: &[1, 2, 3],
+            content_type: "image/png",
+            source_url: Some("https://x/icon.png"),
+        },
     )
     .await
     .unwrap();
