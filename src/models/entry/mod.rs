@@ -176,31 +176,31 @@ struct EntryWithFeedTsRow {
 }
 
 impl From<EntryWithFeedRow> for EntryWithFeed {
-    fn from(r: EntryWithFeedRow) -> Self {
+    fn from(row: EntryWithFeedRow) -> Self {
         EntryWithFeed {
             entry: Entry {
-                id: r.id,
-                feed_id: r.feed_id,
-                guid: r.guid,
-                title: r.title,
-                link: r.link,
-                content: r.content,
-                full_content: r.full_content,
-                summary: r.summary,
-                author: r.author,
-                published_at: r.published_at,
-                read_at: r.read_at,
-                starred_at: r.starred_at,
-                created_at: r.created_at,
-                updated_at: r.updated_at,
+                id: row.id,
+                feed_id: row.feed_id,
+                guid: row.guid,
+                title: row.title,
+                link: row.link,
+                content: row.content,
+                full_content: row.full_content,
+                summary: row.summary,
+                author: row.author,
+                published_at: row.published_at,
+                read_at: row.read_at,
+                starred_at: row.starred_at,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
             },
-            feed_title: r.feed_title,
-            feed_url: r.feed_url,
-            site_url: r.site_url,
-            category_id: r.category_id,
-            category_name: r.category_name,
-            feed_has_icon: r.has_icon > 0,
-            custom_referrer: r.custom_referrer,
+            feed_title: row.feed_title,
+            feed_url: row.feed_url,
+            site_url: row.site_url,
+            category_id: row.category_id,
+            category_name: row.category_name,
+            feed_has_icon: row.has_icon > 0,
+            custom_referrer: row.custom_referrer,
         }
     }
 }
@@ -467,7 +467,7 @@ pub async fn fetch_sort_ts(
         _ => "",
     };
     let sql = format!("SELECT {ts_expr} FROM entry e{join} WHERE e.id = $1");
-    let r = match db.inner() {
+    let ts = match db.inner() {
         DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
                 .bind(entry_id)
@@ -482,7 +482,7 @@ pub async fn fetch_sort_ts(
         }
     }
     .map_err(AppError::Database)?;
-    Ok(r.flatten())
+    Ok(ts.flatten())
 }
 
 pub async fn find_by_guid_and_feed(db: &Db, guid: &str, feed_id: i64) -> AppResult<Option<Entry>> {
