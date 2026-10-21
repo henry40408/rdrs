@@ -3,12 +3,127 @@ use axum::extract::State;
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
+use crate::db::Db;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::api_token;
 use crate::models::session;
-use crate::models::user_settings;
+use crate::models::user_settings::{self, SidebarPrefs};
+use crate::services::save::SaveServicesConfig;
+use crate::services::save::linkding::LinkdingConfig;
+use crate::services::summarize::kagi::KagiConfig;
 use crate::utils::datetime::format_display;
+
+struct Preferences {
+    theme: Option<String>,
+    entries_per_page: i64,
+    retention_read_days: i64,
+    offline_keep: i64,
+    sidebar_prefs: SidebarPrefs,
+    pixel_tracking_enabled: bool,
+}
+
+async fn fetch_preferences(db: &Db, user_id: i64) -> Preferences {
+    let theme = user_settings::get_theme(db, user_id).await.unwrap_or(None);
+    let entries_per_page = user_settings::get_entries_per_page(db, user_id)
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+    let retention_read_days = user_settings::get_retention_read_days(db, user_id)
+        .await
+        .unwrap_or(0);
+    let offline_keep = user_settings::get_offline_keep(db, user_id)
+        .await
+        .unwrap_or(user_settings::OFFLINE_KEEP_OFF);
+    let sidebar_prefs = user_settings::get_sidebar_prefs(db, user_id)
+        .await
+        .unwrap_or_default();
+    let pixel_tracking_enabled = user_settings::get_pixel_tracking_enabled_at(db, user_id)
+        .await
+        .unwrap_or(None)
+        .is_some();
+    Preferences {
+        theme,
+        entries_per_page,
+        retention_read_days,
+        offline_keep,
+        sidebar_prefs,
+        pixel_tracking_enabled,
+    }
+}
+
+/// What the page shows of the "save" and "summarize" services. The stored
+/// credentials themselves are never shown.
+struct ServiceSettings {
+    linkding_configured: bool,
+    linkding_api_url: String,
+    kagi_configured: bool,
+    kagi_language: Option<String>,
+    credentials_unreadable: bool,
+}
+
+async fn fetch_service_settings(state: &AppState, user_id: i64) -> ServiceSettings {
+    let stored = user_settings::get_save_services_config(
+        &state.db,
+        user_id,
+        state.config.service_token_key(),
+    )
+    .await
+    .unwrap_or_else(|_| user_settings::StoredServices::Config(SaveServicesConfig::default()));
+    let credentials_unreadable = stored.is_undecryptable();
+    let config = stored.or_default();
+
+    let linkding = config.linkding.as_ref();
+    let kagi = config.kagi.as_ref();
+    ServiceSettings {
+        linkding_configured: linkding.is_some_and(LinkdingConfig::is_configured),
+        linkding_api_url: linkding.map(|c| c.api_url.clone()).unwrap_or_default(),
+        kagi_configured: kagi.is_some_and(KagiConfig::is_configured),
+        kagi_language: kagi.and_then(|c| c.language.clone()),
+        credentials_unreadable,
+    }
+}
+
+async fn session_rows(db: &Db, user_id: i64, current_session_id: i64) -> Vec<SessionRow> {
+    session::list_user_sessions(db, user_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| !s.is_expired())
+        .map(|s| SessionRow {
+            id: s.id,
+            created_at: format_display(s.created_at),
+            created_at_iso: s.created_at.to_rfc3339(),
+            expires_at: format_display(s.expires_at),
+            expires_at_iso: s.expires_at.to_rfc3339(),
+            is_current: s.id == current_session_id,
+            user_agent: s.user_agent.clone(),
+            ip_address: s.ip_address.clone(),
+            last_seen: format_display(s.last_seen_at),
+            last_seen_iso: s.last_seen_at.to_rfc3339(),
+        })
+        .collect()
+}
+
+async fn api_token_rows(db: &Db, user_id: i64) -> Vec<ApiTokenRow> {
+    api_token::list_user_tokens(db, user_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| !t.is_expired())
+        .map(|t| ApiTokenRow {
+            id: t.id,
+            label: t.label.clone(),
+            created_at: format_display(t.created_at),
+            created_at_iso: t.created_at.to_rfc3339(),
+            last_seen: format_display(t.last_seen_at),
+            last_seen_iso: t.last_seen_at.to_rfc3339(),
+            expires_at: format_display(t.expires_at),
+            expires_at_iso: t.expires_at.to_rfc3339(),
+            user_agent: t.user_agent.clone(),
+            ip_address: t.ip_address.clone(),
+        })
+        .collect()
+}
 
 /// `GET /user-settings`.
 pub async fn user_settings_page(
@@ -17,80 +132,10 @@ pub async fn user_settings_page(
     flash: Flash,
 ) -> (Flash, UserSettingsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
-
     let user_id = auth_user.user.id;
 
-    let (
-        theme,
-        entries_per_page,
-        retention_read_days,
-        offline_keep,
-        sidebar_prefs,
-        pixel_tracking_enabled,
-        linkding_configured,
-        linkding_api_url,
-        kagi_configured,
-        kagi_language,
-        credentials_unreadable,
-    ) = {
-        let theme = user_settings::get_theme(&state.db, user_id)
-            .await
-            .unwrap_or(None);
-        let entries_per_page = user_settings::get_entries_per_page(&state.db, user_id)
-            .await
-            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-        let retention_read_days = user_settings::get_retention_read_days(&state.db, user_id)
-            .await
-            .unwrap_or(0);
-        let offline_keep = user_settings::get_offline_keep(&state.db, user_id)
-            .await
-            .unwrap_or(user_settings::OFFLINE_KEEP_OFF);
-        let sidebar_prefs = user_settings::get_sidebar_prefs(&state.db, user_id)
-            .await
-            .unwrap_or_default();
-        let pixel_tracking_enabled =
-            user_settings::get_pixel_tracking_enabled_at(&state.db, user_id)
-                .await
-                .unwrap_or(None)
-                .is_some();
-        let save_config = user_settings::get_save_services_config(
-            &state.db,
-            user_id,
-            state.config.service_token_key(),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            user_settings::StoredServices::Config(
-                crate::services::save::SaveServicesConfig::default(),
-            )
-        });
-        let credentials_unreadable = save_config.is_undecryptable();
-        let save_config = save_config.or_default();
-
-        let linkding = save_config.linkding.as_ref();
-        let linkding_configured =
-            linkding.is_some_and(crate::services::save::linkding::LinkdingConfig::is_configured);
-        let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
-
-        let kagi = save_config.kagi.as_ref();
-        let kagi_configured =
-            kagi.is_some_and(crate::services::summarize::kagi::KagiConfig::is_configured);
-        let kagi_language = kagi.and_then(|c| c.language.clone());
-
-        (
-            theme,
-            entries_per_page,
-            retention_read_days,
-            offline_keep,
-            sidebar_prefs,
-            pixel_tracking_enabled,
-            linkding_configured,
-            linkding_api_url,
-            kagi_configured,
-            kagi_language,
-            credentials_unreadable,
-        )
-    };
+    let preferences = fetch_preferences(&state.db, user_id).await;
+    let services = fetch_service_settings(&state, user_id).await;
 
     let public_base_url = state
         .config
@@ -98,59 +143,16 @@ pub async fn user_settings_page(
         .clone()
         .unwrap_or_else(|| format!("http://localhost:{}", state.config.server_bind.port()));
 
-    let role = auth_user.user.role.as_str().to_string();
-    let created_at = format_display(auth_user.user.created_at);
-    let created_at_iso = auth_user.user.created_at.to_rfc3339();
-    let session_created_at = format_display(auth_user.session.created_at);
-    let session_created_at_iso = auth_user.session.created_at.to_rfc3339();
-    let username = auth_user.user.username.clone();
-
+    // Both lists are hidden while masquerading: never expose the target's
+    // sessions or tokens.
     let is_masquerading = auth_user.session.is_masquerading();
-    let sessions: Vec<SessionRow> = if is_masquerading {
-        Vec::new()
+    let (sessions, api_tokens) = if is_masquerading {
+        (Vec::new(), Vec::new())
     } else {
-        session::list_user_sessions(&state.db, user_id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|s| !s.is_expired())
-            .map(|s| SessionRow {
-                id: s.id,
-                created_at: format_display(s.created_at),
-                created_at_iso: s.created_at.to_rfc3339(),
-                expires_at: format_display(s.expires_at),
-                expires_at_iso: s.expires_at.to_rfc3339(),
-                is_current: s.id == auth_user.session.id,
-                user_agent: s.user_agent.clone(),
-                ip_address: s.ip_address.clone(),
-                last_seen: format_display(s.last_seen_at),
-                last_seen_iso: s.last_seen_at.to_rfc3339(),
-            })
-            .collect()
-    };
-
-    // Hidden while masquerading, like `sessions`: never expose the target's tokens.
-    let api_tokens: Vec<ApiTokenRow> = if is_masquerading {
-        Vec::new()
-    } else {
-        api_token::list_user_tokens(&state.db, user_id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|t| !t.is_expired())
-            .map(|t| ApiTokenRow {
-                id: t.id,
-                label: t.label.clone(),
-                created_at: format_display(t.created_at),
-                created_at_iso: t.created_at.to_rfc3339(),
-                last_seen: format_display(t.last_seen_at),
-                last_seen_iso: t.last_seen_at.to_rfc3339(),
-                expires_at: format_display(t.expires_at),
-                expires_at_iso: t.expires_at.to_rfc3339(),
-                user_agent: t.user_agent.clone(),
-                ip_address: t.ip_address.clone(),
-            })
-            .collect()
+        (
+            session_rows(&state.db, user_id, auth_user.session.id).await,
+            api_token_rows(&state.db, user_id).await,
+        )
     };
 
     (
@@ -160,33 +162,33 @@ pub async fn user_settings_page(
             git_version: crate::GIT_VERSION,
             layout,
             csrf_token: auth_user.csrf_token.clone(),
-            username,
-            role,
-            created_at,
-            created_at_iso,
-            session_created_at,
-            session_created_at_iso,
+            username: auth_user.user.username.clone(),
+            role: auth_user.user.role.as_str().to_string(),
+            created_at: format_display(auth_user.user.created_at),
+            created_at_iso: auth_user.user.created_at.to_rfc3339(),
+            session_created_at: format_display(auth_user.session.created_at),
+            session_created_at_iso: auth_user.session.created_at.to_rfc3339(),
             sessions,
             show_sessions: !is_masquerading,
             api_tokens,
             public_base_url,
-            theme,
-            entries_per_page,
-            retention_read_days,
+            theme: preferences.theme,
+            entries_per_page: preferences.entries_per_page,
+            retention_read_days: preferences.retention_read_days,
             entries_per_page_suggestions: user_settings::ENTRIES_PER_PAGE_SUGGESTIONS,
             retention_read_days_suggestions: user_settings::RETENTION_READ_DAYS_SUGGESTIONS,
             offline_keep_suggestions: user_settings::OFFLINE_KEEP_SUGGESTIONS,
-            offline_keep,
-            sidebar_sort: sidebar_prefs.sort,
-            sidebar_hide_read: sidebar_prefs.hide_read,
-            pixel_tracking_enabled,
+            offline_keep: preferences.offline_keep,
+            sidebar_sort: preferences.sidebar_prefs.sort,
+            sidebar_hide_read: preferences.sidebar_prefs.hide_read,
+            pixel_tracking_enabled: preferences.pixel_tracking_enabled,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
             password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
-            linkding_configured,
-            linkding_api_url,
-            kagi_configured,
-            kagi_language,
-            credentials_unreadable,
+            linkding_configured: services.linkding_configured,
+            linkding_api_url: services.linkding_api_url,
+            kagi_configured: services.kagi_configured,
+            kagi_language: services.kagi_language,
+            credentials_unreadable: services.credentials_unreadable,
         },
     )
 }
