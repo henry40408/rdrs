@@ -1474,6 +1474,78 @@ pub struct EntryNeighbors {
     pub next_id: Option<i64>,
 }
 
+/// Sort timestamp of an entry the user owns, as cursor TEXT (see
+/// `Dialect::cursor_ts`); `None` when the entry is missing, not theirs, or has no
+/// timestamp.
+async fn fetch_sort_time(
+    db: &Db,
+    user_id: i64,
+    entry_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let sort_ts_select = Dialect::from_db(db).cursor_ts("COALESCE(e.published_at, e.created_at)");
+    let sql = format!(
+        "SELECT {sort_ts_select} \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE e.id = $1 AND c.user_id = $2"
+    );
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
+            sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
+                .bind(entry_id)
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .map(Option::flatten)
+        }
+        DbInner::Postgres(pool) => {
+            sqlx::query_scalar::<sqlx::Postgres, Option<String>>(sqlx::AssertSqlSafe(sql))
+                .bind(entry_id)
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .map(Option::flatten)
+        }
+    }
+}
+
+/// `filter`'s conditions as an ` AND ...` suffix (empty when there are none),
+/// with their binds appended to `binds`.
+fn filter_suffix(binds: &mut Vec<Bind>, filter: &EntryFilter, dialect: Dialect) -> String {
+    let mut conditions = Vec::new();
+    apply_filter_conditions(&mut conditions, binds, filter, dialect);
+    if conditions.is_empty() {
+        return String::new();
+    }
+    format!(" AND {}", conditions.join(" AND "))
+}
+
+async fn fetch_neighbor_id(
+    db: &Db,
+    sql: String,
+    binds: Vec<Bind>,
+) -> Result<Option<i64>, sqlx::Error> {
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
+            bind_all!(
+                sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_optional(pool)
+            .await
+        }
+        DbInner::Postgres(pool) => {
+            bind_all!(
+                sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_optional(pool)
+            .await
+        }
+    }
+}
+
 /// Prev (newer) / next (older) entry by `COALESCE(published_at, created_at)` DESC,
 /// honouring every `EntryFilter` condition.
 pub async fn find_neighbors(
@@ -1484,34 +1556,9 @@ pub async fn find_neighbors(
 ) -> AppResult<EntryNeighbors> {
     let dialect = Dialect::from_db(db);
 
-    // Sort timestamp as cursor TEXT (see `Dialect::cursor_ts`).
-    let sort_ts_select = dialect.cursor_ts("COALESCE(e.published_at, e.created_at)");
-    let sort_time_sql = format!(
-        "SELECT {sort_ts_select} \
-         FROM entry e \
-         INNER JOIN feed f ON e.feed_id = f.id \
-         INNER JOIN category c ON f.category_id = c.id \
-         WHERE e.id = $1 AND c.user_id = $2"
-    );
-    let sort_time: Option<String> = match db.inner() {
-        DbInner::Sqlite(pool) => {
-            sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sort_time_sql))
-                .bind(entry_id)
-                .bind(user_id)
-                .fetch_optional(pool)
-                .await
-                .map(Option::flatten)
-        }
-        DbInner::Postgres(pool) => {
-            sqlx::query_scalar::<sqlx::Postgres, Option<String>>(sqlx::AssertSqlSafe(sort_time_sql))
-                .bind(entry_id)
-                .bind(user_id)
-                .fetch_optional(pool)
-                .await
-                .map(Option::flatten)
-        }
-    }
-    .map_err(AppError::Database)?;
+    let sort_time = fetch_sort_time(db, user_id, entry_id)
+        .await
+        .map_err(AppError::Database)?;
 
     let Some(sort_time) = sort_time else {
         return Ok(EntryNeighbors {
@@ -1531,29 +1578,16 @@ pub async fn find_neighbors(
     };
 
     // Prev binds: $1=user_id, $2=sort_time
-    let mut prev_conditions = Vec::new();
     let mut prev_binds: Vec<Bind> = vec![Bind::Int(user_id), cursor_bind(pg_ts, &sort_time)];
-    apply_filter_conditions(&mut prev_conditions, &mut prev_binds, filter, dialect);
+    let prev_extra = filter_suffix(&mut prev_binds, filter, dialect);
 
     // Next binds: $1=user_id, $2=sort_time, $3=entry_id
-    let mut next_conditions = Vec::new();
     let mut next_binds: Vec<Bind> = vec![
         Bind::Int(user_id),
         cursor_bind(pg_ts, &sort_time),
         Bind::Int(entry_id),
     ];
-    apply_filter_conditions(&mut next_conditions, &mut next_binds, filter, dialect);
-
-    let prev_extra = if prev_conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" AND {}", prev_conditions.join(" AND "))
-    };
-    let next_extra = if next_conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" AND {}", next_conditions.join(" AND "))
-    };
+    let next_extra = filter_suffix(&mut next_binds, filter, dialect);
 
     // Pin the sort index with entry driving the join so it stops at LIMIT 1.
     // Only for the snapshot OR `(read_at IS NULL OR read_at >= ?)`, which
@@ -1597,31 +1631,10 @@ pub async fn find_neighbors(
          LIMIT 1"
     );
 
-    async fn one(db: &Db, sql: String, binds: Vec<Bind>) -> Result<Option<i64>, sqlx::Error> {
-        match db.inner() {
-            DbInner::Sqlite(pool) => {
-                bind_all!(
-                    sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
-                    &binds
-                )
-                .fetch_optional(pool)
-                .await
-            }
-            DbInner::Postgres(pool) => {
-                bind_all!(
-                    sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
-                    &binds
-                )
-                .fetch_optional(pool)
-                .await
-            }
-        }
-    }
-
-    let prev_id = one(db, prev_sql, prev_binds)
+    let prev_id = fetch_neighbor_id(db, prev_sql, prev_binds)
         .await
         .map_err(AppError::Database)?;
-    let next_id = one(db, next_sql, next_binds)
+    let next_id = fetch_neighbor_id(db, next_sql, next_binds)
         .await
         .map_err(AppError::Database)?;
 
