@@ -7,6 +7,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{category, feed, image};
 use crate::services::{feed_discovery, opml};
@@ -88,6 +89,129 @@ pub struct SubscriptionEditForm {
     pub custom_referrer: Option<String>,
 }
 
+/// The feed URL of the `s` stream ID (`feed/<url>`).
+fn feed_url_from_stream(stream_id: Option<&str>) -> AppResult<String> {
+    let stream_id =
+        stream_id.ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
+    let feed_url = stream_id
+        .strip_prefix("feed/")
+        .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?;
+    Ok(feed_url.to_string())
+}
+
+async fn category_id_for_label(db: &Db, user_id: i64, label_name: &str) -> AppResult<i64> {
+    if let Some(cat) = category::find_by_name_and_user(db, label_name, user_id).await? {
+        return Ok(cat.id);
+    }
+    Ok(category::create_category(db, user_id, label_name).await?.id)
+}
+
+/// The user's first category, creating "Uncategorized" for a user with none.
+async fn first_or_uncategorized_category_id(db: &Db, user_id: i64) -> AppResult<i64> {
+    let cats = category::list_by_user(db, user_id).await?;
+    if let Some(first) = cats.first() {
+        return Ok(first.id);
+    }
+    Ok(category::create_category(db, user_id, "Uncategorized")
+        .await?
+        .id)
+}
+
+async fn subscribe(state: &AppState, user_id: i64, form: &SubscriptionEditForm) -> AppResult<()> {
+    let feed_url = feed_url_from_stream(form.s.as_deref())?;
+    if feed_url.is_empty() {
+        return Err(AppError::Validation("Empty feed URL".into()));
+    }
+
+    let label = extract_label_name(form.a.as_deref());
+    let user_agent = state.config.user_agent.clone();
+
+    let discovered = feed_discovery::discover_feed(&feed_url, &user_agent, &state.fetcher).await?;
+
+    let category_id = match label {
+        Some(label_name) => category_id_for_label(&state.db, user_id, &label_name).await?,
+        None => first_or_uncategorized_category_id(&state.db, user_id).await?,
+    };
+
+    if feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::FeedExists);
+    }
+
+    feed::create_feed(
+        &state.db,
+        &feed::CreateFeedParams {
+            category_id,
+            url: &discovered.feed_url,
+            title: form.t.as_deref().or(discovered.title.as_deref()),
+            description: discovered.description.as_deref(),
+            site_url: discovered.site_url.as_deref(),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// Fields the form leaves out keep the feed's current value. The exception is
+/// `custom_referrer`: present but empty clears it.
+async fn edit_subscription(
+    state: &AppState,
+    user_id: i64,
+    form: &SubscriptionEditForm,
+) -> AppResult<()> {
+    let feed_url = feed_url_from_stream(form.s.as_deref())?;
+
+    let f = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
+        .await?
+        .ok_or(AppError::FeedNotFound)?;
+
+    let new_category_id = match extract_label_name(form.a.as_deref()) {
+        Some(label_name) => category_id_for_label(&state.db, user_id, &label_name).await?,
+        None => f.category_id,
+    };
+
+    let custom_referrer = match form.custom_referrer.as_deref() {
+        Some(referrer) => Some(referrer).filter(|s| !s.is_empty()),
+        None => f.custom_referrer.as_deref(),
+    };
+
+    feed::update_feed(
+        &state.db,
+        &feed::UpdateFeedParams {
+            id: f.id,
+            category_id: f.category_id,
+            new_category_id,
+            url: &f.url,
+            title: form.t.as_deref().or(f.title.as_deref()),
+            description: form.description.as_deref().or(f.description.as_deref()),
+            site_url: form.site_url.as_deref().or(f.site_url.as_deref()),
+            custom_user_agent: form
+                .custom_user_agent
+                .as_deref()
+                .or(f.custom_user_agent.as_deref()),
+            http2_disabled: form.http2_disabled.unwrap_or(f.http2_disabled),
+            custom_referrer,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn unsubscribe(state: &AppState, user_id: i64, form: &SubscriptionEditForm) -> AppResult<()> {
+    let feed_url = feed_url_from_stream(form.s.as_deref())?;
+
+    let f = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
+        .await?
+        .ok_or(AppError::FeedNotFound)?;
+    feed::delete_feed(&state.db, f.id, f.category_id).await?;
+    Ok(())
+}
+
 /// `POST /reader/api/0/subscription/edit`
 pub async fn subscription_edit(
     auth: GReaderUser,
@@ -97,164 +221,13 @@ pub async fn subscription_edit(
     verify_post_token_if_needed(&auth, &state, form.token.as_deref())?;
 
     let user_id = auth.user.id;
-
     match form.ac.as_str() {
-        "subscribe" => {
-            let stream_id = form
-                .s
-                .as_deref()
-                .ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
-            let feed_url = stream_id
-                .strip_prefix("feed/")
-                .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
-                .to_string();
-
-            if feed_url.is_empty() {
-                return Err(AppError::Validation("Empty feed URL".into()));
-            }
-
-            let title = form.t.clone();
-            let label = extract_label_name(form.a.as_deref());
-            let user_agent = state.config.user_agent.clone();
-
-            let discovered =
-                feed_discovery::discover_feed(&feed_url, &user_agent, &state.fetcher).await?;
-
-            let category_id = if let Some(label_name) = label {
-                match category::find_by_name_and_user(&state.db, &label_name, user_id).await? {
-                    Some(cat) => cat.id,
-                    None => {
-                        category::create_category(&state.db, user_id, &label_name)
-                            .await?
-                            .id
-                    }
-                }
-            } else {
-                // Use first category or create "Uncategorized"
-                let cats = category::list_by_user(&state.db, user_id).await?;
-                if let Some(first) = cats.first() {
-                    first.id
-                } else {
-                    category::create_category(&state.db, user_id, "Uncategorized")
-                        .await?
-                        .id
-                }
-            };
-
-            if let Some(_existing) =
-                feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id).await?
-            {
-                return Err(AppError::FeedExists);
-            }
-
-            feed::create_feed(
-                &state.db,
-                &feed::CreateFeedParams {
-                    category_id,
-                    url: &discovered.feed_url,
-                    title: title.as_deref().or(discovered.title.as_deref()),
-                    description: discovered.description.as_deref(),
-                    site_url: discovered.site_url.as_deref(),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .await?;
-
-            Ok("OK".to_string())
-        }
-        "edit" => {
-            let stream_id = form
-                .s
-                .as_deref()
-                .ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
-            let feed_url = stream_id
-                .strip_prefix("feed/")
-                .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
-                .to_string();
-
-            let title = form.t.clone();
-            let add_label = extract_label_name(form.a.as_deref());
-            let _remove_label = extract_label_name(form.r.as_deref());
-            let description = form.description.clone();
-            let site_url = form.site_url.clone();
-            let custom_user_agent = form.custom_user_agent.clone();
-            let http2_disabled = form.http2_disabled;
-            let custom_referrer_provided = form.custom_referrer.is_some();
-            let custom_referrer = form
-                .custom_referrer
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(String::from);
-
-            let f = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
-                .await?
-                .ok_or(AppError::FeedNotFound)?;
-
-            let new_category_id = if let Some(label_name) = add_label {
-                match category::find_by_name_and_user(&state.db, &label_name, user_id).await? {
-                    Some(cat) => cat.id,
-                    None => {
-                        category::create_category(&state.db, user_id, &label_name)
-                            .await?
-                            .id
-                    }
-                }
-            } else {
-                f.category_id
-            };
-
-            let effective_description = description.as_deref().or(f.description.as_deref());
-            let effective_site_url = site_url.as_deref().or(f.site_url.as_deref());
-            let effective_user_agent = custom_user_agent
-                .as_deref()
-                .or(f.custom_user_agent.as_deref());
-            let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
-            let effective_referrer = if custom_referrer_provided {
-                custom_referrer.as_deref()
-            } else {
-                f.custom_referrer.as_deref()
-            };
-
-            feed::update_feed(
-                &state.db,
-                &feed::UpdateFeedParams {
-                    id: f.id,
-                    category_id: f.category_id,
-                    new_category_id,
-                    url: &f.url,
-                    title: title.as_deref().or(f.title.as_deref()),
-                    description: effective_description,
-                    site_url: effective_site_url,
-                    custom_user_agent: effective_user_agent,
-                    http2_disabled: effective_http2_disabled,
-                    custom_referrer: effective_referrer,
-                },
-            )
-            .await?;
-
-            Ok("OK".to_string())
-        }
-        "unsubscribe" => {
-            let stream_id = form
-                .s
-                .as_deref()
-                .ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
-            let feed_url = stream_id
-                .strip_prefix("feed/")
-                .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
-                .to_string();
-
-            let f = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
-                .await?
-                .ok_or(AppError::FeedNotFound)?;
-            feed::delete_feed(&state.db, f.id, f.category_id).await?;
-
-            Ok("OK".to_string())
-        }
-        _ => Err(AppError::Validation(format!("Unknown action: {}", form.ac))),
+        "subscribe" => subscribe(&state, user_id, &form).await?,
+        "edit" => edit_subscription(&state, user_id, &form).await?,
+        "unsubscribe" => unsubscribe(&state, user_id, &form).await?,
+        _ => return Err(AppError::Validation(format!("Unknown action: {}", form.ac))),
     }
+    Ok("OK".to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,15 +275,7 @@ pub async fn quickadd(
         return Err(AppError::FeedExists);
     }
 
-    // Use first category or create "Uncategorized"
-    let cats = category::list_by_user(&state.db, user_id).await?;
-    let category_id = if let Some(first) = cats.first() {
-        first.id
-    } else {
-        category::create_category(&state.db, user_id, "Uncategorized")
-            .await?
-            .id
-    };
+    let category_id = first_or_uncategorized_category_id(&state.db, user_id).await?;
 
     feed::create_feed(
         &state.db,
