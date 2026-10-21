@@ -291,14 +291,14 @@ async fn perform_login(
 
     let ip = ip.to_string();
     let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
-    audit::session_created(
-        &state.config.secret,
-        &new_session.session_token,
-        user.id,
-        "password",
-        &ip,
-        &user_agent,
-    );
+    audit::session_created(&audit::CredentialCreated {
+        secret: &state.config.secret,
+        token: &new_session.session_token,
+        user_id: user.id,
+        method: "password",
+        ip: &ip,
+        user_agent: &user_agent,
+    });
 
     let cookie = build_session_cookie(
         &new_session.session_token,
