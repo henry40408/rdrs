@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use askama::Template;
 use axum::{
     extract::{Path, Query, State},
@@ -9,11 +11,13 @@ use super::{
     format_relative_time, render_not_found,
 };
 use crate::AppState;
+use crate::db::Db;
 use crate::error::AppError;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
+use crate::models::entry_open::{self, FeedOpenRate};
 use crate::models::user_settings;
-use crate::models::{category, feed};
+use crate::models::{category, feed, image};
 
 /// `/feeds` filter/sort query; the URL is the source of truth.
 #[derive(serde::Deserialize)]
@@ -21,6 +25,167 @@ pub struct FeedsQuery {
     pub category: Option<String>,
     pub filter: Option<String>,
     pub sort: Option<String>,
+}
+
+/// What the row builder looks feeds up in, fetched once per request.
+struct RowLookups<'a> {
+    category_names: HashMap<i64, String>,
+    feeds_with_icon: HashSet<i64>,
+    open_rates: HashMap<i64, FeedOpenRate>,
+    unread_by_feed: &'a HashMap<i64, i64>,
+}
+
+/// "Last updated" text and `datetime` attribute. A feed that was fetched
+/// recently but carries no date says so, instead of looking abandoned.
+fn feed_updated_display(f: &feed::Feed) -> (String, String) {
+    if f.feed_updated_at.is_some() {
+        return format_relative_time(f.feed_updated_at);
+    }
+    let fetched_recently = f
+        .fetched_at
+        .is_some_and(|ft| (chrono::Utc::now() - ft).num_days() <= FRESH_MAX_DAYS);
+    if fetched_recently {
+        return ("No date info".to_string(), String::new());
+    }
+    ("Never".to_string(), String::new())
+}
+
+fn feed_row_view(f: feed::Feed, lookups: &RowLookups<'_>) -> FeedRowView {
+    let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
+    let (updated_rel, updated_dt) = feed_updated_display(&f);
+    let (freshness_class, freshness_key) = compute_freshness(f.feed_updated_at, f.fetched_at);
+    let open_rate = lookups.open_rates.get(&f.id);
+    let open_rate_percent = open_rate.and_then(FeedOpenRate::percent);
+    // Show raw counts: "40%" alone hides the sample size.
+    let open_rate_label = open_rate_percent
+        .zip(open_rate)
+        .map(|(pct, r)| format!("{pct}% ({}/{})", r.opened, r.tracked));
+    FeedRowView {
+        title: f.title.clone().unwrap_or_else(|| f.url.clone()),
+        category_name: lookups
+            .category_names
+            .get(&f.category_id)
+            .cloned()
+            .unwrap_or_else(|| "Unknown".to_string()),
+        has_icon: lookups.feeds_with_icon.contains(&f.id),
+        unread_count: *lookups.unread_by_feed.get(&f.id).unwrap_or(&0),
+        id: f.id,
+        url: f.url,
+        category_id: f.category_id,
+        fetch_error: f.fetch_error,
+        fetched_at_relative: fetched_rel,
+        fetched_at_datetime: fetched_dt,
+        feed_updated_at_relative: updated_rel,
+        feed_updated_at_datetime: updated_dt,
+        freshness_class,
+        freshness_key,
+        open_rate_label,
+        open_rate_percent,
+    }
+}
+
+struct FeedsListing {
+    rows: Vec<FeedRowView>,
+    categories: Vec<FeedCategoryOption>,
+    total_feed_count: i64,
+}
+
+async fn fetch_feeds_listing(
+    db: &Db,
+    user_id: i64,
+    unread_by_feed: &HashMap<i64, i64>,
+) -> FeedsListing {
+    let cats = category::list_by_user(db, user_id)
+        .await
+        .unwrap_or_default();
+    let all_feeds = feed::list_by_user(db, user_id).await.unwrap_or_default();
+    let open_rates = entry_open::open_rates_by_feed(db, user_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.feed_id, r))
+        .collect();
+
+    let mut count_by_cat: HashMap<i64, i64> = HashMap::new();
+    for f in &all_feeds {
+        *count_by_cat.entry(f.category_id).or_insert(0) += 1;
+    }
+    let total_feed_count = all_feeds.len() as i64;
+
+    let feed_ids: Vec<i64> = all_feeds.iter().map(|f| f.id).collect();
+    let feeds_with_icon = image::existing_ids(db, image::ENTITY_FEED, &feed_ids)
+        .await
+        .unwrap_or_default();
+
+    let lookups = RowLookups {
+        category_names: cats.iter().map(|cat| (cat.id, cat.name.clone())).collect(),
+        feeds_with_icon,
+        open_rates,
+        unread_by_feed,
+    };
+    let rows = all_feeds
+        .into_iter()
+        .map(|f| feed_row_view(f, &lookups))
+        .collect();
+
+    let categories = cats
+        .into_iter()
+        .map(|cat| FeedCategoryOption {
+            feed_count: count_by_cat.get(&cat.id).copied().unwrap_or(0),
+            id: cat.id,
+            name: cat.name,
+        })
+        .collect();
+
+    FeedsListing {
+        rows,
+        categories,
+        total_feed_count,
+    }
+}
+
+/// An empty or non-numeric `category` means "all categories".
+fn parse_category_filter(raw: Option<&str>) -> Option<i64> {
+    raw.filter(|s| !s.is_empty())?.parse().ok()
+}
+
+/// Filter first, then sort; `filter` and `sort` come from `normalize_*`.
+fn filter_and_sort_rows(
+    rows: &mut Vec<FeedRowView>,
+    category: Option<i64>,
+    filter: &str,
+    sort: &str,
+) {
+    if let Some(cid) = category {
+        rows.retain(|r| r.category_id == cid);
+    }
+    match filter {
+        "errors" => rows.retain(|r| r.fetch_error.is_some()),
+        "stale" => rows.retain(|r| r.freshness_key == "stale"),
+        _ => {}
+    }
+    match sort {
+        "unread" => rows.sort_by_key(|b| std::cmp::Reverse(b.unread_count)),
+        "category" => rows.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
+        // Ascending (least-opened first); feeds without a rate sort last.
+        "open_rate" => rows.sort_by_key(|a| (a.open_rate_percent.is_none(), a.open_rate_percent)),
+        _ => rows.sort_by_key(|a| a.title.to_lowercase()),
+    }
+}
+
+fn filter_links(
+    active_category: Option<i64>,
+    active_sort: &str,
+    active_filter: &str,
+) -> Vec<FeedFilterLink> {
+    [("All", "all"), ("Errors", "errors"), ("Stale", "stale")]
+        .into_iter()
+        .map(|(label, filter)| FeedFilterLink {
+            label,
+            href: feeds_url(active_category, active_sort, filter),
+            active: active_filter == filter,
+        })
+        .collect()
 }
 
 /// `GET /feeds`.
@@ -32,7 +197,6 @@ pub async fn feeds_page(
 ) -> (Flash, FeedsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
-    let unread_map = layout.unread_by_feed.clone();
 
     // Gated on the setting, so an opted-in reader sees the column even when empty.
     let open_rate_shown = user_settings::get_pixel_tracking_enabled_at(&state.db, user_id)
@@ -40,136 +204,20 @@ pub async fn feeds_page(
         .unwrap_or(None)
         .is_some();
 
-    let (mut rows, categories, total_feed_count) = {
-        let cats = category::list_by_user(&state.db, user_id)
-            .await
-            .unwrap_or_default();
-        let all_feeds = feed::list_by_user(&state.db, user_id)
-            .await
-            .unwrap_or_default();
-        let open_rates: std::collections::HashMap<i64, crate::models::entry_open::FeedOpenRate> =
-            crate::models::entry_open::open_rates_by_feed(&state.db, user_id)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|r| (r.feed_id, r))
-                .collect();
-
-        let cat_map: std::collections::HashMap<i64, String> =
-            cats.iter().map(|cat| (cat.id, cat.name.clone())).collect();
-        let mut count_by_cat: std::collections::HashMap<i64, i64> =
-            std::collections::HashMap::new();
-        for f in &all_feeds {
-            *count_by_cat.entry(f.category_id).or_insert(0) += 1;
-        }
-
-        let total_feed_count = all_feeds.len() as i64;
-
-        let feed_ids: Vec<i64> = all_feeds.iter().map(|f| f.id).collect();
-        let feeds_with_icon = crate::models::image::existing_ids(
-            &state.db,
-            crate::models::image::ENTITY_FEED,
-            &feed_ids,
-        )
-        .await
-        .unwrap_or_default();
-
-        let row_views: Vec<FeedRowView> = all_feeds
-            .into_iter()
-            .map(|f| {
-                let has_icon = feeds_with_icon.contains(&f.id);
-                let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
-                let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
-                    format_relative_time(f.feed_updated_at)
-                } else if f
-                    .fetched_at
-                    .is_some_and(|ft| (chrono::Utc::now() - ft).num_days() <= FRESH_MAX_DAYS)
-                {
-                    ("No date info".to_string(), String::new())
-                } else {
-                    ("Never".to_string(), String::new())
-                };
-                let (freshness_class, freshness_key) =
-                    compute_freshness(f.feed_updated_at, f.fetched_at);
-                let open_rate = open_rates.get(&f.id);
-                let open_rate_percent =
-                    open_rate.and_then(crate::models::entry_open::FeedOpenRate::percent);
-                // Show raw counts: "40%" alone hides the sample size.
-                let open_rate_label = open_rate_percent
-                    .zip(open_rate)
-                    .map(|(pct, r)| format!("{pct}% ({}/{})", r.opened, r.tracked));
-                FeedRowView {
-                    title: f.title.clone().unwrap_or_else(|| f.url.clone()),
-                    category_name: cat_map
-                        .get(&f.category_id)
-                        .cloned()
-                        .unwrap_or_else(|| "Unknown".to_string()),
-                    has_icon,
-                    unread_count: *unread_map.get(&f.id).unwrap_or(&0),
-                    id: f.id,
-                    url: f.url,
-                    category_id: f.category_id,
-                    fetch_error: f.fetch_error,
-                    fetched_at_relative: fetched_rel,
-                    fetched_at_datetime: fetched_dt,
-                    feed_updated_at_relative: updated_rel,
-                    feed_updated_at_datetime: updated_dt,
-                    freshness_class,
-                    freshness_key,
-                    open_rate_label,
-                    open_rate_percent,
-                }
-            })
-            .collect();
-
-        let cat_options: Vec<FeedCategoryOption> = cats
-            .into_iter()
-            .map(|cat| FeedCategoryOption {
-                feed_count: count_by_cat.get(&cat.id).copied().unwrap_or(0),
-                id: cat.id,
-                name: cat.name,
-            })
-            .collect();
-
-        (row_views, cat_options, total_feed_count)
-    };
+    let FeedsListing {
+        mut rows,
+        categories,
+        total_feed_count,
+    } = fetch_feeds_listing(&state.db, user_id, &layout.unread_by_feed).await;
 
     let active_filter = normalize_filter(query.filter.as_deref());
     let active_sort = normalize_sort(query.sort.as_deref());
-    let active_category = query.category.as_deref().and_then(|s| {
-        if s.is_empty() {
-            None
-        } else {
-            s.parse::<i64>().ok()
-        }
-    });
+    let active_category = parse_category_filter(query.category.as_deref());
+    filter_and_sort_rows(&mut rows, active_category, active_filter, active_sort);
 
-    if let Some(cid) = active_category {
-        rows.retain(|r| r.category_id == cid);
-    }
-    match active_filter {
-        "errors" => rows.retain(|r| r.fetch_error.is_some()),
-        "stale" => rows.retain(|r| r.freshness_key == "stale"),
-        _ => {}
-    }
-    match active_sort {
-        "unread" => rows.sort_by_key(|b| std::cmp::Reverse(b.unread_count)),
-        "category" => rows.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
-        // Ascending (least-opened first); feeds without a rate sort last.
-        "open_rate" => rows.sort_by_key(|a| (a.open_rate_percent.is_none(), a.open_rate_percent)),
-        _ => rows.sort_by_key(|a| a.title.to_lowercase()),
-    }
     // This exact view, for row forms and the edit link to come back to.
     let return_to = feeds_url(active_category, active_sort, active_filter);
     let edit_query = crate::handlers::return_to::return_to_query(&return_to);
-    let filter_links = [("All", "all"), ("Errors", "errors"), ("Stale", "stale")]
-        .into_iter()
-        .map(|(label, filter)| FeedFilterLink {
-            label,
-            href: feeds_url(active_category, active_sort, filter),
-            active: active_filter == filter,
-        })
-        .collect();
 
     (
         flash,
@@ -184,13 +232,13 @@ pub async fn feeds_page(
             active_filter,
             active_sort,
             active_category_id: active_category,
-            filter_links,
+            filter_links: filter_links(active_category, active_sort, active_filter),
             return_to,
             edit_query,
             fresh_max_days: FRESH_MAX_DAYS,
             warning_max_days: WARNING_MAX_DAYS,
             open_rate_shown,
-            min_tracked_for_rate: crate::models::entry_open::MIN_TRACKED_FOR_RATE,
+            min_tracked_for_rate: entry_open::MIN_TRACKED_FOR_RATE,
         },
     )
 }
