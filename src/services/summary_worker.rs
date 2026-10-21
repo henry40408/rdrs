@@ -927,4 +927,151 @@ mod tests {
         cancel_token.cancel();
         let _ = handle.await;
     }
+
+    /// A pending summary row for a fresh entry, as the enqueue handler leaves it.
+    async fn seed_pending_job(db: &Db, username: &str) -> SummaryJob {
+        let user_id = seed_user(db, username, Role::User).await.id;
+        let cat = category::create_category(db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
+        let feed_id = feed::create_feed(
+            db,
+            &feed::CreateFeedParams {
+                category_id: cat,
+                url: "https://example.com/feed.xml",
+                title: Some("F"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let (e, _) = entry::upsert_entry(
+            db,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "g",
+                title: Some("T"),
+                link: Some("https://example.com/a"),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        entry_summary::upsert_pending(db, user_id, e.id)
+            .await
+            .unwrap();
+        SummaryJob {
+            user_id,
+            entry_id: e.id,
+            entry_link: "https://example.com/a".into(),
+        }
+    }
+
+    fn test_context(bus: EventBus) -> (SummaryWorkerContext, Arc<SummaryCache>) {
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let ctx = SummaryWorkerContext {
+            cache: cache.clone(),
+            sidebar_cache: Arc::new(SidebarCache::default()),
+            cancels: registry(),
+            events: bus,
+            service_token_key: None,
+        };
+        (ctx, cache)
+    }
+
+    #[tokio::test]
+    async fn store_completed_saves_caches_and_announces() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "completed").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+
+        store_completed(&job, &db, &ctx, "The summary.".to_string()).await;
+
+        let cached = cache.get(job.user_id, job.entry_id).expect("cache entry");
+        assert_eq!(cached.status, SummaryStatus::Completed);
+        assert_eq!(cached.summary_text.as_deref(), Some("The summary."));
+        let row = entry_summary::find_by_user_and_entry(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap()
+            .expect("summary row");
+        assert_eq!(row.status, SummaryStatus::Completed);
+        assert_eq!(row.summary_text.as_deref(), Some("The summary."));
+        assert!(matches!(
+            sub.try_recv().unwrap().kind,
+            EventKind::Summary { entry_id, status: Some(SummaryStatus::Completed) }
+                if entry_id == job.entry_id
+        ));
+        assert!(matches!(sub.try_recv().unwrap().kind, EventKind::Sidebar));
+        assert!(sub.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn store_completed_after_the_row_was_deleted_leaves_the_cache_empty() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "completed-cancelled").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+        cache.set_processing(job.user_id, job.entry_id);
+        entry_summary::delete(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap();
+
+        store_completed(&job, &db, &ctx, "The summary.".to_string()).await;
+
+        assert!(cache.get(job.user_id, job.entry_id).is_none());
+        assert!(sub.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn store_failed_saves_caches_and_announces() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "failed").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+
+        store_failed(&job, &db, &ctx, "Kagi said no".to_string()).await;
+
+        let cached = cache.get(job.user_id, job.entry_id).expect("cache entry");
+        assert_eq!(cached.status, SummaryStatus::Failed);
+        assert_eq!(cached.error_message.as_deref(), Some("Kagi said no"));
+        let row = entry_summary::find_by_user_and_entry(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap()
+            .expect("summary row");
+        assert_eq!(row.status, SummaryStatus::Failed);
+        assert_eq!(row.error_message.as_deref(), Some("Kagi said no"));
+        assert!(matches!(
+            sub.try_recv().unwrap().kind,
+            EventKind::Summary { entry_id, status: Some(SummaryStatus::Failed) }
+                if entry_id == job.entry_id
+        ));
+        assert!(sub.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn store_failed_after_the_row_was_deleted_leaves_the_cache_empty() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "failed-cancelled").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+        cache.set_processing(job.user_id, job.entry_id);
+        entry_summary::delete(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap();
+
+        store_failed(&job, &db, &ctx, "Kagi said no".to_string()).await;
+
+        assert!(cache.get(job.user_id, job.entry_id).is_none());
+        assert!(sub.try_recv().is_err());
+    }
 }
