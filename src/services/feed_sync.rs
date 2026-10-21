@@ -42,6 +42,221 @@ async fn record_fetch_error(db: &Db, feed_id: i64, error_msg: &str) -> AppResult
     .await
 }
 
+/// Conditional-GET headers. The UA is per request since the client is shared.
+fn build_request_headers(feed_data: &feed::Feed, user_agent: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+
+    if let Ok(value) = HeaderValue::from_str(user_agent) {
+        headers.insert(USER_AGENT, value);
+    }
+
+    if let Some(ref etag) = feed_data.etag
+        && let Ok(value) = HeaderValue::from_str(etag)
+    {
+        headers.insert(IF_NONE_MATCH, value);
+    }
+
+    if let Some(ref last_modified) = feed_data.last_modified
+        && let Ok(value) = HeaderValue::from_str(last_modified)
+    {
+        headers.insert(IF_MODIFIED_SINCE, value);
+    }
+
+    headers
+}
+
+/// Cache validators of a response, read before its body consumes it.
+struct ResponseValidators {
+    etag: Option<String>,
+    last_modified: Option<String>,
+}
+
+fn response_validators(response: &reqwest::Response) -> ResponseValidators {
+    let header_text = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(String::from)
+    };
+    ResponseValidators {
+        etag: header_text("etag"),
+        last_modified: header_text("last-modified"),
+    }
+}
+
+struct IconSource<'a> {
+    feed_id: i64,
+    site_url: Option<&'a str>,
+    icon_url: Option<&'a str>,
+    logo_url: Option<&'a str>,
+    user_agent: &'a str,
+}
+
+/// Fetch and store the feed icon when it is older than 7 days. Fetch and save
+/// failures are logged, not returned.
+async fn refresh_feed_icon(db: &Db, fetcher: &Fetcher, source: &IconSource<'_>) -> AppResult<()> {
+    let feed_id = source.feed_id;
+    if !image::needs_refresh(db, image::ENTITY_FEED, feed_id, 7).await? {
+        return Ok(());
+    }
+
+    match icon_fetcher::fetch_feed_icon(
+        source.icon_url,
+        source.logo_url,
+        source.site_url,
+        source.user_agent,
+        fetcher,
+    )
+    .await
+    {
+        Ok(Some(fetched)) => {
+            let source_url = fetched.source_url.clone();
+            let save_result = image::upsert(
+                db,
+                image::ENTITY_FEED,
+                feed_id,
+                &fetched.data,
+                &fetched.content_type,
+                Some(&fetched.source_url),
+            )
+            .await;
+            match save_result {
+                Ok(()) => {
+                    debug!(
+                        event = "feed.icon_saved",
+                        feed_id,
+                        url = source_url,
+                        "saved feed icon"
+                    );
+                }
+                Err(e) => {
+                    warn!(event = "feed.icon_save_failed", feed_id, error = %e, "failed to save feed icon");
+                }
+            }
+        }
+        Ok(None) => {
+            debug!(
+                event = "feed.icon_missing",
+                feed_id, "no icon found for feed"
+            );
+        }
+        Err(e) => {
+            warn!(event = "feed.icon_fetch_failed", feed_id, error = %e, "failed to fetch feed icon");
+        }
+    }
+    Ok(())
+}
+
+struct EntryCounts {
+    new: i64,
+    updated: i64,
+    unchanged: i64,
+    skipped: i64,
+}
+
+struct EntryBatch<'a> {
+    feed_id: i64,
+    feed_timestamp: Option<chrono::DateTime<Utc>>,
+    validators: &'a ResponseValidators,
+}
+
+/// Upsert every entry and record the fetch result in one transaction: a single
+/// commit, and readers never see a half-applied sync.
+async fn apply_entries(
+    db: &Db,
+    entries: Vec<feed_rs::model::Entry>,
+    batch: &EntryBatch<'_>,
+) -> AppResult<EntryCounts> {
+    let feed_id = batch.feed_id;
+    let feed_timestamp = batch.feed_timestamp;
+    let mut counts = EntryCounts {
+        new: 0,
+        updated: 0,
+        unchanged: 0,
+        skipped: 0,
+    };
+    let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
+
+    let mut tx = db.begin().await?;
+
+    for item in entries {
+        let guid = item.id;
+
+        let title = item.title.map(|t| t.content);
+
+        let link = item.links.first().map(|l| l.href.clone());
+
+        let content = item
+            .content
+            .and_then(|c| c.body)
+            .or_else(|| item.summary.clone().map(|s| s.content));
+
+        let summary = item.summary.map(|s| s.content);
+
+        let author = item.authors.first().and_then(|a| a.name.clone());
+
+        // published, then updated, then feed timestamp; None falls back to created_at.
+        let published_at = item
+            .published
+            .or(item.updated)
+            .map(|dt| dt.with_timezone(&Utc))
+            .or(feed_timestamp);
+
+        if let Some(dt) = published_at {
+            latest_entry_date = Some(match latest_entry_date {
+                Some(current) if current > dt => current,
+                _ => dt,
+            });
+        }
+
+        match entry::upsert_entry_id_tx(
+            &mut tx,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: &guid,
+                title: title.as_deref(),
+                link: link.as_deref(),
+                content: content.as_deref(),
+                summary: summary.as_deref(),
+                author: author.as_deref(),
+                published_at,
+            },
+        )
+        .await?
+        {
+            entry::UpsertOutcome::Inserted(_) => counts.new += 1,
+            entry::UpsertOutcome::Updated(_) => counts.updated += 1,
+            entry::UpsertOutcome::Unchanged(_) => counts.unchanged += 1,
+            entry::UpsertOutcome::SkippedTombstoned => counts.skipped += 1,
+        }
+    }
+
+    // HTTP Last-Modified catches feeds with stale in-feed dates.
+    let http_last_modified = batch
+        .validators
+        .last_modified
+        .as_deref()
+        .and_then(parse_timestamp);
+    let effective_updated_at =
+        effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
+
+    feed::update_fetch_result_tx(
+        &mut tx,
+        &feed::FetchResult {
+            etag: batch.validators.etag.as_deref(),
+            last_modified: batch.validators.last_modified.as_deref(),
+            feed_updated_at: effective_updated_at,
+            ..feed::FetchResult::new(feed_id, Utc::now())
+        },
+    )
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(counts)
+}
+
 pub async fn refresh_feed(
     db: Db,
     feed_id: i64,
@@ -74,24 +289,7 @@ pub async fn refresh_feed(
     };
     let client = fetcher.client(http_version);
 
-    let mut headers = HeaderMap::new();
-
-    // UA is per request since the client is shared.
-    if let Ok(value) = HeaderValue::from_str(effective_user_agent) {
-        headers.insert(USER_AGENT, value);
-    }
-
-    if let Some(ref etag) = feed_data.etag
-        && let Ok(value) = HeaderValue::from_str(etag)
-    {
-        headers.insert(IF_NONE_MATCH, value);
-    }
-
-    if let Some(ref last_modified) = feed_data.last_modified
-        && let Ok(value) = HeaderValue::from_str(last_modified)
-    {
-        headers.insert(IF_MODIFIED_SINCE, value);
-    }
+    let headers = build_request_headers(&feed_data, effective_user_agent);
 
     let retry_config = RetryConfig::default();
     let response = match send_with_retry_on_error(&retry_config, || {
@@ -136,17 +334,7 @@ pub async fn refresh_feed(
     }
 
     // Before `response` is consumed by the body read below.
-    let new_etag = response
-        .headers()
-        .get("etag")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
-
-    let new_last_modified = response
-        .headers()
-        .get("last-modified")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
+    let validators = response_validators(&response);
 
     let body = match response.text().await {
         Ok(text) => text,
@@ -175,163 +363,48 @@ pub async fn refresh_feed(
         }
     };
 
-    // Before `parsed_feed` is consumed below.
-    let icon_url = parsed_feed.icon.as_ref().map(|i| i.uri.clone());
-    let logo_url = parsed_feed.logo.as_ref().map(|l| l.uri.clone());
-
-    let needs_icon_refresh = image::needs_refresh(&db, image::ENTITY_FEED, feed_id, 7).await?;
-
-    // Fetch icon if needed (every 7 days).
-    if needs_icon_refresh {
-        match icon_fetcher::fetch_feed_icon(
-            icon_url.as_deref(),
-            logo_url.as_deref(),
-            feed_data.site_url.as_deref(),
-            effective_user_agent,
-            fetcher,
-        )
-        .await
-        {
-            Ok(Some(fetched)) => {
-                let source_url = fetched.source_url.clone();
-                let save_result = image::upsert(
-                    &db,
-                    image::ENTITY_FEED,
-                    feed_id,
-                    &fetched.data,
-                    &fetched.content_type,
-                    Some(&fetched.source_url),
-                )
-                .await;
-                match save_result {
-                    Ok(()) => {
-                        debug!(
-                            event = "feed.icon_saved",
-                            feed_id,
-                            url = source_url,
-                            "saved feed icon"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(event = "feed.icon_save_failed", feed_id, error = %e, "failed to save feed icon");
-                    }
-                }
-            }
-            Ok(None) => {
-                debug!(
-                    event = "feed.icon_missing",
-                    feed_id, "no icon found for feed"
-                );
-            }
-            Err(e) => {
-                warn!(event = "feed.icon_fetch_failed", feed_id, error = %e, "failed to fetch feed icon");
-            }
-        }
-    }
+    refresh_feed_icon(
+        &db,
+        fetcher,
+        &IconSource {
+            feed_id,
+            site_url: feed_data.site_url.as_deref(),
+            icon_url: parsed_feed.icon.as_ref().map(|i| i.uri.as_str()),
+            logo_url: parsed_feed.logo.as_ref().map(|l| l.uri.as_str()),
+            user_agent: effective_user_agent,
+        },
+    )
+    .await?;
 
     let feed_timestamp = parsed_feed
         .updated
         .or(parsed_feed.published)
         .map(|dt| dt.with_timezone(&Utc));
 
-    // HTTP Last-Modified catches feeds with stale in-feed dates.
-    let http_last_modified = new_last_modified.as_deref().and_then(parse_timestamp);
-
-    // One transaction per feed: a single commit, and readers never see a
-    // half-applied sync.
-    let (new_entries, updated_entries, unchanged_entries, skipped_entries) = {
-        let mut new_entries = 0i64;
-        let mut updated_entries = 0i64;
-        let mut unchanged_entries = 0i64;
-        let mut skipped_entries = 0i64;
-        let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
-
-        let mut tx = db.begin().await?;
-
-        for item in parsed_feed.entries {
-            let guid = item.id;
-
-            let title = item.title.map(|t| t.content);
-
-            let link = item.links.first().map(|l| l.href.clone());
-
-            let content = item
-                .content
-                .and_then(|c| c.body)
-                .or_else(|| item.summary.clone().map(|s| s.content));
-
-            let summary = item.summary.map(|s| s.content);
-
-            let author = item.authors.first().and_then(|a| a.name.clone());
-
-            // published, then updated, then feed timestamp; None falls back to created_at.
-            let published_at = item
-                .published
-                .or(item.updated)
-                .map(|dt| dt.with_timezone(&Utc))
-                .or(feed_timestamp);
-
-            if let Some(dt) = published_at {
-                latest_entry_date = Some(match latest_entry_date {
-                    Some(current) if current > dt => current,
-                    _ => dt,
-                });
-            }
-
-            match entry::upsert_entry_id_tx(
-                &mut tx,
-                &entry::EntryUpsert {
-                    feed_id,
-                    guid: &guid,
-                    title: title.as_deref(),
-                    link: link.as_deref(),
-                    content: content.as_deref(),
-                    summary: summary.as_deref(),
-                    author: author.as_deref(),
-                    published_at,
-                },
-            )
-            .await?
-            {
-                entry::UpsertOutcome::Inserted(_) => new_entries += 1,
-                entry::UpsertOutcome::Updated(_) => updated_entries += 1,
-                entry::UpsertOutcome::Unchanged(_) => unchanged_entries += 1,
-                entry::UpsertOutcome::SkippedTombstoned => skipped_entries += 1,
-            }
-        }
-
-        let effective_updated_at =
-            effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
-
-        feed::update_fetch_result_tx(
-            &mut tx,
-            &feed::FetchResult {
-                etag: new_etag.as_deref(),
-                last_modified: new_last_modified.as_deref(),
-                feed_updated_at: effective_updated_at,
-                ..feed::FetchResult::new(feed_id, Utc::now())
-            },
-        )
-        .await?;
-
-        tx.commit().await?;
-
-        (
-            new_entries,
-            updated_entries,
-            unchanged_entries,
-            skipped_entries,
-        )
-    };
+    let counts = apply_entries(
+        &db,
+        parsed_feed.entries,
+        &EntryBatch {
+            feed_id,
+            feed_timestamp,
+            validators: &validators,
+        },
+    )
+    .await?;
 
     info!(
         event = "feed.refreshed",
-        feed_id, new_entries, updated_entries, unchanged_entries, skipped_entries, "feed refreshed"
+        feed_id,
+        new_entries = counts.new,
+        updated_entries = counts.updated,
+        unchanged_entries = counts.unchanged,
+        skipped_entries = counts.skipped,
+        "feed refreshed"
     );
 
     Ok(SyncResult {
-        new_entries,
-        updated_entries,
+        new_entries: counts.new,
+        updated_entries: counts.updated,
     })
 }
 
