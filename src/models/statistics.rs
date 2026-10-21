@@ -952,9 +952,9 @@ mod tests {
         // A freshly-initialized DB still has pages, so size is positive.
         assert!(s.db_size_bytes > 0);
         // PG's `None` arm is asserted in `tests/postgres_test.rs`.
-        let r = s.reclaimable.expect("SQLite reports reclaimable space");
-        assert!(r.bytes >= 0);
-        assert!((0.0..=1.0).contains(&r.fragmentation_ratio));
+        let reclaimable = s.reclaimable.expect("SQLite reports reclaimable space");
+        assert!(reclaimable.bytes >= 0);
+        assert!((0.0..=1.0).contains(&reclaimable.fragmentation_ratio));
         // No entries / tombstones yet → record metrics are zero.
         assert_eq!(s.total_entries, 0);
         assert_eq!(s.coverage_days, 0.0);

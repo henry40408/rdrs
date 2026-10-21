@@ -161,13 +161,13 @@ mod tests {
 
     #[test]
     fn percent_is_suppressed_below_the_sample_floor() {
-        let r = FeedOpenRate {
+        let rate = FeedOpenRate {
             feed_id: 1,
             title: None,
             tracked: MIN_TRACKED_FOR_RATE - 1,
             opened: 1,
         };
-        assert_eq!(r.percent(), None);
+        assert_eq!(rate.percent(), None);
     }
 
     #[test]
