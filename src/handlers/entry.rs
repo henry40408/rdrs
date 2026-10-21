@@ -10,7 +10,7 @@ use crate::middleware::auth::AuthUser;
 use crate::models::{SummaryStatus, category, entry, entry_summary, user_settings};
 use crate::services::http::JOB_QUEUE_TIMEOUT;
 use crate::services::save::{BookmarkData, SaveResult, linkding};
-use crate::services::{SummaryJob, fetch_and_extract, sanitize_html};
+use crate::services::{SanitizeContext, SummaryJob, fetch_and_extract, sanitize_html};
 
 #[derive(Debug, Serialize)]
 pub struct FetchFullContentResponse {
@@ -129,10 +129,12 @@ pub async fn fetch_full_content(
     // Entry link is the base URL for relative images.
     let sanitized_content = sanitize_html(
         &extracted.content,
-        &state.config.secret,
-        Some(&link),
-        custom_referrer.as_deref(),
-        None, // Web UI doesn't need absolute URLs
+        &SanitizeContext {
+            secret: &state.config.secret,
+            base_url: Some(&link),
+            referrer: custom_referrer.as_deref(),
+            proxy_base_url: None, // Web UI doesn't need absolute URLs
+        },
     );
 
     Ok(Json(FetchFullContentResponse {

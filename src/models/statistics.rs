@@ -333,14 +333,22 @@ pub async fn get_entries_by_category(
     .map_err(AppError::Database)
 }
 
+/// Range and size of a [`get_top_feeds`] lookup.
+pub struct TopFeedsQuery<'a> {
+    pub user_id: i64,
+    pub from: &'a str,
+    pub to: &'a str,
+    pub limit: i64,
+}
+
 /// Top `limit` feeds with at least one entry, ordered by count DESC.
-pub async fn get_top_feeds(
-    db: &Db,
-    user_id: i64,
-    from: &str,
-    to: &str,
-    limit: i64,
-) -> AppResult<Vec<FeedCount>> {
+pub async fn get_top_feeds(db: &Db, query: &TopFeedsQuery<'_>) -> AppResult<Vec<FeedCount>> {
+    let TopFeedsQuery {
+        user_id,
+        from,
+        to,
+        limit,
+    } = *query;
     // `AS count` so `FromRow` fills `count`; HAVING/ORDER BY use the aggregate.
     let (from, to) = (parse_ymd(from), parse_ymd(to));
     query_all!(
@@ -897,9 +905,17 @@ mod tests {
 
         insert_entry(&db, feed_id, "g1", "2024-01-05").await;
 
-        let feeds = get_top_feeds(&db, user_id, "2024-01-01", "2024-02-01", 10)
-            .await
-            .unwrap();
+        let feeds = get_top_feeds(
+            &db,
+            &TopFeedsQuery {
+                user_id,
+                from: "2024-01-01",
+                to: "2024-02-01",
+                limit: 10,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(feeds.len(), 1);
         assert_eq!(feeds[0].title, "Test Feed");

@@ -336,7 +336,16 @@ pub async fn statistics_page(
         );
         let feeds = log_and_default(
             "top_feeds",
-            crate::models::statistics::get_top_feeds(&state.db, user_id, &from_c, &to_c, 10).await,
+            crate::models::statistics::get_top_feeds(
+                &state.db,
+                &crate::models::statistics::TopFeedsQuery {
+                    user_id,
+                    from: &from_c,
+                    to: &to_c,
+                    limit: 10,
+                },
+            )
+            .await,
         );
         let admin_counts = if show_admin_stats {
             log_failure(

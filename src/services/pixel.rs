@@ -108,7 +108,7 @@ impl<'a> PixelContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::sanitize_html;
+    use crate::services::{SanitizeContext, sanitize_html};
 
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
 
@@ -188,7 +188,15 @@ mod tests {
     #[test]
     fn injected_pixel_survives_the_sanitiser() {
         // Sanitising after injecting would strip the 1x1 and proxy what survived.
-        let sanitized = sanitize_html("<p>Article</p>", SECRET, None, None, None);
+        let sanitized = sanitize_html(
+            "<p>Article</p>",
+            &SanitizeContext {
+                secret: SECRET,
+                base_url: None,
+                referrer: None,
+                proxy_base_url: None,
+            },
+        );
         let injected = ctx(Some(hour_ago())).maybe_inject(sanitized, 42, Utc::now());
         assert!(injected.contains("/p/7-42-"), "{injected}");
         assert!(
@@ -196,7 +204,15 @@ mod tests {
             "the pixel must stay same-origin: {injected}"
         );
 
-        let resanitized = sanitize_html(&injected, SECRET, None, None, None);
+        let resanitized = sanitize_html(
+            &injected,
+            &SanitizeContext {
+                secret: SECRET,
+                base_url: None,
+                referrer: None,
+                proxy_base_url: None,
+            },
+        );
         assert!(
             !resanitized.contains("/p/7-42-"),
             "sanitising after injection removes the pixel — this is why order matters"

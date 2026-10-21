@@ -10,7 +10,7 @@ use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::models::{category, entry, entry_summary, feed, user_settings};
 use crate::services::pixel::PixelContext;
-use crate::services::sanitize_html;
+use crate::services::{SanitizeContext, sanitize_html};
 
 use super::auth::GReaderUser;
 use super::types::{
@@ -504,6 +504,12 @@ fn entry_with_feed_to_greader_item(
     let link = e.link.as_deref().unwrap_or("");
     let base_url = Some(entry_with_feed.content_base_url());
     let referrer = entry_with_feed.custom_referrer.as_deref();
+    let sanitize_context = SanitizeContext {
+        secret,
+        base_url,
+        referrer,
+        proxy_base_url,
+    };
 
     // Sanitize once for both `summary` and `_content`. The pixel goes on after
     // sanitizing, which would otherwise strip it. See `services::pixel`.
@@ -513,14 +519,14 @@ fn entry_with_feed_to_greader_item(
         let sc: Option<String> = e
             .content
             .as_deref()
-            .map(|c| sanitize_html(c, secret, base_url, referrer, proxy_base_url))
+            .map(|c| sanitize_html(c, &sanitize_context))
             .map(|c| pixel.maybe_inject(c, e.id, e.created_at));
         let ss = if let Some(ref sc) = sc {
             sc.clone()
         } else {
             let fallback = e.summary.as_deref().unwrap_or("");
             pixel.maybe_inject(
-                sanitize_html(fallback, secret, base_url, referrer, proxy_base_url),
+                sanitize_html(fallback, &sanitize_context),
                 e.id,
                 e.created_at,
             )

@@ -15,7 +15,7 @@ use crate::{
     middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
     services::{
-        SummaryJob, SummaryStatus, fetch_and_extract,
+        SanitizeContext, SummaryJob, SummaryStatus, fetch_and_extract,
         pixel::PixelContext,
         sanitize_html, sanitize_summary,
         save::{BookmarkData, linkding},
@@ -432,10 +432,12 @@ pub(crate) async fn build_reading_pane_view(
     let proxy_base_url = state.config.public_base_url.as_deref();
     let content_html = sanitize_html(
         raw_content,
-        &state.config.secret,
-        base_url,
-        referrer,
-        proxy_base_url,
+        &SanitizeContext {
+            secret: &state.config.secret,
+            base_url,
+            referrer,
+            proxy_base_url,
+        },
     );
     // Must run after `sanitize_html`, which would strip/proxy the pixel. Skipped
     // for speculative renders, whose images `offline.js` may walk.

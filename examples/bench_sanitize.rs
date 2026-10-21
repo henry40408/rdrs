@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 use std::time::Instant;
 
-use rdrs::services::sanitize::sanitize_html;
+use rdrs::services::sanitize::{SanitizeContext, sanitize_html};
 
 const SECRET: &[u8] = b"benchmark_secret_key_32_bytes!!!";
 
@@ -66,27 +66,22 @@ fn main() {
         iters
     );
 
+    let context = SanitizeContext {
+        secret: SECRET,
+        base_url: Some("https://example.com/post"),
+        referrer: None,
+        proxy_base_url: Some("https://rdrs.example.com"),
+    };
+
     // Warm-up.
     for _ in 0..10 {
-        let out = sanitize_html(
-            &html,
-            SECRET,
-            Some("https://example.com/post"),
-            None,
-            Some("https://rdrs.example.com"),
-        );
+        let out = sanitize_html(&html, &context);
         std::hint::black_box(&out);
     }
 
     let start = Instant::now();
     for _ in 0..iters {
-        let out = sanitize_html(
-            &html,
-            SECRET,
-            Some("https://example.com/post"),
-            None,
-            Some("https://rdrs.example.com"),
-        );
+        let out = sanitize_html(&html, &context);
         std::hint::black_box(&out);
     }
     let elapsed = start.elapsed();

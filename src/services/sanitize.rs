@@ -336,18 +336,28 @@ pub fn strip_tracking_params(url: &str) -> String {
     strip_tracking_params_from_url(url).unwrap_or_else(|| url.to_string())
 }
 
+/// What [`sanitize_html`] needs besides the markup. `secret` signs proxied
+/// image URLs; `proxy_base_url` makes them absolute (`None` for the web UI).
+#[derive(Clone, Copy)]
+pub struct SanitizeContext<'a> {
+    pub secret: &'a [u8],
+    pub base_url: Option<&'a str>,
+    pub referrer: Option<&'a str>,
+    pub proxy_base_url: Option<&'a str>,
+}
+
 /// Post-ammonia rewrite in one `lol_html` pass: remove tracking pixels, strip
 /// tracking params, proxy images, add link privacy attributes.
 ///
 /// Attribute values are verbatim, so ammonia's `&amp;` is normalized to `&`
 /// before `Url::parse`.
-fn rewrite_post_ammonia(
-    html: &str,
-    secret: &[u8],
-    base_url: Option<&str>,
-    referrer: Option<&str>,
-    proxy_base_url: Option<&str>,
-) -> String {
+fn rewrite_post_ammonia(html: &str, context: &SanitizeContext<'_>) -> String {
+    let SanitizeContext {
+        secret,
+        base_url,
+        referrer,
+        proxy_base_url,
+    } = *context;
     let parsed_base = base_url.and_then(|u| Url::parse(u).ok());
 
     let img_handler = element!("img", |el| {
@@ -440,13 +450,7 @@ pub fn sanitize_summary(summary: &str) -> String {
 /// An image `src` that cannot resolve to absolute `http(s)` is dropped, so pass
 /// [`crate::models::entry::EntryWithFeed::content_base_url`]; `None` is for
 /// callers with no document base, and tests.
-pub fn sanitize_html(
-    content: &str,
-    secret: &[u8],
-    base_url: Option<&str>,
-    referrer: Option<&str>,
-    proxy_base_url: Option<&str>,
-) -> String {
+pub fn sanitize_html(content: &str, context: &SanitizeContext<'_>) -> String {
     let allowed_tags: HashSet<&str> = [
         "p",
         "br",
@@ -499,7 +503,7 @@ pub fn sanitize_html(
         .to_string();
 
     // Steps 2-5: single lol_html rewrite pass.
-    rewrite_post_ammonia(&sanitized, secret, base_url, referrer, proxy_base_url)
+    rewrite_post_ammonia(&sanitized, context)
 }
 
 #[cfg(test)]
@@ -508,8 +512,17 @@ mod tests {
 
     const TEST_SECRET: &[u8] = b"test_secret_key_32_bytes_long!!!";
 
+    fn test_context(base_url: Option<&str>) -> SanitizeContext<'_> {
+        SanitizeContext {
+            secret: TEST_SECRET,
+            base_url,
+            referrer: None,
+            proxy_base_url: None,
+        }
+    }
+
     fn sanitize_with_base(input: &str, base: &str) -> String {
-        sanitize_html(input, TEST_SECRET, Some(base), None, None)
+        sanitize_html(input, &test_context(Some(base)))
     }
 
     // ============ AI summary sanitization ============
@@ -565,14 +578,14 @@ mod tests {
     #[test]
     fn test_sanitize_basic_html() {
         let input = "<p>Hello <strong>world</strong></p>";
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert_eq!(output, "<p>Hello <strong>world</strong></p>");
     }
 
     #[test]
     fn test_remove_script_tags() {
         let input = "<p>Hello</p><script>alert('xss')</script>";
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("script"));
         assert!(output.contains("<p>Hello</p>"));
     }
@@ -580,14 +593,14 @@ mod tests {
     #[test]
     fn test_remove_javascript_urls() {
         let input = r#"<a href="javascript:alert('xss')">Click</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("javascript"));
     }
 
     #[test]
     fn test_preserve_images() {
         let input = r#"<img src="https://example.com/image.jpg" alt="Image">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("&s="));
         assert!(!output.contains("src=\"https://example.com/image.jpg\""));
@@ -598,7 +611,7 @@ mod tests {
         // Targets the rewrite pass directly: the full pipeline drops `data:` in
         // ammonia first.
         let input = r#"<img src="data:image/png;base64,abc123" alt="Data URL">"#;
-        let output = rewrite_post_ammonia(input, TEST_SECRET, None, None, None);
+        let output = rewrite_post_ammonia(input, &test_context(None));
         assert!(output.contains("data:image/png;base64,abc123"));
         assert!(!output.contains("/api/proxy/image"));
     }
@@ -606,7 +619,7 @@ mod tests {
     #[test]
     fn test_rewrite_multiple_images() {
         let input = r#"<img src="https://a.com/1.jpg"><img src="https://b.com/2.jpg">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("src=\"https://a.com/1.jpg\""));
         assert!(!output.contains("src=\"https://b.com/2.jpg\""));
         let proxy_count = output.matches("/api/proxy/image?url=").count();
@@ -670,7 +683,7 @@ mod tests {
     #[test]
     fn test_links_keep_href_and_gain_privacy_attributes() {
         let input = r#"<a href="https://example.com">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         for attr in [
             "href=\"https://example.com\"",
             "target=\"_blank\"",
@@ -684,7 +697,7 @@ mod tests {
     #[test]
     fn test_every_link_gains_privacy_attributes() {
         let input = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert_eq!(output.matches("target=\"_blank\"").count(), 2);
         assert_eq!(output.matches("referrerpolicy=\"no-referrer\"").count(), 2);
     }
@@ -692,7 +705,7 @@ mod tests {
     #[test]
     fn test_relative_links_no_target_blank() {
         let input = r#"<a href="/local/path">Local</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("target=\"_blank\""));
     }
 
@@ -716,7 +729,7 @@ mod tests {
             r#"<img src="https://example.com/beacon/img.gif">"#,
             r#"<img src="https://example.com/1x1.gif">"#,
         ] {
-            let output = sanitize_html(&format!("<p>Text</p>{img}"), TEST_SECRET, None, None, None);
+            let output = sanitize_html(&format!("<p>Text</p>{img}"), &test_context(None));
             assert!(!output.contains("<img"), "{img} survived: {output}");
             assert!(output.contains("<p>Text</p>"), "{output}");
         }
@@ -726,7 +739,7 @@ mod tests {
     fn test_remove_tracking_pixel_with_data_src_attr() {
         // The real `src` is a tracking URL, so the tag is removed despite `data-src`.
         let input = r#"<p>Text</p><img data-src="https://example.com/real.jpg" src="https://pixel.tracker.com/p.gif" width="1" height="1">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("<img"), "tracking pixel should be removed");
         assert!(output.contains("<p>Text</p>"));
     }
@@ -735,7 +748,7 @@ mod tests {
     fn test_keep_normal_image_with_data_src_when_only_data_src_flagged() {
         // Only the real `src` counts: a tracking-ish `data-src` does not drop it.
         let input = r#"<img data-src="https://pixel.tracker.com/x.gif" src="https://example.com/photo.jpg" width="800" height="600">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(
             output.contains("/api/proxy/image?url="),
             "real image should be kept and proxied, got: {output}"
@@ -749,7 +762,7 @@ mod tests {
     #[test]
     fn test_remove_multiple_tracking_pixels_single_pass() {
         let input = r#"<img src="https://pixel.a.com/1.gif" width="1" height="1"><p>a</p><img src="https://beacon.b.com/2.gif"><p>b</p><img src="https://example.com/keep.jpg" width="800">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("pixel.a.com"));
         assert!(!output.contains("beacon.b.com"));
         assert!(output.contains("/api/proxy/image?url="));
@@ -760,7 +773,7 @@ mod tests {
     #[test]
     fn test_preserve_normal_images() {
         let input = r#"<img src="https://example.com/photo.jpg" width="800" height="600">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("<img"));
         assert!(output.contains("/api/proxy/image?url="));
     }
@@ -777,7 +790,7 @@ mod tests {
             "mtm_campaign=test&mtm_source=email",
         ] {
             let input = format!(r#"<a href="https://example.com/page?{query}">Link</a>"#);
-            let output = sanitize_html(&input, TEST_SECRET, None, None, None);
+            let output = sanitize_html(&input, &test_context(None));
             assert!(
                 output.contains("href=\"https://example.com/page\""),
                 "{query} not stripped: {output}"
@@ -788,7 +801,7 @@ mod tests {
     #[test]
     fn test_preserve_non_tracking_parameters() {
         let input = r#"<a href="https://example.com/search?q=rust&page=2">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("q=rust"));
         assert!(output.contains("page=2"));
     }
@@ -796,7 +809,7 @@ mod tests {
     #[test]
     fn test_strip_multiple_tracking_params() {
         let input = r#"<a href="https://example.com/page?id=123&fbclid=FB1&gclid=GC1&utm_source=test&valid=yes">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("fbclid"));
         assert!(!output.contains("gclid"));
         assert!(!output.contains("utm_source"));
@@ -844,7 +857,7 @@ mod tests {
     #[test]
     fn test_preserve_url_without_params() {
         let input = r#"<a href="https://example.com/page">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("href=\"https://example.com/page\""));
     }
 
@@ -871,7 +884,7 @@ mod tests {
     #[test]
     fn test_relative_images_without_base_url_are_dropped() {
         let input = r#"<p>Text</p><img src="/images/photo.jpg" alt="Photo">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         // Fail closed: the src would resolve against the wrong origin.
         assert!(!output.contains("<img"), "{output}");
         assert!(!output.contains("/images/photo.jpg"), "{output}");
@@ -884,7 +897,7 @@ mod tests {
         // reader's IP to the author's host.
         let input = r#"<img src="//evil.tld/x.gif">"#;
 
-        let no_base = sanitize_html(input, TEST_SECRET, None, None, None);
+        let no_base = sanitize_html(input, &test_context(None));
         assert!(!no_base.contains("evil.tld"), "{no_base}");
 
         let with_base = sanitize_with_base(input, "https://feed.example/post");
@@ -921,7 +934,7 @@ mod tests {
         ];
         for base in [None, Some("https://feed.example/post")] {
             for input in inputs {
-                let output = sanitize_html(input, TEST_SECRET, base, None, None);
+                let output = sanitize_html(input, &test_context(base));
                 for src in image_srcs(&output) {
                     assert!(
                         src.starts_with("/api/proxy/image?url=") || src.starts_with("data:"),
@@ -940,7 +953,7 @@ mod tests {
             "https://cdn.example.com/photo?w=800&h=600",
         ] {
             let input = format!(r#"<img src="{src}" alt="Photo">"#);
-            let output = sanitize_html(&input, TEST_SECRET, None, None, None);
+            let output = sanitize_html(&input, &test_context(None));
             assert!(output.contains("/api/proxy/image?url="), "{src}: {output}");
             assert!(
                 !output.contains("example.com"),
@@ -962,10 +975,10 @@ mod tests {
         let input = r#"<img src="https://example.com/image.jpg">"#;
         let output = sanitize_html(
             input,
-            TEST_SECRET,
-            None,
-            None,
-            Some("https://rdrs.example.com"),
+            &SanitizeContext {
+                proxy_base_url: Some("https://rdrs.example.com"),
+                ..test_context(None)
+            },
         );
         assert!(output.contains("https://rdrs.example.com/api/proxy/image?url="));
         assert!(!output.contains("src=\"/api/proxy/image"));
@@ -975,7 +988,7 @@ mod tests {
     fn test_sanitize_tracking_pixel_with_gt_in_src() {
         // A literal `>` in src must not mis-bound the tag.
         let input = r#"<p>keep</p><img src="https://pixel.tracker.com/p.gif?q=a>b" width="1" height="1"><p>tail</p>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(
             !output.contains("pixel.tracker.com"),
             "tracking pixel with > in src should be removed, got: {output}"
@@ -989,10 +1002,10 @@ mod tests {
         let input = r#"<img src="https://cdn.example.com/photo.jpg">"#;
         let output = sanitize_html(
             input,
-            TEST_SECRET,
-            None,
-            None,
-            Some("https://rdrs.example.com"),
+            &SanitizeContext {
+                proxy_base_url: Some("https://rdrs.example.com"),
+                ..test_context(None)
+            },
         );
         assert!(output.contains("https://rdrs.example.com/api/proxy/image?url="));
     }
@@ -1000,7 +1013,7 @@ mod tests {
     #[test]
     fn test_image_width_height_preserved() {
         let input = r#"<img src="https://example.com/a.jpg" width="640" height="480" alt="x">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(
             output.contains("width=\"640\""),
             "width must survive: {output}"
@@ -1022,7 +1035,7 @@ mod tests {
             (r#"style="width:320px;height:240px""#, 320, 240),
         ] {
             let input = format!(r#"<img src="https://e.com/a.jpg" {hints}>"#);
-            let output = sanitize_html(&input, TEST_SECRET, None, None, None);
+            let output = sanitize_html(&input, &test_context(None));
             assert!(output.contains(&format!("width=\"{width}\"")), "{output}");
             assert!(output.contains(&format!("height=\"{height}\"")), "{output}");
         }
@@ -1030,7 +1043,7 @@ mod tests {
     #[test]
     fn test_harvest_skips_when_dims_present() {
         let input = r#"<img src="https://e.com/a.jpg" width="100" height="50" data-original-width="800" data-original-height="600">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("width=\"100\""), "{output}");
         assert!(!output.contains("width=\"800\""), "{output}");
     }
@@ -1038,7 +1051,7 @@ mod tests {
     #[test]
     fn test_harvest_skips_zero_dimensions() {
         let input = r#"<img src="https://e.com/a.jpg" style="width:0px;height:0px">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(!output.contains("width=\"0\""), "{output}");
         assert!(!output.contains("height=\"0\""), "{output}");
     }
@@ -1046,7 +1059,7 @@ mod tests {
     #[test]
     fn test_img_tagged_loading_state() {
         let input = r#"<img src="https://e.com/a.jpg" alt="x">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("data-img-state=\"loading\""), "{output}");
     }
 
@@ -1061,7 +1074,7 @@ mod tests {
             r#"<div class="line-numbers-wrapper" aria-hidden="true">"#,
             r#"<span class="line-number">1</span><br><span class="line-number">2</span><br></div></div>"#,
         );
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("const a = 1;"), "{output}");
         assert!(output.contains("const b = 2;"), "{output}");
         assert!(!output.contains("<br>"), "gutter survived: {output}");
@@ -1074,7 +1087,7 @@ mod tests {
     #[test]
     fn test_keeps_aria_hidden_false_and_absent() {
         let input = r#"<p aria-hidden="false">keep me</p><p>and me</p>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("keep me"), "{output}");
         assert!(output.contains("and me"), "{output}");
     }
@@ -1082,7 +1095,7 @@ mod tests {
     #[test]
     fn test_aria_hidden_matched_case_insensitively() {
         let input = r#"<p>body</p><span aria-hidden="TRUE">decor</span>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("body"), "{output}");
         assert!(!output.contains("decor"), "{output}");
     }
@@ -1091,7 +1104,7 @@ mod tests {
     fn test_wholly_aria_hidden_content_is_kept() {
         // Blanking the entry is worse than showing markup the author hid.
         let input = r#"<div aria-hidden="true"><p>the entire article</p></div>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("the entire article"), "{output}");
     }
 
@@ -1161,7 +1174,7 @@ mod tests {
     #[test]
     fn test_uppercase_aria_hidden_attribute_still_dropped() {
         let input = r#"<p>body</p><span ARIA-HIDDEN="true">decor</span>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains("body"), "{output}");
         assert!(!output.contains("decor"), "{output}");
     }
@@ -1178,7 +1191,7 @@ mod tests {
     #[test]
     fn test_uppercase_dimension_hints_still_harvested() {
         let input = r#"<img src="https://example.com/a.jpg" DATA-ORIGINAL-WIDTH="800" DATA-ORIGINAL-HEIGHT="600">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert!(output.contains(r#"width="800""#), "{output}");
         assert!(output.contains(r#"height="600""#), "{output}");
     }
@@ -1187,7 +1200,7 @@ mod tests {
     fn test_document_without_pre_pass_triggers_is_unchanged() {
         // Nothing here triggers a pre-pass; output must equal ammonia + rewrite alone.
         let input = r"<p>Plain <strong>body</strong> text.</p>";
-        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, &test_context(None));
         assert_eq!(output, "<p>Plain <strong>body</strong> text.</p>");
     }
 }

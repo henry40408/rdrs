@@ -250,13 +250,13 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
         if verify_csrf(secret, &session_token, submitted) {
             return next.run(req).await;
         }
-        warn_token_mismatch(
+        warn_token_mismatch(&TokenMismatch {
             secret,
-            &session_token,
-            req.method(),
-            req.uri().path(),
-            "header token does not derive from this session",
-        );
+            session_token: &session_token,
+            method: req.method(),
+            path: req.uri().path(),
+            reason: "header token does not derive from this session",
+        });
         return StatusCode::FORBIDDEN.into_response();
     }
 
@@ -268,41 +268,50 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
     let (parts, body) = req.into_parts();
     let path = parts.uri.path();
     let Ok(bytes) = axum::body::to_bytes(body, CSRF_MAX_BODY_BYTES).await else {
-        warn_token_mismatch(
+        warn_token_mismatch(&TokenMismatch {
             secret,
-            &session_token,
-            &parts.method,
+            session_token: &session_token,
+            method: &parts.method,
             path,
-            "body unreadable or over the buffering limit",
-        );
+            reason: "body unreadable or over the buffering limit",
+        });
         return StatusCode::FORBIDDEN.into_response();
     };
     let ok = url::form_urlencoded::parse(&bytes)
         .find(|(k, _)| k == CSRF_FIELD)
         .is_some_and(|(_, v)| verify_csrf(secret, &session_token, &v));
     if !ok {
-        warn_token_mismatch(
+        warn_token_mismatch(&TokenMismatch {
             secret,
-            &session_token,
-            &parts.method,
+            session_token: &session_token,
+            method: &parts.method,
             path,
-            "no _csrf field, or it does not derive from this session",
-        );
+            reason: "no _csrf field, or it does not derive from this session",
+        });
         return StatusCode::FORBIDDEN.into_response();
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
 }
 
+struct TokenMismatch<'a> {
+    secret: &'a [u8],
+    session_token: &'a str,
+    method: &'a Method,
+    path: &'a str,
+    reason: &'static str,
+}
+
 /// Log a token rejection, identifying the session only by its salted
 /// [`crate::secret::audit_id`] — never the live token.
-fn warn_token_mismatch(
-    secret: &[u8],
-    session_token: &str,
-    method: &Method,
-    path: &str,
-    reason: &'static str,
-) {
+fn warn_token_mismatch(mismatch: &TokenMismatch<'_>) {
+    let TokenMismatch {
+        secret,
+        session_token,
+        method,
+        path,
+        reason,
+    } = *mismatch;
     tracing::warn!(
         event = "csrf.mismatch",
         reason,

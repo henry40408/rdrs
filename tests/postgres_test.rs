@@ -233,9 +233,17 @@ async fn pg_dialect_smoke() {
         .unwrap();
     assert_eq!(by_cat.len(), 1);
     assert_eq!(by_cat[0].count, 3);
-    let top_feeds = statistics::get_top_feeds(&db, user_id, "2026-07-01", "2026-07-31", 10)
-        .await
-        .unwrap();
+    let top_feeds = statistics::get_top_feeds(
+        &db,
+        &statistics::TopFeedsQuery {
+            user_id,
+            from: "2026-07-01",
+            to: "2026-07-31",
+            limit: 10,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(top_feeds.len(), 1);
     assert_eq!(top_feeds[0].count, 3);
     let admin_entries = statistics::get_admin_entry_stats(&db, "2026-07-01", "2026-07-31")
