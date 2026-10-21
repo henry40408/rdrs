@@ -8,6 +8,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use clap::Parser;
 use rdrs::{AppState, Config, auth, create_router, db::Db, services};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{
     EnvFilter, Layer as _, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
@@ -53,21 +54,13 @@ fn init_tracing(format: LogFormat) {
     tracing_subscriber::registry().with(layer).init();
 }
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
-    init_tracing(args.log_format);
+fn load_config() -> Result<Config, String> {
+    let config = Config::from_env()?;
+    config.validate()?;
+    Ok(config)
+}
 
-    let config = Config::from_env().unwrap_or_else(|msg| {
-        eprintln!("Configuration error: {msg}");
-        std::process::exit(1);
-    });
-
-    if let Err(msg) = config.validate() {
-        eprintln!("Configuration error: {msg}");
-        std::process::exit(1);
-    }
-
+fn warn_about_config(config: &Config) {
     if config.secret_generated {
         tracing::warn!(
             event = "config.warning",
@@ -90,6 +83,31 @@ async fn main() {
             "{warning}"
         );
     }
+}
+
+/// The token is only logged while setup is open: moot once the first account exists.
+async fn generate_setup_token(db: &Db) -> Arc<str> {
+    let setup_token: Arc<str> = rdrs::secret::generate_setup_token().into();
+    if rdrs::models::user::count(db).await.unwrap_or(0) == 0 {
+        tracing::warn!(
+            event = "setup.token",
+            setup_token = %setup_token,
+            "no accounts yet: open /setup and enter this setup token to create the admin account"
+        );
+    }
+    setup_token
+}
+
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+    init_tracing(args.log_format);
+
+    let config = load_config().unwrap_or_else(|msg| {
+        eprintln!("Configuration error: {msg}");
+        std::process::exit(1);
+    });
+    warn_about_config(&config);
 
     // Open the pool and run migrations; the backend is fixed for the process.
     let db = Db::connect(&config.database_url, config.backend())
@@ -153,21 +171,12 @@ async fn main() {
         services::start_content_text_backfill(db.clone(), cancel_token.clone());
 
     // Built once: every guarded fetch shares its connection pools.
-    let fetcher = rdrs::services::Fetcher::new(config.fetch_allow_private.clone())
-        .unwrap_or_else(|e| {
-            tracing::error!(event = "startup.fetcher_failed", error = %e, "failed to build the guarded HTTP client");
-            std::process::exit(1);
-        });
+    let fetcher = services::Fetcher::new(config.fetch_allow_private.clone()).unwrap_or_else(|e| {
+        tracing::error!(event = "startup.fetcher_failed", error = %e, "failed to build the guarded HTTP client");
+        std::process::exit(1);
+    });
 
-    let setup_token: Arc<str> = rdrs::secret::generate_setup_token().into();
-    // Moot once the first account exists, so only logged while setup is open.
-    if rdrs::models::user::count(&db).await.unwrap_or(0) == 0 {
-        tracing::warn!(
-            event = "setup.token",
-            setup_token = %setup_token,
-            "no accounts yet: open /setup and enter this setup token to create the admin account"
-        );
-    }
+    let setup_token = generate_setup_token(&db).await;
 
     let state = AppState {
         db: db.clone(),
@@ -232,13 +241,37 @@ async fn main() {
         timeout_s = 30,
         "waiting for background tasks to complete"
     );
+    wait_for_background_tasks(BackgroundTasks {
+        sync: background_handle,
+        summary_worker: summary_worker_handle,
+        cleanup: cleanup_worker_handle,
+        retention: retention_worker_handle,
+        content_text_backfill: content_text_backfill_handle,
+    })
+    .await;
+
+    // Shutdown database: checkpoint the WAL (SQLite) and close the pool.
+    db.shutdown().await;
+
+    tracing::info!(event = "shutdown.complete", "graceful shutdown complete");
+}
+
+struct BackgroundTasks {
+    sync: JoinHandle<()>,
+    summary_worker: JoinHandle<()>,
+    cleanup: JoinHandle<()>,
+    retention: JoinHandle<()>,
+    content_text_backfill: JoinHandle<()>,
+}
+
+async fn wait_for_background_tasks(tasks: BackgroundTasks) {
     let shutdown_timeout = tokio::time::timeout(Duration::from_secs(30), async {
         let _ = tokio::join!(
-            background_handle,
-            summary_worker_handle,
-            cleanup_worker_handle,
-            retention_worker_handle,
-            content_text_backfill_handle,
+            tasks.sync,
+            tasks.summary_worker,
+            tasks.cleanup,
+            tasks.retention,
+            tasks.content_text_backfill,
         );
     });
 
@@ -254,11 +287,6 @@ async fn main() {
             "all background tasks completed"
         );
     }
-
-    // Shutdown database: checkpoint the WAL (SQLite) and close the pool.
-    db.shutdown().await;
-
-    tracing::info!(event = "shutdown.complete", "graceful shutdown complete");
 }
 
 async fn shutdown_signal() {
