@@ -139,6 +139,16 @@ pub struct ContinuationParams {
     pub sort_order: EntrySortOrder,
 }
 
+/// Which entries [`list_by_user`] returns, in what order, and which page of them.
+#[derive(Debug, Clone, Copy)]
+pub struct EntryListQuery<'a> {
+    pub user_id: i64,
+    pub filter: &'a EntryFilter,
+    pub sort_order: EntrySortOrder,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 /// Flat row for the `EntryWithFeed` join. `FromRow` matches by column name and
 /// the join has duplicate names, so `ENTRY_WITH_FEED_COLUMNS_*` alias every column.
 #[derive(sqlx::FromRow)]
@@ -498,14 +508,14 @@ pub async fn find_by_guid_and_feed(db: &Db, guid: &str, feed_id: i64) -> AppResu
     .map_err(AppError::Database)
 }
 
-pub async fn list_by_user(
-    db: &Db,
-    user_id: i64,
-    filter: &EntryFilter,
-    sort_order: EntrySortOrder,
-    limit: i64,
-    offset: i64,
-) -> AppResult<Vec<EntryWithFeed>> {
+pub async fn list_by_user(db: &Db, query: &EntryListQuery<'_>) -> AppResult<Vec<EntryWithFeed>> {
+    let EntryListQuery {
+        user_id,
+        filter,
+        sort_order,
+        limit,
+        offset,
+    } = *query;
     let dialect = Dialect::from_db(db);
     let mut conditions = vec!["c.user_id = $1".to_string()];
     let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
@@ -556,14 +566,16 @@ pub async fn list_offline_set(db: &Db, user_id: i64, keep: i64) -> AppResult<Vec
 
     let unread = list_by_user(
         db,
-        user_id,
-        &EntryFilter {
-            unread_only: true,
-            ..Default::default()
+        &EntryListQuery {
+            user_id,
+            filter: &EntryFilter {
+                unread_only: true,
+                ..Default::default()
+            },
+            sort_order: EntrySortOrder::PublishedAt,
+            limit: keep,
+            offset: 0,
         },
-        EntrySortOrder::PublishedAt,
-        keep,
-        0,
     )
     .await?;
 
@@ -574,14 +586,16 @@ pub async fn list_offline_set(db: &Db, user_id: i64, keep: i64) -> AppResult<Vec
     if remaining > 0 {
         let starred = list_by_user(
             db,
-            user_id,
-            &EntryFilter {
-                starred_only: true,
-                ..Default::default()
+            &EntryListQuery {
+                user_id,
+                filter: &EntryFilter {
+                    starred_only: true,
+                    ..Default::default()
+                },
+                sort_order: EntrySortOrder::StarredAt,
+                limit: remaining,
+                offset: 0,
             },
-            EntrySortOrder::StarredAt,
-            remaining,
-            0,
         )
         .await?;
         // An unread entry can also be starred, so dedupe; the set may fall short
@@ -1238,21 +1252,8 @@ pub async fn list_ids_by_user(
     let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
 
     apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
-    apply_time_conditions(
-        &mut conditions,
-        &mut binds,
-        pagination.ot,
-        pagination.nt,
-        dialect,
-    );
-    apply_continuation_condition(
-        &mut conditions,
-        &mut binds,
-        pagination.continuation.as_ref(),
-        pagination.sort_order,
-        pagination.oldest_first,
-        dialect,
-    );
+    apply_time_conditions(&mut conditions, &mut binds, pagination, dialect);
+    apply_continuation_condition(&mut conditions, &mut binds, pagination, dialect);
 
     let where_clause = conditions.join(" AND ");
     let order = order_by(pagination.sort_order, pagination.oldest_first);
@@ -1277,35 +1278,31 @@ pub async fn list_ids_by_user(
         .map_err(AppError::Database)
 }
 
-/// SQL and binds for a continuation page; `extra_select` is appended to the
-/// SELECT list.
-fn continuation_query(
-    db: &Db,
+/// What [`continuation_query`] builds a page for; `extra_select` is appended to
+/// the SELECT list.
+#[derive(Clone, Copy)]
+struct ContinuationQuery<'a> {
     user_id: i64,
-    filter: &EntryFilter,
-    pagination: &ContinuationParams,
-    extra_select: &str,
-) -> (String, Vec<Bind>) {
+    filter: &'a EntryFilter,
+    pagination: &'a ContinuationParams,
+    extra_select: &'a str,
+}
+
+/// SQL and binds for a continuation page.
+fn continuation_query(db: &Db, query: &ContinuationQuery<'_>) -> (String, Vec<Bind>) {
+    let ContinuationQuery {
+        user_id,
+        filter,
+        pagination,
+        extra_select,
+    } = *query;
     let dialect = Dialect::from_db(db);
     let mut conditions = vec!["c.user_id = $1".to_string()];
     let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
 
     apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
-    apply_time_conditions(
-        &mut conditions,
-        &mut binds,
-        pagination.ot,
-        pagination.nt,
-        dialect,
-    );
-    apply_continuation_condition(
-        &mut conditions,
-        &mut binds,
-        pagination.continuation.as_ref(),
-        pagination.sort_order,
-        pagination.oldest_first,
-        dialect,
-    );
+    apply_time_conditions(&mut conditions, &mut binds, pagination, dialect);
+    apply_continuation_condition(&mut conditions, &mut binds, pagination, dialect);
 
     let where_clause = conditions.join(" AND ");
     let order = order_by(pagination.sort_order, pagination.oldest_first);
@@ -1345,7 +1342,15 @@ pub async fn list_by_user_with_continuation(
     filter: &EntryFilter,
     pagination: &ContinuationParams,
 ) -> AppResult<Vec<EntryWithFeed>> {
-    let (sql, binds) = continuation_query(db, user_id, filter, pagination, "");
+    let (sql, binds) = continuation_query(
+        db,
+        &ContinuationQuery {
+            user_id,
+            filter,
+            pagination,
+            extra_select: "",
+        },
+    );
     fetch_entries_with_feed(db, sql, binds)
         .await
         .map_err(AppError::Database)
@@ -1362,10 +1367,12 @@ pub async fn list_by_user_with_continuation_ts(
     let ts_expr = Dialect::from_db(db).cursor_ts(sort_column(pagination.sort_order));
     let (sql, binds) = continuation_query(
         db,
-        user_id,
-        filter,
-        pagination,
-        &format!(", {ts_expr} AS sort_ts"),
+        &ContinuationQuery {
+            user_id,
+            filter,
+            pagination,
+            extra_select: &format!(", {ts_expr} AS sort_ts"),
+        },
     );
     fetch_entries_with_feed_ts(db, sql, binds)
         .await
@@ -1758,14 +1765,25 @@ pub async fn mark_all_read_by_category(
     Ok(rows as i64)
 }
 
-/// Bulk-update SQL + binds for by-ids operations. `$1` is the user id; ids fill
-/// `$2..`; `extra_where` is appended after `id IN (...)`.
-fn build_update_by_ids(
+/// A by-ids bulk update: `SET` `set_clause` on `entry_ids` owned by `user_id`;
+/// `extra_where` is appended after `id IN (...)`.
+#[derive(Clone, Copy)]
+struct BulkUpdate<'a> {
     user_id: i64,
-    entry_ids: &[i64],
-    set_clause: &str,
-    extra_where: &str,
-) -> (String, Vec<Bind>) {
+    entry_ids: &'a [i64],
+    set_clause: &'a str,
+    extra_where: &'a str,
+}
+
+/// Bulk-update SQL + binds for by-ids operations. `$1` is the user id; ids fill
+/// `$2..`.
+fn build_update_by_ids(update: &BulkUpdate<'_>) -> (String, Vec<Bind>) {
+    let BulkUpdate {
+        user_id,
+        entry_ids,
+        set_clause,
+        extra_where,
+    } = *update;
     let placeholders: Vec<String> = entry_ids
         .iter()
         .enumerate()
@@ -1793,17 +1811,11 @@ fn build_update_by_ids(
 
 /// Apply `SET` to `entry_ids` owned by the user in one statement; returns rows
 /// updated (0 for empty input).
-async fn update_entries_by_ids(
-    db: &Db,
-    user_id: i64,
-    entry_ids: &[i64],
-    set_clause: &str,
-    extra_where: &str,
-) -> AppResult<i64> {
-    if entry_ids.is_empty() {
+async fn update_entries_by_ids(db: &Db, update: &BulkUpdate<'_>) -> AppResult<i64> {
+    if update.entry_ids.is_empty() {
         return Ok(0);
     }
-    let (sql, binds) = build_update_by_ids(user_id, entry_ids, set_clause, extra_where);
+    let (sql, binds) = build_update_by_ids(update);
     let rows = exec_dynamic(db, sql, binds)
         .await
         .map_err(AppError::Database)?;
@@ -1811,17 +1823,11 @@ async fn update_entries_by_ids(
 }
 
 /// Transactional [`update_entries_by_ids`] for `GReader` `edit_tag`.
-async fn update_entries_by_ids_tx(
-    tx: &mut Tx<'_>,
-    user_id: i64,
-    entry_ids: &[i64],
-    set_clause: &str,
-    extra_where: &str,
-) -> AppResult<i64> {
-    if entry_ids.is_empty() {
+async fn update_entries_by_ids_tx(tx: &mut Tx<'_>, update: &BulkUpdate<'_>) -> AppResult<i64> {
+    if update.entry_ids.is_empty() {
         return Ok(0);
     }
-    let (sql, binds) = build_update_by_ids(user_id, entry_ids, set_clause, extra_where);
+    let (sql, binds) = build_update_by_ids(update);
     let rows = exec_dynamic_tx(tx, sql, binds)
         .await
         .map_err(AppError::Database)?;
@@ -1832,10 +1838,12 @@ async fn update_entries_by_ids_tx(
 pub async fn mark_read_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids(
         db,
-        user_id,
-        entry_ids,
-        "read_at = datetime('now'), updated_at = datetime('now')",
-        " AND read_at IS NULL",
+        &BulkUpdate {
+            user_id,
+            entry_ids,
+            set_clause: "read_at = datetime('now'), updated_at = datetime('now')",
+            extra_where: " AND read_at IS NULL",
+        },
     )
     .await
 }
@@ -1848,10 +1856,12 @@ pub async fn mark_unread_by_ids_tx(
 ) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
-        user_id,
-        entry_ids,
-        "read_at = NULL, updated_at = datetime('now')",
-        "",
+        &BulkUpdate {
+            user_id,
+            entry_ids,
+            set_clause: "read_at = NULL, updated_at = datetime('now')",
+            extra_where: "",
+        },
     )
     .await
 }
@@ -1860,10 +1870,12 @@ pub async fn mark_unread_by_ids_tx(
 pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
-        user_id,
-        entry_ids,
-        "starred_at = datetime('now'), updated_at = datetime('now')",
-        " AND starred_at IS NULL",
+        &BulkUpdate {
+            user_id,
+            entry_ids,
+            set_clause: "starred_at = datetime('now'), updated_at = datetime('now')",
+            extra_where: " AND starred_at IS NULL",
+        },
     )
     .await
 }
@@ -1872,10 +1884,12 @@ pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) ->
 pub async fn unstar_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids_tx(
         tx,
-        user_id,
-        entry_ids,
-        "starred_at = NULL, updated_at = datetime('now')",
-        "",
+        &BulkUpdate {
+            user_id,
+            entry_ids,
+            set_clause: "starred_at = NULL, updated_at = datetime('now')",
+            extra_where: "",
+        },
     )
     .await
 }
