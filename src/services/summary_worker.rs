@@ -125,65 +125,133 @@ async fn process_summary_job(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerConte
     cancels.lock().unwrap().remove(&key);
 }
 
+/// Records a failure the job itself caused (as opposed to Kagi failing) in the
+/// cache, the database and the event stream.
+async fn report_job_failure(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerContext, error: &str) {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    ctx.cache.set_failed(user_id, entry_id, error.to_string());
+    let _ = entry_summary::set_failed(db, user_id, entry_id, error).await;
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Failed));
+}
+
+/// The user's configured Kagi settings, or the message to fail the job with.
+async fn load_kagi_config(
+    job: &SummaryJob,
+    db: &Db,
+    ctx: &SummaryWorkerContext,
+) -> Result<KagiConfig, &'static str> {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    let stored =
+        user_settings::get_save_services_config(db, user_id, ctx.service_token_key.as_deref())
+            .await
+            .map_err(|e| {
+                tracing::error!(event = "summary.settings_load_failed", user_id, entry_id, error = %e, "failed to load user settings");
+                "Failed to load Kagi settings"
+            })?;
+    stored
+        .or_default()
+        .kagi
+        .filter(KagiConfig::is_configured)
+        .ok_or("Kagi is not configured")
+}
+
+/// A `NotFound` write means the row was deleted mid-flight (cancelled): the
+/// cache must not be repopulated, or the summary would be resurrected.
+fn row_was_deleted<T>(write: &Result<T, crate::error::AppError>) -> bool {
+    matches!(write, Err(crate::error::AppError::NotFound(_)))
+}
+
+async fn store_completed(
+    job: &SummaryJob,
+    db: &Db,
+    ctx: &SummaryWorkerContext,
+    summary_text: String,
+) {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    tracing::debug!(
+        event = "summary.completed",
+        user_id,
+        entry_id,
+        chars = summary_text.len(),
+        "summary completed"
+    );
+    let write = entry_summary::set_completed(db, user_id, entry_id, &summary_text).await;
+    if row_was_deleted(&write) {
+        ctx.cache.remove(user_id, entry_id);
+        return;
+    }
+    ctx.cache.set_completed(user_id, entry_id, summary_text);
+    // Tick the sidebar "Summarized" badge.
+    ctx.sidebar_cache.bust(user_id);
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Completed));
+    ctx.events.emit_sidebar(user_id);
+}
+
+async fn store_failed(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerContext, error: String) {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    tracing::warn!(
+        event = "summary.failed",
+        user_id,
+        entry_id,
+        error,
+        "summary failed"
+    );
+    let write = entry_summary::set_failed(db, user_id, entry_id, &error).await;
+    if row_was_deleted(&write) {
+        ctx.cache.remove(user_id, entry_id);
+        return;
+    }
+    ctx.cache.set_failed(user_id, entry_id, error);
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Failed));
+}
+
 async fn run_summary_job_body(
     job: &SummaryJob,
     db: &Db,
     token: &CancellationToken,
     ctx: &SummaryWorkerContext,
 ) {
-    let cache = &ctx.cache;
-    let sidebar_cache = &ctx.sidebar_cache;
-    let events = &ctx.events;
-    let service_token_key = ctx.service_token_key.as_deref();
+    let SummaryJob {
+        user_id,
+        entry_id,
+        entry_link,
+    } = job;
+    let (user_id, entry_id) = (*user_id, *entry_id);
 
     tracing::debug!(
         event = "summary.processing",
-        user_id = job.user_id,
-        entry_id = job.entry_id,
-        link = job.entry_link,
+        user_id,
+        entry_id,
+        link = entry_link,
         "processing summary job"
     );
 
     // A missing row means the job was cancelled while queued: abort without
     // repopulating the cache, or the summary would be resurrected.
-    {
-        let user_id = job.user_id;
-        let entry_id = job.entry_id;
-        if let Err(crate::error::AppError::NotFound(_)) =
-            entry_summary::set_processing(db, user_id, entry_id).await
-        {
-            cache.remove(job.user_id, job.entry_id);
-            return;
-        }
+    let marked = entry_summary::set_processing(db, user_id, entry_id).await;
+    if matches!(marked, Err(crate::error::AppError::NotFound(_))) {
+        ctx.cache.remove(user_id, entry_id);
+        return;
     }
-    cache.set_processing(job.user_id, job.entry_id);
-    events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Processing));
+    ctx.cache.set_processing(user_id, entry_id);
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Processing));
 
-    let user_id = job.user_id;
-    let entry_id = job.entry_id;
-    let kagi_config = match user_settings::get_save_services_config(db, user_id, service_token_key)
-        .await
-    {
-        Ok(config) => config.or_default().kagi,
-        Err(e) => {
-            tracing::error!(event = "summary.settings_load_failed", user_id, entry_id, error = %e, "failed to load user settings");
-            let error_msg = "Failed to load Kagi settings".to_string();
-            cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-            let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
-            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
-            return;
-        }
-    };
-
-    let kagi_config = match kagi_config {
-        Some(c) if c.is_configured() => c,
-        _ => {
-            let error_msg = "Kagi is not configured".to_string();
-            cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
-            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
+    let kagi_config = match load_kagi_config(job, db, ctx).await {
+        Ok(config) => config,
+        Err(message) => {
+            report_job_failure(job, db, ctx, message).await;
             return;
         }
     };
@@ -191,59 +259,20 @@ async fn run_summary_job_body(
     match run_summary(
         token,
         SUMMARY_TIMEOUT,
-        summarize_with_kagi(&kagi_config, &job.entry_link),
+        summarize_with_kagi(&kagi_config, entry_link),
     )
     .await
     {
         SummaryOutcome::Completed(summary_text) => {
-            tracing::debug!(
-                event = "summary.completed",
-                user_id = job.user_id,
-                entry_id = job.entry_id,
-                chars = summary_text.len(),
-                "summary completed"
-            );
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let text = summary_text.clone();
-            let db_res = entry_summary::set_completed(db, user_id, entry_id, &text).await;
-            if let Err(crate::error::AppError::NotFound(_)) = db_res {
-                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
-                cache.remove(job.user_id, job.entry_id);
-            } else {
-                cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
-                // Tick the sidebar "Summarized" badge.
-                sidebar_cache.bust(job.user_id);
-                events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Completed));
-                events.emit_sidebar(job.user_id);
-            }
+            store_completed(job, db, ctx, summary_text).await;
         }
-        SummaryOutcome::Failed(error) => {
-            tracing::warn!(
-                event = "summary.failed",
-                user_id = job.user_id,
-                entry_id = job.entry_id,
-                error,
-                "summary failed"
-            );
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let err = error.clone();
-            let db_res = entry_summary::set_failed(db, user_id, entry_id, &err).await;
-            if let Err(crate::error::AppError::NotFound(_)) = db_res {
-                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
-                cache.remove(job.user_id, job.entry_id);
-            } else {
-                cache.set_failed(job.user_id, job.entry_id, error.clone());
-                events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
-            }
-        }
+        SummaryOutcome::Failed(error) => store_failed(job, db, ctx, error).await,
         SummaryOutcome::Cancelled => {
             // The cancel handler owns cleanup; write nothing back.
             tracing::debug!(
                 event = "summary.cancelled",
-                user_id = job.user_id,
-                entry_id = job.entry_id,
+                user_id,
+                entry_id,
                 "summary cancelled"
             );
         }
