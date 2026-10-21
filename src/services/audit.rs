@@ -12,9 +12,27 @@ use crate::secret::audit_id;
 /// Tracing target for every event here (`RUST_LOG=rdrs::audit=info`).
 pub const AUDIT_TARGET: &str = "rdrs::audit";
 
+/// Arguments of [`session_created`] and [`api_token_created`].
+pub struct CredentialCreated<'a> {
+    pub secret: &'a [u8],
+    pub token: &'a str,
+    pub user_id: i64,
+    pub method: &'a str,
+    pub ip: &'a str,
+    pub ua: &'a str,
+}
+
 /// A new session was established. `method`: `"password"`, `"passkey"` or
 /// `"forward_auth"`.
-pub fn session_created(secret: &[u8], token: &str, user_id: i64, method: &str, ip: &str, ua: &str) {
+pub fn session_created(event: &CredentialCreated<'_>) {
+    let CredentialCreated {
+        secret,
+        token,
+        user_id,
+        method,
+        ip,
+        ua,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "session.created",
@@ -29,14 +47,15 @@ pub fn session_created(secret: &[u8], token: &str, user_id: i64, method: &str, i
 
 /// `GReader` `ClientLogin` minted an `api_token` row (not a `session`, hence
 /// distinct from [`session_created`]).
-pub fn api_token_created(
-    secret: &[u8],
-    token: &str,
-    user_id: i64,
-    method: &str,
-    ip: &str,
-    ua: &str,
-) {
+pub fn api_token_created(event: &CredentialCreated<'_>) {
+    let CredentialCreated {
+        secret,
+        token,
+        user_id,
+        method,
+        ip,
+        ua,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "api_token.created",
@@ -329,10 +348,18 @@ mod tests {
 
     #[test]
     fn emitters_accept_their_documented_argument_shapes() {
-        session_created(SECRET, "tok", 1, "password", "127.0.0.1", "test-agent");
-        session_created(SECRET, "tok", 1, "passkey", "127.0.0.1", "test-agent");
-        session_created(SECRET, "tok", 1, "forward_auth", "127.0.0.1", "test-agent");
-        api_token_created(SECRET, "tok", 1, "client_login", "127.0.0.1", "test-agent");
+        let credential = |method| CredentialCreated {
+            secret: SECRET,
+            token: "tok",
+            user_id: 1,
+            method,
+            ip: "127.0.0.1",
+            ua: "test-agent",
+        };
+        session_created(&credential("password"));
+        session_created(&credential("passkey"));
+        session_created(&credential("forward_auth"));
+        api_token_created(&credential("client_login"));
         session_renewed(SECRET, "tok", 1, Utc::now());
         session_destroyed(SECRET, "tok", 1, "logout");
         session_destroyed(SECRET, "tok", 1, "expired");

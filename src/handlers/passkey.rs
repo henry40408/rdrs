@@ -291,14 +291,14 @@ pub async fn finish_authentication(
     let user_agent = request_user_agent(&headers);
     let ip = ip.to_string();
     let new_session = session::create_session(&state.db, passkey_user_id, &user_agent, &ip).await?;
-    audit::session_created(
-        &state.config.secret,
-        &new_session.session_token,
-        passkey_user_id,
-        "passkey",
-        &ip,
-        &user_agent,
-    );
+    audit::session_created(&audit::CredentialCreated {
+        secret: &state.config.secret,
+        token: &new_session.session_token,
+        user_id: passkey_user_id,
+        method: "passkey",
+        ip: &ip,
+        ua: &user_agent,
+    });
 
     let cookie = build_session_cookie(
         &new_session.session_token,

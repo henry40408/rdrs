@@ -224,14 +224,14 @@ pub async fn client_login(
     let label = user_agent.clone();
     let t = api_token::create_api_token(&state.db, user.id, "greader", &label, &user_agent, &ip)
         .await?;
-    audit::api_token_created(
-        &state.config.secret,
-        &t.token,
-        user.id,
-        "client_login",
-        &ip,
-        &user_agent,
-    );
+    audit::api_token_created(&audit::CredentialCreated {
+        secret: &state.config.secret,
+        token: &t.token,
+        user_id: user.id,
+        method: "client_login",
+        ip: &ip,
+        ua: &user_agent,
+    });
 
     let _ = user; // user info not needed in response
 

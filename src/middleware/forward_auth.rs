@@ -158,14 +158,14 @@ pub async fn forward_auth(
             created
         };
         let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
-        audit::session_created(
-            &config.secret,
-            &new_session.session_token,
-            user.id,
-            "forward_auth",
-            &ip,
-            &user_agent,
-        );
+        audit::session_created(&audit::CredentialCreated {
+            secret: &config.secret,
+            token: &new_session.session_token,
+            user_id: user.id,
+            method: "forward_auth",
+            ip: &ip,
+            ua: &user_agent,
+        });
         Ok(Some(new_session.session_token))
     }
     .await;
