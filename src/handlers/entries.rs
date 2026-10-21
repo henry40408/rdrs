@@ -282,7 +282,7 @@ pub async fn entry_fragment(
 
     let mut response = OpenEntryMulti {
         pane,
-        r: row,
+        row,
         csrf_token: auth_user.csrf_token,
     }
     .into_response();
@@ -538,7 +538,7 @@ pub struct PaneStarFormView {
 #[derive(Template)]
 #[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
-    pub r: EntryRowView,
+    pub row: EntryRowView,
     pub flash: Option<FlashPayload>,
     pub pane_star_form: Option<PaneStarFormView>,
     /// See [`ReadingPaneFragment::csrf_token`].
@@ -550,7 +550,7 @@ pub struct EntryActionMulti {
 #[template(path = "_open_entry_multi.html")]
 pub struct OpenEntryMulti {
     pub pane: ReadingPaneView,
-    pub r: EntryRowView,
+    pub row: EntryRowView,
     /// See [`ReadingPaneFragment::csrf_token`].
     pub csrf_token: String,
 }
@@ -659,7 +659,7 @@ async fn set_starred_state(
     }
 
     Ok(EntryActionMulti {
-        r: row_view_from(&entry_with_feed, status),
+        row: row_view_from(&entry_with_feed, status),
         flash: None,
         pane_star_form,
         csrf_token,
@@ -757,7 +757,7 @@ async fn set_read_state(
     }
 
     Ok(EntryActionMulti {
-        r: row_view_from(&entry_with_feed, status),
+        row: row_view_from(&entry_with_feed, status),
         flash,
         pane_star_form: None,
         csrf_token,

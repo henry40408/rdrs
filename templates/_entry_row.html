@@ -2,17 +2,17 @@
 {%- import "macros.html" as macros -%}
 {# Single entry row. Ids, data-* attributes, data-testids and the .entry-status /
    .entry-read / .selected hooks are relied on by app.js, SSE and e2e. #}
-<div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-category-id="{{ r.category_id }}"{% if let Some(link) = r.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
+<div id="entry-row-{{ row.id }}" class="entry-item{% if row.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ row.id }}" data-category-id="{{ row.category_id }}"{% if let Some(link) = row.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
     {# Marker: dot = idempotent read/unread toggle (mirrors the star form). #}
-    {% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}
+    {% call macros::row_marker_form(row.id, row.is_read, csrf_token) %}{% endcall %}
 
     {# `lang` keeps a Simplified title on one font instead of mixing PingFang TC/SC. See `utils::han`. #}
-    <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title" data-testid="entry-title-link"{% if let Some(lang) = r.title_lang() %} lang="{{ lang }}"{% endif %}>{{ r.title }}</a>
+    <a href="/entries/{{ row.id }}/fragment" data-swap="#reading-pane" title="{{ row.title }}" class="entry-item-title" data-testid="entry-title-link"{% if let Some(lang) = row.title_lang() %} lang="{{ lang }}"{% endif %}>{{ row.title }}</a>
 
     <span class="entry-timerow">
         {# Must render truly empty with no badge so .entry-status:empty hides it; SSE swaps this node. #}
         <span class="entry-status">
-            {%- match r.summary_status_str() -%}
+            {%- match row.summary_status_str() -%}
             {%- when Some("completed") -%}
             <span title="Has Summary" class="summary-badge" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
             {%- when Some("pending") -%}
@@ -24,23 +24,23 @@
             {%- when _ -%}
             {%- endmatch -%}
         </span>
-        <time class="entry-time" datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
+        <time class="entry-time" datetime="{{ row.published_at_iso }}">{{ row.published_relative }}</time>
     </span>
 
     <div class="entry-item-meta">
-        {% if r.feed_has_icon %}
+        {% if row.feed_has_icon %}
         {# No `loading="lazy"` and sync decoding: WebKit otherwise blinks these
            icons on iOS whenever the row is re-inserted or repainted. #}
-        <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" decoding="sync" width="15" height="15">
+        <img class="entry-favicon" src="/api/feeds/{{ row.feed_id }}/icon" alt="" decoding="sync" width="15" height="15">
         {% else %}
-        <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
+        <span class="entry-favicon entry-favicon-chip fav-c{{ row.feed_color_index() }}" aria-hidden="true">{{ row.feed_initial() }}</span>
         {% endif %}
-        <span class="entry-meta-text"><a class="entry-feed" href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a></span>
+        <span class="entry-meta-text"><a class="entry-feed" href="/feeds/{{ row.feed_id }}/entries">{{ row.feed_title }}</a></span>
     </div>
 
     <div class="rail-actions">
-        {% call macros::row_star_form(r.id, r.is_starred, csrf_token) %}{% endcall %}
-        {% if let Some(link) = r.link.as_ref() %}
+        {% call macros::row_star_form(row.id, row.is_starred, csrf_token) %}{% endcall %}
+        {% if let Some(link) = row.link.as_ref() %}
         <a class="entry-open-ext" href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-open-original" aria-label="Open original" title="Open original (v)">{% call icons::external() %}{% endcall %}</a>
         {% endif %}
     </div>

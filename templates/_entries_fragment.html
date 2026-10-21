@@ -1,7 +1,7 @@
 {# Load More response: the template's children are inserted before the old
    `#load-more`, which is then removed, so earlier rows and scroll stay put. #}
 <template data-swap-target="#load-more">
-{% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
+{% for row in entries %}{% include "_entry_row.html" %}{% endfor %}
 {% if let Some(after) = next_cursor %}
 <form id="load-more" method="get" action="{{ path }}" data-swap="#load-more" class="load-more-form">
     <input type="hidden" name="after" value="{{ after }}">
