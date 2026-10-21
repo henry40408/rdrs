@@ -166,15 +166,25 @@ pub fn masquerade_started(event: &MasqueradeStarted<'_>) {
     );
 }
 
+/// Arguments of [`masquerade_stopped`].
+pub struct MasqueradeStopped<'a> {
+    pub secret: &'a [u8],
+    pub token: &'a str,
+    pub new_token: &'a str,
+    pub actor_user_id: i64,
+    pub restored_user_id: i64,
+}
+
 /// An admin stopped masquerading. Both user ids name the same admin, matching
 /// [`masquerade_started`]'s shape; `sid`/`new_sid` bracket the rotation.
-pub fn masquerade_stopped(
-    secret: &[u8],
-    token: &str,
-    new_token: &str,
-    actor_user_id: i64,
-    restored_user_id: i64,
-) {
+pub fn masquerade_stopped(event: &MasqueradeStopped<'_>) {
+    let MasqueradeStopped {
+        secret,
+        token,
+        new_token,
+        actor_user_id,
+        restored_user_id,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "masquerade.stopped",
@@ -275,16 +285,27 @@ pub fn login_rate_limited(endpoint: &str, bucket: &str, ip: &str) {
     );
 }
 
+/// Arguments of [`invite_issued`].
+pub struct InviteIssued<'a> {
+    pub secret: &'a [u8],
+    pub token: &'a str,
+    pub user_id: i64,
+    pub actor_user_id: i64,
+    pub reason: &'a str,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// An admin issued a one-time password-setting link. The token is logged only
 /// as its salted `audit_id`; `reason` distinguishes new account from reset.
-pub fn invite_issued(
-    secret: &[u8],
-    token: &str,
-    user_id: i64,
-    actor_user_id: i64,
-    reason: &str,
-    expires_at: DateTime<Utc>,
-) {
+pub fn invite_issued(event: &InviteIssued<'_>) {
+    let InviteIssued {
+        secret,
+        token,
+        user_id,
+        actor_user_id,
+        reason,
+        expires_at,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "invite.issued",
@@ -297,9 +318,25 @@ pub fn invite_issued(
     );
 }
 
+/// Arguments of [`invite_consumed`].
+pub struct InviteConsumed<'a> {
+    pub secret: &'a [u8],
+    pub token: &'a str,
+    pub user_id: i64,
+    pub ip: &'a str,
+    pub user_agent: &'a str,
+}
+
 /// A link was redeemed and the account's password set; the counterpart of
 /// [`invite_issued`].
-pub fn invite_consumed(secret: &[u8], token: &str, user_id: i64, ip: &str, user_agent: &str) {
+pub fn invite_consumed(event: &InviteConsumed<'_>) {
+    let InviteConsumed {
+        secret,
+        token,
+        user_id,
+        ip,
+        user_agent,
+    } = *event;
     tracing::info!(
         target: AUDIT_TARGET,
         event = "invite.consumed",
@@ -377,7 +414,13 @@ mod tests {
             ip: "127.0.0.1",
             user_agent: "test-agent",
         });
-        masquerade_stopped(SECRET, "tok2", "tok3", 1, 1);
+        masquerade_stopped(&MasqueradeStopped {
+            secret: SECRET,
+            token: "tok2",
+            new_token: "tok3",
+            actor_user_id: 1,
+            restored_user_id: 1,
+        });
         session_token_rotated(SECRET, "tok3", "tok4");
         session_reauthenticated(SECRET, "tok4", 1, "password");
         session_reauthenticated(SECRET, "tok4", 1, "forward_auth");
@@ -392,8 +435,21 @@ mod tests {
         });
         passkey_removed(SECRET, "tok4", 1, 7);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
-        invite_issued(SECRET, "tok5", 2, 1, "account_created", Utc::now());
-        invite_consumed(SECRET, "tok5", 2, "127.0.0.1", "test-agent");
+        invite_issued(&InviteIssued {
+            secret: SECRET,
+            token: "tok5",
+            user_id: 2,
+            actor_user_id: 1,
+            reason: "account_created",
+            expires_at: Utc::now(),
+        });
+        invite_consumed(&InviteConsumed {
+            secret: SECRET,
+            token: "tok5",
+            user_id: 2,
+            ip: "127.0.0.1",
+            user_agent: "test-agent",
+        });
         invite_revoked(2, 1);
         account_created(2, 1, 5, "user");
     }

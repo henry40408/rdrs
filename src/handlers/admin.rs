@@ -32,13 +32,13 @@ pub async fn stop_masquerade(
     // While masquerading, `original_user_id` is the real admin.
     let admin_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let new_token = session::stop_masquerade(&state.db, &session_token).await?;
-    audit::masquerade_stopped(
-        &state.config.secret,
-        &session_token,
-        &new_token,
-        admin_user_id,
-        admin_user_id,
-    );
+    audit::masquerade_stopped(&audit::MasqueradeStopped {
+        secret: &state.config.secret,
+        token: &session_token,
+        new_token: &new_token,
+        actor_user_id: admin_user_id,
+        restored_user_id: admin_user_id,
+    });
 
     Ok((rotated_cookies(&state, &new_token), StatusCode::OK))
 }
@@ -163,14 +163,14 @@ fn announce_invite(
     actor_user_id: i64,
     reason: &str,
 ) -> String {
-    audit::invite_issued(
-        &state.config.secret,
+    audit::invite_issued(&audit::InviteIssued {
+        secret: &state.config.secret,
         token,
-        invite.user_id,
+        user_id: invite.user_id,
         actor_user_id,
         reason,
-        invite.expires_at,
-    );
+        expires_at: invite.expires_at,
+    });
     format!("/invite/{token}")
 }
 
