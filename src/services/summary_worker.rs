@@ -804,4 +804,98 @@ mod tests {
         cancel_token.cancel();
         let _ = handle.await;
     }
+
+    #[tokio::test]
+    async fn an_unconfigured_kagi_fails_the_job_everywhere() {
+        let (tx, rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let db = setup_test_db().await;
+        let cancel_token = CancellationToken::new();
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+
+        let u = seed_user(&db, "unconfigured", Role::User).await.id;
+        let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: cat,
+                url: "https://example.com/feed.xml",
+                title: Some("F"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let (e, _) = entry::upsert_entry(
+            &db,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "g",
+                title: Some("T"),
+                link: Some("https://example.com/a"),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        entry_summary::upsert_pending(&db, u, e.id).await.unwrap();
+        let (user_id, entry_id) = (u, e.id);
+
+        let handle = start_summary_worker(
+            rx,
+            db.clone(),
+            cancel_token.clone(),
+            SummaryWorkerContext {
+                cache: cache.clone(),
+                sidebar_cache: Arc::new(SidebarCache::default()),
+                cancels: registry(),
+                events: bus,
+                service_token_key: None,
+            },
+        );
+        tx.send(SummaryJob {
+            user_id,
+            entry_id,
+            entry_link: "https://example.com/a".into(),
+        })
+        .await
+        .unwrap();
+
+        let mut statuses = Vec::new();
+        while statuses.last() != Some(&SummaryStatus::Failed) {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
+                .await
+                .expect("the job should end with a Failed event")
+                .unwrap();
+            if let EventKind::Summary {
+                status: Some(status),
+                ..
+            } = ev.kind
+            {
+                statuses.push(status);
+            }
+        }
+        assert_eq!(statuses, [SummaryStatus::Processing, SummaryStatus::Failed]);
+
+        let cached = cache.get(user_id, entry_id).expect("cache entry");
+        assert_eq!(cached.status, SummaryStatus::Failed);
+        assert_eq!(
+            cached.error_message.as_deref(),
+            Some("Kagi is not configured")
+        );
+        let row = entry_summary::find_by_user_and_entry(&db, user_id, entry_id)
+            .await
+            .unwrap()
+            .expect("summary row");
+        assert_eq!(row.status, SummaryStatus::Failed);
+        assert_eq!(row.error_message.as_deref(), Some("Kagi is not configured"));
+
+        cancel_token.cancel();
+        let _ = handle.await;
+    }
 }
