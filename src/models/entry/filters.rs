@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use crate::db::Db;
 
 use super::query::{DateBound, QueryNode, SourceKind, Status, TextField};
-use super::{ContinuationCursor, EntryFilter, EntrySortOrder};
+use super::{ContinuationCursor, ContinuationParams, EntryFilter};
 
 /// A positional bind value (`$1`, `$2`, ...) for the dynamically-built entry queries.
 pub(super) enum Bind {
@@ -298,37 +298,41 @@ pub(super) fn render_query(node: &QueryNode, binds: &mut Vec<Bind>, dialect: Dia
     }
 }
 
-/// Apply `ot` / `nt` (oldest / newest epoch seconds) bounds.
+/// Apply the `ot` / `nt` (oldest / newest epoch seconds) bounds of `pagination`.
 pub(super) fn apply_time_conditions(
     conditions: &mut Vec<String>,
     binds: &mut Vec<Bind>,
-    ot: Option<i64>,
-    nt: Option<i64>,
+    pagination: &ContinuationParams,
     dialect: Dialect,
 ) {
     let epoch = dialect.epoch("COALESCE(e.published_at, e.created_at)");
-    if let Some(oldest_ts) = ot {
+    if let Some(oldest_ts) = pagination.ot {
         conditions.push(format!("{epoch} >= ${}", binds.len() + 1));
         binds.push(Bind::Int(oldest_ts));
     }
 
-    if let Some(newest_ts) = nt {
+    if let Some(newest_ts) = pagination.nt {
         conditions.push(format!("{epoch} <= ${}", binds.len() + 1));
         binds.push(Bind::Int(newest_ts));
     }
 }
 
-/// Apply the continuation cursor. The bounded-OR form lets `SQLite` use an
-/// indexed range scan even on a `COALESCE(...)` sort key.
+/// Apply the continuation cursor of `pagination`. The bounded-OR form lets
+/// `SQLite` use an indexed range scan even on a `COALESCE(...)` sort key.
 pub(super) fn apply_continuation_condition(
     conditions: &mut Vec<String>,
     binds: &mut Vec<Bind>,
-    continuation: Option<&ContinuationCursor>,
-    sort_order: EntrySortOrder,
-    oldest_first: bool,
+    pagination: &ContinuationParams,
     dialect: Dialect,
 ) {
-    let Some(cursor) = continuation else {
+    let ContinuationParams {
+        continuation,
+        sort_order,
+        oldest_first,
+        ..
+    } = pagination;
+    let (sort_order, oldest_first) = (*sort_order, *oldest_first);
+    let Some(cursor) = continuation.as_ref() else {
         return;
     };
 
@@ -511,14 +515,11 @@ OR COALESCE((e.title LIKE $2 ESCAPE '\\' OR e.content_text LIKE $2 ESCAPE '\\'),
     fn build_continuation(cursor: &ContinuationCursor, dialect: Dialect) -> (String, Vec<Bind>) {
         let mut conditions = Vec::new();
         let mut binds = Vec::new();
-        apply_continuation_condition(
-            &mut conditions,
-            &mut binds,
-            Some(cursor),
-            EntrySortOrder::PublishedAt,
-            false,
-            dialect,
-        );
+        let pagination = ContinuationParams {
+            continuation: Some(cursor.clone()),
+            ..Default::default()
+        };
+        apply_continuation_condition(&mut conditions, &mut binds, &pagination, dialect);
         (conditions.join(" "), binds)
     }
 

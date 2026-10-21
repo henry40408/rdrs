@@ -460,7 +460,7 @@ async fn test_search_entries_by_title() {
         search: Some("Rust".to_string()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 10, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -502,7 +502,7 @@ async fn test_search_entries_by_content() {
         search: Some("WebAssembly".to_string()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 10, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -532,7 +532,7 @@ async fn test_search_case_insensitive() {
         search: Some("uppercase".to_string()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 10, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -542,7 +542,7 @@ async fn test_search_case_insensitive() {
         search: Some("LOWERCASE".to_string()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 10, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -585,7 +585,7 @@ async fn test_search_combined_with_filters() {
         unread_only: true,
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 10, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -597,7 +597,7 @@ async fn test_search_combined_with_filters() {
         starred_only: true,
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 10, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -629,17 +629,17 @@ async fn test_search_pagination() {
         ..Default::default()
     };
 
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 2, 0))
         .await
         .unwrap();
     assert_eq!(results.len(), 2);
 
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 2)
+    let results = list_by_user(&db, &page(user_id, &filter, 2, 2))
         .await
         .unwrap();
     assert_eq!(results.len(), 2);
 
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 4)
+    let results = list_by_user(&db, &page(user_id, &filter, 2, 4))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -680,7 +680,7 @@ async fn query_is_unread_returns_only_unread() {
         query: Some(query::parse("is:unread").unwrap()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     let titles: Vec<_> = results
@@ -731,7 +731,7 @@ async fn query_boolean_and_negation() {
         query: Some(query::parse("rust -is:read").unwrap()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     let titles: Vec<_> = results
@@ -792,7 +792,7 @@ async fn query_negated_author_includes_null_author_entries() {
         query: Some(query::parse("-author:jane").unwrap()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     let titles: Vec<_> = results
@@ -846,7 +846,7 @@ async fn query_feed_name_fuzzy_match() {
         query: Some(query::parse("feed:rust").unwrap()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     assert!(!results.is_empty());
@@ -889,7 +889,7 @@ async fn query_after_date_filters() {
         query: Some(query::parse("after:2026-01-01").unwrap()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     let titles: Vec<_> = results
@@ -930,7 +930,7 @@ async fn query_escapes_literal_percent() {
         query: Some(query::parse("\"50%\"").unwrap()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     let titles: Vec<_> = results
@@ -975,7 +975,7 @@ async fn search_matches_plain_text_across_tags_not_attributes() {
         search: Some("超少女".to_string()),
         ..Default::default()
     };
-    let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+    let results = list_by_user(&db, &page(user_id, &filter, 50, 0))
         .await
         .unwrap();
     let guids: Vec<_> = results.iter().map(|r| r.entry.guid.clone()).collect();
@@ -1506,6 +1506,17 @@ async fn test_find_position_stops_counting_at_the_limit() {
     let oldest = find_position(&db, user_id, ids[0], &all).await.unwrap();
     assert_eq!(oldest.position, POSITION_COUNT_LIMIT + 1);
     assert_eq!(oldest.limit, POSITION_COUNT_LIMIT);
+}
+
+/// Default-order [`EntryListQuery`] for the list tests.
+fn page(user_id: i64, filter: &EntryFilter, limit: i64, offset: i64) -> EntryListQuery<'_> {
+    EntryListQuery {
+        user_id,
+        filter,
+        sort_order: EntrySortOrder::default(),
+        limit,
+        offset,
+    }
 }
 
 #[tokio::test]
@@ -2198,16 +2209,9 @@ async fn list_by_user_no_predicate_uses_sort_ts_index() {
     }
 
     // Sanity: the public API returns the right rows under the hint.
-    let rows = list_by_user(
-        &db,
-        user_id,
-        &EntryFilter::default(),
-        EntrySortOrder::PublishedAt,
-        10,
-        0,
-    )
-    .await
-    .unwrap();
+    let rows = list_by_user(&db, &page(user_id, &EntryFilter::default(), 10, 0))
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 3);
 
     // Plan check on a hand-built copy of the query shape.

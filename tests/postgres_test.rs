@@ -432,11 +432,13 @@ async fn pg_dialect_smoke() {
     };
     let unread_rows = entry::list_by_user(
         &db,
-        user_id,
-        &unread_filter,
-        EntrySortOrder::PublishedAt,
-        50,
-        0,
+        &entry::EntryListQuery {
+            user_id,
+            filter: &unread_filter,
+            sort_order: EntrySortOrder::PublishedAt,
+            limit: 50,
+            offset: 0,
+        },
     )
     .await
     .unwrap();
@@ -479,11 +481,13 @@ async fn pg_dialect_smoke() {
     };
     let after_rows = entry::list_by_user(
         &db,
-        user_id,
-        &after_filter,
-        EntrySortOrder::PublishedAt,
-        50,
-        0,
+        &entry::EntryListQuery {
+            user_id,
+            filter: &after_filter,
+            sort_order: EntrySortOrder::PublishedAt,
+            limit: 50,
+            offset: 0,
+        },
     )
     .await
     .unwrap();
