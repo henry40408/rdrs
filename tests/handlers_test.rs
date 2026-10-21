@@ -1192,11 +1192,13 @@ async fn test_get_feed_icon_is_privately_cached() {
         insert_test_feed(&app, "IconCacheCat", "https://icon.example.com/feed.xml").await;
     rdrs::models::image::upsert(
         &app.db,
-        rdrs::models::image::ENTITY_FEED,
-        feed_id,
-        b"\x89PNG\r\n\x1a\n",
-        "image/png",
-        None,
+        &rdrs::models::image::ImageUpsert {
+            entity_type: rdrs::models::image::ENTITY_FEED,
+            entity_id: feed_id,
+            data: b"\x89PNG\r\n\x1a\n",
+            content_type: "image/png",
+            source_url: None,
+        },
     )
     .await
     .unwrap();
@@ -2872,11 +2874,13 @@ async fn test_password_change_revokes_api_tokens() {
         .expect("user must exist");
     let token = rdrs::models::api_token::create_api_token(
         &app.db,
-        user.id,
-        "greader",
-        "test-client",
-        "test-agent",
-        "127.0.0.1",
+        &rdrs::models::api_token::NewApiToken {
+            user_id: user.id,
+            kind: "greader",
+            label: "test-client",
+            user_agent: "test-agent",
+            ip_address: "127.0.0.1",
+        },
     )
     .await
     .unwrap();
@@ -2972,11 +2976,13 @@ async fn test_revoke_others_does_not_touch_api_tokens() {
         .expect("user must exist");
     let token = rdrs::models::api_token::create_api_token(
         &app.db,
-        user.id,
-        "greader",
-        "test-client",
-        "test-agent",
-        "127.0.0.1",
+        &rdrs::models::api_token::NewApiToken {
+            user_id: user.id,
+            kind: "greader",
+            label: "test-client",
+            user_agent: "test-agent",
+            ip_address: "127.0.0.1",
+        },
     )
     .await
     .unwrap();
@@ -3071,11 +3077,13 @@ async fn test_revoke_all_api_tokens_flash_counts_the_tokens() {
 
     rdrs::models::api_token::create_api_token(
         &app.db,
-        user.id,
-        "greader",
-        "only-client",
-        "test-agent",
-        "127.0.0.1",
+        &rdrs::models::api_token::NewApiToken {
+            user_id: user.id,
+            kind: "greader",
+            label: "only-client",
+            user_agent: "test-agent",
+            ip_address: "127.0.0.1",
+        },
     )
     .await
     .unwrap();

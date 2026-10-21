@@ -54,14 +54,22 @@ pub fn generate_token() -> String {
     format!("{API_TOKEN_PREFIX}{}", session::generate_token())
 }
 
-pub async fn create_api_token(
-    db: &Db,
-    user_id: i64,
-    kind: &str,
-    label: &str,
-    user_agent: &str,
-    ip_address: &str,
-) -> AppResult<ApiToken> {
+pub struct NewApiToken<'a> {
+    pub user_id: i64,
+    pub kind: &'a str,
+    pub label: &'a str,
+    pub user_agent: &'a str,
+    pub ip_address: &'a str,
+}
+
+pub async fn create_api_token(db: &Db, new_token: &NewApiToken<'_>) -> AppResult<ApiToken> {
+    let NewApiToken {
+        user_id,
+        kind,
+        label,
+        user_agent,
+        ip_address,
+    } = *new_token;
     let token = generate_token();
     let now = Utc::now();
     let expires_at = now + Duration::days(API_TOKEN_IDLE_DAYS);
@@ -199,11 +207,13 @@ mod tests {
 
         let token = create_api_token(
             &db,
-            user.id,
-            "greader",
-            "some-client",
-            "test-agent",
-            "127.0.0.1",
+            &NewApiToken {
+                user_id: user.id,
+                kind: "greader",
+                label: "some-client",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
         )
         .await
         .unwrap();
@@ -221,9 +231,18 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        let token = create_api_token(&db, user.id, "greader", "", "test-agent", "127.0.0.1")
-            .await
-            .unwrap();
+        let token = create_api_token(
+            &db,
+            &NewApiToken {
+                user_id: user.id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
         assert!(token.token.starts_with(API_TOKEN_PREFIX));
         assert!(
             !token.token.contains('/'),
@@ -237,9 +256,18 @@ mod tests {
         let user_a = seed_user(&db, "usera", Role::User).await;
         let user_b = seed_user(&db, "userb", Role::User).await;
 
-        let token_a = create_api_token(&db, user_a.id, "greader", "", "test-agent", "127.0.0.1")
-            .await
-            .unwrap();
+        let token_a = create_api_token(
+            &db,
+            &NewApiToken {
+                user_id: user_a.id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
 
         // user B tries to revoke user A's token — must be a no-op.
         delete_token(&db, token_a.id, user_b.id).await.unwrap();
@@ -258,9 +286,18 @@ mod tests {
         let db = setup_db().await;
         let user = seed_user(&db, "testuser", Role::User).await;
 
-        let expired = create_api_token(&db, user.id, "greader", "", "test-agent", "127.0.0.1")
-            .await
-            .unwrap();
+        let expired = create_api_token(
+            &db,
+            &NewApiToken {
+                user_id: user.id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
         let past = Utc::now() - Duration::days(1);
         db_execute!(
             &db,
@@ -270,9 +307,18 @@ mod tests {
         )
         .unwrap();
 
-        let fresh = create_api_token(&db, user.id, "greader", "", "test-agent", "127.0.0.1")
-            .await
-            .unwrap();
+        let fresh = create_api_token(
+            &db,
+            &NewApiToken {
+                user_id: user.id,
+                kind: "greader",
+                label: "",
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap();
 
         let deleted = delete_expired(&db).await.unwrap();
         assert_eq!(deleted, 1);
@@ -329,9 +375,18 @@ mod tests {
     }
 
     async fn mint(db: &Db, user_id: i64, label: &str) -> ApiToken {
-        create_api_token(db, user_id, "greader", label, "test-agent", "127.0.0.1")
-            .await
-            .unwrap()
+        create_api_token(
+            db,
+            &NewApiToken {
+                user_id,
+                kind: "greader",
+                label,
+                user_agent: "test-agent",
+                ip_address: "127.0.0.1",
+            },
+        )
+        .await
+        .unwrap()
     }
 
     #[tokio::test]

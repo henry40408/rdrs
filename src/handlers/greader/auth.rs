@@ -222,8 +222,17 @@ pub async fn client_login(
     let ip = ip.to_string();
     // The client's User-Agent labels the token on /user-settings.
     let label = user_agent.clone();
-    let t = api_token::create_api_token(&state.db, user.id, "greader", &label, &user_agent, &ip)
-        .await?;
+    let t = api_token::create_api_token(
+        &state.db,
+        &api_token::NewApiToken {
+            user_id: user.id,
+            kind: "greader",
+            label: &label,
+            user_agent: &user_agent,
+            ip_address: &ip,
+        },
+    )
+    .await?;
     audit::api_token_created(&audit::CredentialCreated {
         secret: &state.config.secret,
         token: &t.token,

@@ -102,9 +102,11 @@ async fn refresh_feed_icon(db: &Db, fetcher: &Fetcher, source: &IconSource<'_>) 
     }
 
     match icon_fetcher::fetch_feed_icon(
-        source.icon_url,
-        source.logo_url,
-        source.site_url,
+        &icon_fetcher::IconCandidates {
+            icon_url: source.icon_url,
+            logo_url: source.logo_url,
+            site_url: source.site_url,
+        },
         source.user_agent,
         fetcher,
     )
@@ -114,11 +116,13 @@ async fn refresh_feed_icon(db: &Db, fetcher: &Fetcher, source: &IconSource<'_>) 
             let source_url = fetched.source_url.clone();
             let save_result = image::upsert(
                 db,
-                image::ENTITY_FEED,
-                feed_id,
-                &fetched.data,
-                &fetched.content_type,
-                Some(&fetched.source_url),
+                &image::ImageUpsert {
+                    entity_type: image::ENTITY_FEED,
+                    entity_id: feed_id,
+                    data: &fetched.data,
+                    content_type: &fetched.content_type,
+                    source_url: Some(&fetched.source_url),
+                },
             )
             .await;
             match save_result {

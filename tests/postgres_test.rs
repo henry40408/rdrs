@@ -529,11 +529,13 @@ async fn pg_dialect_smoke() {
     // real PG server, not just SQLite.
     let created = api_token::create_api_token(
         &db,
-        user_id,
-        "greader",
-        "pg-client",
-        "test-agent",
-        "127.0.0.1",
+        &api_token::NewApiToken {
+            user_id,
+            kind: "greader",
+            label: "pg-client",
+            user_agent: "test-agent",
+            ip_address: "127.0.0.1",
+        },
     )
     .await
     .unwrap();
@@ -547,11 +549,13 @@ async fn pg_dialect_smoke() {
 
     let expired_token = api_token::create_api_token(
         &db,
-        user_id,
-        "greader",
-        "pg-client-expired",
-        "test-agent",
-        "127.0.0.1",
+        &api_token::NewApiToken {
+            user_id,
+            kind: "greader",
+            label: "pg-client-expired",
+            user_agent: "test-agent",
+            ip_address: "127.0.0.1",
+        },
     )
     .await
     .unwrap();
@@ -800,21 +804,25 @@ async fn pg_dialect_smoke() {
     let missing_feed_id = live_feed.id + 1000;
     image::upsert(
         &db,
-        image::ENTITY_FEED,
-        live_feed.id,
-        &[1],
-        "image/png",
-        None,
+        &image::ImageUpsert {
+            entity_type: image::ENTITY_FEED,
+            entity_id: live_feed.id,
+            data: &[1],
+            content_type: "image/png",
+            source_url: None,
+        },
     )
     .await
     .unwrap();
     image::upsert(
         &db,
-        image::ENTITY_FEED,
-        missing_feed_id,
-        &[2],
-        "image/png",
-        None,
+        &image::ImageUpsert {
+            entity_type: image::ENTITY_FEED,
+            entity_id: missing_feed_id,
+            data: &[2],
+            content_type: "image/png",
+            source_url: None,
+        },
     )
     .await
     .unwrap();

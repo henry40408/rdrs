@@ -60,10 +60,12 @@ pub async fn start_registration(
 
     webauthn_challenge::create_challenge(
         &state.db,
-        &challenge_bytes,
-        Some(user_id),
-        webauthn_challenge::ChallengeType::Registration,
-        &state_json,
+        &webauthn_challenge::NewChallenge {
+            challenge: &challenge_bytes,
+            user_id: Some(user_id),
+            challenge_type: webauthn_challenge::ChallengeType::Registration,
+            state_data: &state_json,
+        },
     )
     .await?;
 
@@ -202,10 +204,12 @@ pub async fn start_authentication(
 
     webauthn_challenge::create_challenge(
         &state.db,
-        &challenge_bytes,
-        None, // No user_id for authentication
-        webauthn_challenge::ChallengeType::Authentication,
-        &state_json,
+        &webauthn_challenge::NewChallenge {
+            challenge: &challenge_bytes,
+            user_id: None, // No user_id for authentication
+            challenge_type: webauthn_challenge::ChallengeType::Authentication,
+            state_data: &state_json,
+        },
     )
     .await?;
 
