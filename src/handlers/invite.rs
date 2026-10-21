@@ -145,13 +145,13 @@ pub async fn redeem_form(
 
     audit::sessions_destroyed_bulk(live.invite.user_id, "invite_redeem", None);
     audit::api_tokens_destroyed(live.invite.user_id, "invite_redeem", None);
-    audit::invite_consumed(
-        &state.config.secret,
-        &token,
-        live.invite.user_id,
-        &ip.to_string(),
-        &request_user_agent(&headers),
-    );
+    audit::invite_consumed(&audit::InviteConsumed {
+        secret: &state.config.secret,
+        token: &token,
+        user_id: live.invite.user_id,
+        ip: &ip.to_string(),
+        user_agent: &request_user_agent(&headers),
+    });
 
     FlashRedirect::success("/login", "Password set. You can sign in now.").into_response()
 }
