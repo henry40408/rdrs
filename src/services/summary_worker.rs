@@ -125,65 +125,133 @@ async fn process_summary_job(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerConte
     cancels.lock().unwrap().remove(&key);
 }
 
+/// Records a failure the job itself caused (as opposed to Kagi failing) in the
+/// cache, the database and the event stream.
+async fn report_job_failure(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerContext, error: &str) {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    ctx.cache.set_failed(user_id, entry_id, error.to_string());
+    let _ = entry_summary::set_failed(db, user_id, entry_id, error).await;
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Failed));
+}
+
+/// The user's configured Kagi settings, or the message to fail the job with.
+async fn load_kagi_config(
+    job: &SummaryJob,
+    db: &Db,
+    ctx: &SummaryWorkerContext,
+) -> Result<KagiConfig, &'static str> {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    let stored =
+        user_settings::get_save_services_config(db, user_id, ctx.service_token_key.as_deref())
+            .await
+            .map_err(|e| {
+                tracing::error!(event = "summary.settings_load_failed", user_id, entry_id, error = %e, "failed to load user settings");
+                "Failed to load Kagi settings"
+            })?;
+    stored
+        .or_default()
+        .kagi
+        .filter(KagiConfig::is_configured)
+        .ok_or("Kagi is not configured")
+}
+
+/// A `NotFound` write means the row was deleted mid-flight (cancelled): the
+/// cache must not be repopulated, or the summary would be resurrected.
+fn row_was_deleted<T>(write: &Result<T, crate::error::AppError>) -> bool {
+    matches!(write, Err(crate::error::AppError::NotFound(_)))
+}
+
+async fn store_completed(
+    job: &SummaryJob,
+    db: &Db,
+    ctx: &SummaryWorkerContext,
+    summary_text: String,
+) {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    tracing::debug!(
+        event = "summary.completed",
+        user_id,
+        entry_id,
+        chars = summary_text.len(),
+        "summary completed"
+    );
+    let write = entry_summary::set_completed(db, user_id, entry_id, &summary_text).await;
+    if row_was_deleted(&write) {
+        ctx.cache.remove(user_id, entry_id);
+        return;
+    }
+    ctx.cache.set_completed(user_id, entry_id, summary_text);
+    // Tick the sidebar "Summarized" badge.
+    ctx.sidebar_cache.bust(user_id);
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Completed));
+    ctx.events.emit_sidebar(user_id);
+}
+
+async fn store_failed(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerContext, error: String) {
+    let SummaryJob {
+        user_id, entry_id, ..
+    } = *job;
+    tracing::warn!(
+        event = "summary.failed",
+        user_id,
+        entry_id,
+        error,
+        "summary failed"
+    );
+    let write = entry_summary::set_failed(db, user_id, entry_id, &error).await;
+    if row_was_deleted(&write) {
+        ctx.cache.remove(user_id, entry_id);
+        return;
+    }
+    ctx.cache.set_failed(user_id, entry_id, error);
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Failed));
+}
+
 async fn run_summary_job_body(
     job: &SummaryJob,
     db: &Db,
     token: &CancellationToken,
     ctx: &SummaryWorkerContext,
 ) {
-    let cache = &ctx.cache;
-    let sidebar_cache = &ctx.sidebar_cache;
-    let events = &ctx.events;
-    let service_token_key = ctx.service_token_key.as_deref();
+    let SummaryJob {
+        user_id,
+        entry_id,
+        entry_link,
+    } = job;
+    let (user_id, entry_id) = (*user_id, *entry_id);
 
     tracing::debug!(
         event = "summary.processing",
-        user_id = job.user_id,
-        entry_id = job.entry_id,
-        link = job.entry_link,
+        user_id,
+        entry_id,
+        link = entry_link,
         "processing summary job"
     );
 
     // A missing row means the job was cancelled while queued: abort without
     // repopulating the cache, or the summary would be resurrected.
-    {
-        let user_id = job.user_id;
-        let entry_id = job.entry_id;
-        if let Err(crate::error::AppError::NotFound(_)) =
-            entry_summary::set_processing(db, user_id, entry_id).await
-        {
-            cache.remove(job.user_id, job.entry_id);
-            return;
-        }
+    let marked = entry_summary::set_processing(db, user_id, entry_id).await;
+    if matches!(marked, Err(crate::error::AppError::NotFound(_))) {
+        ctx.cache.remove(user_id, entry_id);
+        return;
     }
-    cache.set_processing(job.user_id, job.entry_id);
-    events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Processing));
+    ctx.cache.set_processing(user_id, entry_id);
+    ctx.events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Processing));
 
-    let user_id = job.user_id;
-    let entry_id = job.entry_id;
-    let kagi_config = match user_settings::get_save_services_config(db, user_id, service_token_key)
-        .await
-    {
-        Ok(config) => config.or_default().kagi,
-        Err(e) => {
-            tracing::error!(event = "summary.settings_load_failed", user_id, entry_id, error = %e, "failed to load user settings");
-            let error_msg = "Failed to load Kagi settings".to_string();
-            cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-            let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
-            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
-            return;
-        }
-    };
-
-    let kagi_config = match kagi_config {
-        Some(c) if c.is_configured() => c,
-        _ => {
-            let error_msg = "Kagi is not configured".to_string();
-            cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
-            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
+    let kagi_config = match load_kagi_config(job, db, ctx).await {
+        Ok(config) => config,
+        Err(message) => {
+            report_job_failure(job, db, ctx, message).await;
             return;
         }
     };
@@ -191,59 +259,20 @@ async fn run_summary_job_body(
     match run_summary(
         token,
         SUMMARY_TIMEOUT,
-        summarize_with_kagi(&kagi_config, &job.entry_link),
+        summarize_with_kagi(&kagi_config, entry_link),
     )
     .await
     {
         SummaryOutcome::Completed(summary_text) => {
-            tracing::debug!(
-                event = "summary.completed",
-                user_id = job.user_id,
-                entry_id = job.entry_id,
-                chars = summary_text.len(),
-                "summary completed"
-            );
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let text = summary_text.clone();
-            let db_res = entry_summary::set_completed(db, user_id, entry_id, &text).await;
-            if let Err(crate::error::AppError::NotFound(_)) = db_res {
-                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
-                cache.remove(job.user_id, job.entry_id);
-            } else {
-                cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
-                // Tick the sidebar "Summarized" badge.
-                sidebar_cache.bust(job.user_id);
-                events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Completed));
-                events.emit_sidebar(job.user_id);
-            }
+            store_completed(job, db, ctx, summary_text).await;
         }
-        SummaryOutcome::Failed(error) => {
-            tracing::warn!(
-                event = "summary.failed",
-                user_id = job.user_id,
-                entry_id = job.entry_id,
-                error,
-                "summary failed"
-            );
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let err = error.clone();
-            let db_res = entry_summary::set_failed(db, user_id, entry_id, &err).await;
-            if let Err(crate::error::AppError::NotFound(_)) = db_res {
-                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
-                cache.remove(job.user_id, job.entry_id);
-            } else {
-                cache.set_failed(job.user_id, job.entry_id, error.clone());
-                events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
-            }
-        }
+        SummaryOutcome::Failed(error) => store_failed(job, db, ctx, error).await,
         SummaryOutcome::Cancelled => {
             // The cancel handler owns cleanup; write nothing back.
             tracing::debug!(
                 event = "summary.cancelled",
-                user_id = job.user_id,
-                entry_id = job.entry_id,
+                user_id,
+                entry_id,
                 "summary cancelled"
             );
         }
@@ -803,5 +832,246 @@ mod tests {
 
         cancel_token.cancel();
         let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn an_unconfigured_kagi_fails_the_job_everywhere() {
+        let (tx, rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let db = setup_test_db().await;
+        let cancel_token = CancellationToken::new();
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+
+        let u = seed_user(&db, "unconfigured", Role::User).await.id;
+        let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: cat,
+                url: "https://example.com/feed.xml",
+                title: Some("F"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let (e, _) = entry::upsert_entry(
+            &db,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "g",
+                title: Some("T"),
+                link: Some("https://example.com/a"),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        entry_summary::upsert_pending(&db, u, e.id).await.unwrap();
+        let (user_id, entry_id) = (u, e.id);
+
+        let handle = start_summary_worker(
+            rx,
+            db.clone(),
+            cancel_token.clone(),
+            SummaryWorkerContext {
+                cache: cache.clone(),
+                sidebar_cache: Arc::new(SidebarCache::default()),
+                cancels: registry(),
+                events: bus,
+                service_token_key: None,
+            },
+        );
+        tx.send(SummaryJob {
+            user_id,
+            entry_id,
+            entry_link: "https://example.com/a".into(),
+        })
+        .await
+        .unwrap();
+
+        let mut statuses = Vec::new();
+        while statuses.last() != Some(&SummaryStatus::Failed) {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
+                .await
+                .expect("the job should end with a Failed event")
+                .unwrap();
+            if let EventKind::Summary {
+                status: Some(status),
+                ..
+            } = ev.kind
+            {
+                statuses.push(status);
+            }
+        }
+        assert_eq!(statuses, [SummaryStatus::Processing, SummaryStatus::Failed]);
+
+        let cached = cache.get(user_id, entry_id).expect("cache entry");
+        assert_eq!(cached.status, SummaryStatus::Failed);
+        assert_eq!(
+            cached.error_message.as_deref(),
+            Some("Kagi is not configured")
+        );
+        let row = entry_summary::find_by_user_and_entry(&db, user_id, entry_id)
+            .await
+            .unwrap()
+            .expect("summary row");
+        assert_eq!(row.status, SummaryStatus::Failed);
+        assert_eq!(row.error_message.as_deref(), Some("Kagi is not configured"));
+
+        cancel_token.cancel();
+        let _ = handle.await;
+    }
+
+    /// A pending summary row for a fresh entry, as the enqueue handler leaves it.
+    async fn seed_pending_job(db: &Db, username: &str) -> SummaryJob {
+        let user_id = seed_user(db, username, Role::User).await.id;
+        let cat = category::create_category(db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
+        let feed_id = feed::create_feed(
+            db,
+            &feed::CreateFeedParams {
+                category_id: cat,
+                url: "https://example.com/feed.xml",
+                title: Some("F"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let (e, _) = entry::upsert_entry(
+            db,
+            &entry::EntryUpsert {
+                feed_id,
+                guid: "g",
+                title: Some("T"),
+                link: Some("https://example.com/a"),
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        entry_summary::upsert_pending(db, user_id, e.id)
+            .await
+            .unwrap();
+        SummaryJob {
+            user_id,
+            entry_id: e.id,
+            entry_link: "https://example.com/a".into(),
+        }
+    }
+
+    fn test_context(bus: EventBus) -> (SummaryWorkerContext, Arc<SummaryCache>) {
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let ctx = SummaryWorkerContext {
+            cache: cache.clone(),
+            sidebar_cache: Arc::new(SidebarCache::default()),
+            cancels: registry(),
+            events: bus,
+            service_token_key: None,
+        };
+        (ctx, cache)
+    }
+
+    #[tokio::test]
+    async fn store_completed_saves_caches_and_announces() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "completed").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+
+        store_completed(&job, &db, &ctx, "The summary.".to_string()).await;
+
+        let cached = cache.get(job.user_id, job.entry_id).expect("cache entry");
+        assert_eq!(cached.status, SummaryStatus::Completed);
+        assert_eq!(cached.summary_text.as_deref(), Some("The summary."));
+        let row = entry_summary::find_by_user_and_entry(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap()
+            .expect("summary row");
+        assert_eq!(row.status, SummaryStatus::Completed);
+        assert_eq!(row.summary_text.as_deref(), Some("The summary."));
+        assert!(matches!(
+            sub.try_recv().unwrap().kind,
+            EventKind::Summary { entry_id, status: Some(SummaryStatus::Completed) }
+                if entry_id == job.entry_id
+        ));
+        assert!(matches!(sub.try_recv().unwrap().kind, EventKind::Sidebar));
+        assert!(sub.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn store_completed_after_the_row_was_deleted_leaves_the_cache_empty() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "completed-cancelled").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+        cache.set_processing(job.user_id, job.entry_id);
+        entry_summary::delete(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap();
+
+        store_completed(&job, &db, &ctx, "The summary.".to_string()).await;
+
+        assert!(cache.get(job.user_id, job.entry_id).is_none());
+        assert!(sub.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn store_failed_saves_caches_and_announces() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "failed").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+
+        store_failed(&job, &db, &ctx, "Kagi said no".to_string()).await;
+
+        let cached = cache.get(job.user_id, job.entry_id).expect("cache entry");
+        assert_eq!(cached.status, SummaryStatus::Failed);
+        assert_eq!(cached.error_message.as_deref(), Some("Kagi said no"));
+        let row = entry_summary::find_by_user_and_entry(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap()
+            .expect("summary row");
+        assert_eq!(row.status, SummaryStatus::Failed);
+        assert_eq!(row.error_message.as_deref(), Some("Kagi said no"));
+        assert!(matches!(
+            sub.try_recv().unwrap().kind,
+            EventKind::Summary { entry_id, status: Some(SummaryStatus::Failed) }
+                if entry_id == job.entry_id
+        ));
+        assert!(sub.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn store_failed_after_the_row_was_deleted_leaves_the_cache_empty() {
+        let db = setup_test_db().await;
+        let job = seed_pending_job(&db, "failed-cancelled").await;
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+        let (ctx, cache) = test_context(bus);
+        cache.set_processing(job.user_id, job.entry_id);
+        entry_summary::delete(&db, job.user_id, job.entry_id)
+            .await
+            .unwrap();
+
+        store_failed(&job, &db, &ctx, "Kagi said no".to_string()).await;
+
+        assert!(cache.get(job.user_id, job.entry_id).is_none());
+        assert!(sub.try_recv().is_err());
     }
 }
