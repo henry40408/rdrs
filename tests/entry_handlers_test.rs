@@ -1774,6 +1774,41 @@ async fn summary_fragment_renders_completed_summary() {
 }
 
 #[tokio::test]
+async fn entry_fragment_reads_a_cached_summary_without_a_db_row() {
+    // The cache is ahead of the table while a worker runs; the pane follows it.
+    let (app, (user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
+    let entry_id = entry_ids[0];
+    app.state.summary_cache.set_completed(
+        user_id,
+        entry_id,
+        "<p>Cached summary text</p>".to_string(),
+    );
+
+    let body = app
+        .server
+        .get(&format!("/entries/{entry_id}/fragment"))
+        .await
+        .text();
+
+    assert!(body.contains("Cached summary text"), "pane lost it: {body}");
+}
+
+#[tokio::test]
+async fn entry_fragment_shows_an_in_flight_cached_summary_as_pending() {
+    let (app, (user_id, _cat_id, _feed_id, entry_ids)) = seeded_app().await;
+    let entry_id = entry_ids[0];
+    app.state.summary_cache.set_processing(user_id, entry_id);
+
+    let body = app
+        .server
+        .get(&format!("/entries/{entry_id}/fragment"))
+        .await
+        .text();
+
+    assert!(body.contains("data-summary-pending"), "pane: {body}");
+}
+
+#[tokio::test]
 async fn summary_fragment_sanitizes_a_hostile_summary() {
     // Kagi writes the summary from a page nobody here controls, and it is
     // rendered with `|safe`. Sanitizing on read (not on write) is what lets a
