@@ -380,6 +380,55 @@ async fn pg_dialect_smoke() {
         "PG must not claim a reclaimable figure it cannot measure"
     );
 
+    // --- unread counts: correlated COUNT subquery, SUM cast back to BIGINT ----
+    // `SUM` is numeric on PG, so the by-category query must cast it, and a feed
+    // or category with nothing unread must still come back as 0, not vanish.
+    let counted_cat = category::create_category(&db, user_id, "Counted")
+        .await
+        .unwrap()
+        .id;
+    let empty_cat = category::create_category(&db, user_id, "Empty")
+        .await
+        .unwrap()
+        .id;
+    let mut counted_feeds = Vec::new();
+    for url in ["https://example.com/a.xml", "https://example.com/b.xml"] {
+        let created = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: counted_cat,
+                url,
+                title: Some("Counted"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        counted_feeds.push(created.id);
+    }
+    let (busy_feed, quiet_feed) = (counted_feeds[0], counted_feeds[1]);
+    let mut busy_entries = Vec::new();
+    for guid in ["c1", "c2", "c3"] {
+        let (e, _) = entry::upsert_entry(&db, &entry::EntryUpsert::new(busy_feed, guid))
+            .await
+            .unwrap();
+        busy_entries.push(e.id);
+    }
+    entry::mark_as_read(&db, busy_entries[0]).await.unwrap();
+
+    let by_feed = entry::count_unread_by_feed(&db, user_id).await.unwrap();
+    assert_eq!(by_feed.get(&busy_feed), Some(&2));
+    assert_eq!(by_feed.get(&quiet_feed), Some(&0));
+    let in_category = entry::count_unread_by_feed_in_category(&db, user_id, counted_cat)
+        .await
+        .unwrap();
+    assert_eq!(in_category.get(&busy_feed), Some(&2));
+    assert_eq!(in_category.get(&quiet_feed), Some(&0));
+    assert_eq!(in_category.len(), 2);
+    let by_category = entry::count_unread_by_category(&db, user_id).await.unwrap();
+    assert_eq!(by_category.get(&counted_cat), Some(&2));
+    assert_eq!(by_category.get(&empty_cat), Some(&0));
+
     // --- unique-violation mapping (is_unique_violation on PG) ------------------
     let err = category::create_category(&db, user_id, "Tech")
         .await

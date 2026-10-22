@@ -211,8 +211,8 @@ pub async fn read_chrome_data(
     let cats = category::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
-    // One scan of unread entries yields both the per-feed counts `/feeds` shows
-    // and, summed per category, the sidebar's.
+    // One index-only count per feed yields both the per-feed counts `/feeds`
+    // shows and, summed per category, the sidebar's.
     let feeds = crate::models::feed::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();

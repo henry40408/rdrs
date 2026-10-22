@@ -271,6 +271,47 @@ async fn test_mark_as_read() {
 }
 
 #[tokio::test]
+async fn unread_counts_keep_zero_feeds_and_empty_categories() {
+    let db = setup_db().await;
+    let user_id = create_test_user(&db, "testuser").await;
+    let busy_cat = create_test_category(&db, user_id, "Busy").await;
+    let empty_cat = create_test_category(&db, user_id, "Empty").await;
+    let busy_feed = create_test_feed(&db, busy_cat, "https://example.com/busy.xml").await;
+    let quiet_feed = create_test_feed(&db, busy_cat, "https://example.com/quiet.xml").await;
+    let mut ids = Vec::new();
+    for guid in ["a", "b", "c"] {
+        let (e, _) = upsert_entry(&db, &EntryUpsert::new(busy_feed, guid))
+            .await
+            .unwrap();
+        ids.push(e.id);
+    }
+    mark_as_read(&db, ids[0]).await.unwrap();
+
+    let by_feed = count_unread_by_feed(&db, user_id).await.unwrap();
+    assert_eq!(by_feed.get(&busy_feed), Some(&2));
+    assert_eq!(by_feed.get(&quiet_feed), Some(&0));
+
+    let in_category = count_unread_by_feed_in_category(&db, user_id, busy_cat)
+        .await
+        .unwrap();
+    assert_eq!(in_category.len(), 2);
+    assert_eq!(in_category.get(&busy_feed), Some(&2));
+
+    let by_category = count_unread_by_category(&db, user_id).await.unwrap();
+    assert_eq!(by_category.get(&busy_cat), Some(&2));
+    assert_eq!(by_category.get(&empty_cat), Some(&0));
+
+    let other = create_test_user(&db, "other").await;
+    assert!(
+        count_unread_by_feed_in_category(&db, other, busy_cat)
+            .await
+            .unwrap()
+            .is_empty(),
+        "another account must not read this category's counts"
+    );
+}
+
+#[tokio::test]
 async fn is_owned_by_is_true_only_for_the_owner() {
     let db = setup_db().await;
     let owner = create_test_user(&db, "owner").await;
