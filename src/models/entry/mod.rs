@@ -415,6 +415,23 @@ pub async fn find_by_id_with_feed(db: &Db, id: i64) -> AppResult<Option<EntryWit
         .map_err(AppError::Database)
 }
 
+/// Whether `entry_id` belongs to `user_id`, in one query.
+pub async fn is_owned_by(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
+    let row = query_opt!(
+        db,
+        (i64,),
+        "SELECT e.id \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE e.id = $1 AND c.user_id = $2",
+        entry_id,
+        user_id
+    )
+    .map_err(AppError::Database)?;
+    Ok(row.is_some())
+}
+
 /// Fetch an entry scoped to `user_id`; `None` if missing or not owned (both 404).
 pub async fn find_by_id_for_user(
     db: &Db,
@@ -1075,6 +1092,18 @@ pub async fn upsert_entry(db: &Db, upsert: &EntryUpsert<'_>) -> AppResult<(Entry
     };
     let entry = find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)?;
     Ok((entry, is_new))
+}
+
+/// [`mark_as_read`] for a caller that already holds the entry: just the
+/// `UPDATE`, no re-read.
+pub async fn mark_as_read_quietly(db: &Db, id: i64) -> AppResult<()> {
+    db_execute!(
+        db,
+        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = $1 AND read_at IS NULL",
+        id
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
 }
 
 pub async fn mark_as_read(db: &Db, id: i64) -> AppResult<Entry> {

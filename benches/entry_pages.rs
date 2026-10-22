@@ -299,6 +299,8 @@ async fn main() {
     // The reading pane and its toolbar lookups, for a mid-list entry. `position`
     // (the "12 / 48" counts) has no counterpart before it existed.
     routes.push(("pane fragment", format!("/entries/{mid_entry}/fragment")));
+    // What the browser refetches over SSE after an open busts the sidebar cache.
+    routes.push(("sidebar api", "/api/sidebar".to_string()));
     routes.push((
         "neighbors (all)",
         format!("/api/entries/{mid_entry}/neighbors"),
