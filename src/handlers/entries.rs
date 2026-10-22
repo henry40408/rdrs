@@ -166,8 +166,8 @@ fn refresh_sidebar_after_write(state: &AppState, user_id: i64) {
 fn dispatch_mark_read_on_open(state: &AppState, user_id: i64, entry_id: i64) {
     let task_state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = entry::mark_as_read(&task_state.db, entry_id).await {
-            tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
+        if let Err(e) = entry::mark_as_read_quietly(&task_state.db, entry_id).await {
+            tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read_quietly failed");
         }
         refresh_sidebar_after_write(&task_state, user_id);
     });
@@ -245,17 +245,12 @@ pub async fn entry_fragment(
     }
 
     let mut entry_with_feed = found.ok_or(AppError::EntryNotFound)?;
-    let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
-        .await?
-        .get(&entry_id)
-        .copied();
-
     // Optimistic; tied to `mark_read` so speculative loads render true state.
     if mark_read {
         entry_with_feed.entry.read_at = Some(chrono::Utc::now());
     }
 
-    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let settings = load_pane_settings(&state, user_id).await?;
     let purpose = if speculative {
         RenderPurpose::Speculative
     } else {
@@ -266,14 +261,13 @@ pub async fn entry_fragment(
         ReadingPaneRequest {
             user_id,
             entry_with_feed: &entry_with_feed,
-            has_save,
-            has_kagi,
+            settings,
             view,
             purpose,
         },
     )
     .await?;
-    let row = row_view_from(&entry_with_feed, status);
+    let row = row_view_from(&entry_with_feed, pane.summary_status);
 
     // After the render only to stay off the critical path.
     if mark_read {
@@ -302,14 +296,14 @@ pub async fn summary_fragment(
     let entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
-    // has_save/has_kagi are irrelevant to the summary container.
+    // has_save/has_kagi and the open-tracking pixel are irrelevant to the
+    // summary container.
     let pane = build_reading_pane_view(
         &state,
         ReadingPaneRequest {
             user_id,
             entry_with_feed: &entry_with_feed,
-            has_save: false,
-            has_kagi: false,
+            settings: PaneSettings::default(),
             view: ContentView::Full,
             purpose: RenderPurpose::Reader,
         },
@@ -321,25 +315,32 @@ pub async fn summary_fragment(
     })
 }
 
-/// `(has_save, has_kagi)` for the pane's Save / Summarize buttons.
-pub(crate) async fn load_pane_action_flags(
-    state: &AppState,
-    user_id: i64,
-) -> AppResult<(bool, bool)> {
+/// What the pane needs from `user_settings`, read in one query.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PaneSettings {
+    /// Save button.
+    pub has_save: bool,
+    /// Summarize button.
+    pub has_kagi: bool,
+    pub pixel_enabled_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub(crate) async fn load_pane_settings(state: &AppState, user_id: i64) -> AppResult<PaneSettings> {
+    let Some(settings) = user_settings::find_by_user_id(&state.db, user_id).await? else {
+        return Ok(PaneSettings::default());
+    };
     // An unreadable credential shows as absent; settings explains why.
-    let cfg = crate::models::user_settings::get_save_services_config(
-        &state.db,
-        user_id,
-        state.config.service_token_key(),
-    )
-    .await?
-    .or_default();
-    let has_save = cfg.has_any_service();
-    let has_kagi = cfg
-        .kagi
-        .as_ref()
-        .is_some_and(super::super::services::summarize::kagi::KagiConfig::is_configured);
-    Ok((has_save, has_kagi))
+    let cfg = settings
+        .get_save_services_config(state.config.service_token_key())
+        .or_default();
+    Ok(PaneSettings {
+        has_save: cfg.has_any_service(),
+        has_kagi: cfg
+            .kagi
+            .as_ref()
+            .is_some_and(super::super::services::summarize::kagi::KagiConfig::is_configured),
+        pixel_enabled_at: settings.pixel_tracking_enabled_at,
+    })
 }
 
 /// Query string for `GET /entries/{id}/fragment`.
@@ -389,8 +390,7 @@ pub(crate) enum RenderPurpose {
 pub(crate) struct ReadingPaneRequest<'a> {
     pub user_id: i64,
     pub entry_with_feed: &'a entry::EntryWithFeed,
-    pub has_save: bool,
-    pub has_kagi: bool,
+    pub settings: PaneSettings,
     pub view: ContentView,
     pub purpose: RenderPurpose,
 }
@@ -404,8 +404,7 @@ pub(crate) async fn build_reading_pane_view(
     let ReadingPaneRequest {
         user_id,
         entry_with_feed,
-        has_save,
-        has_kagi,
+        settings,
         view,
         purpose,
     } = request;
@@ -442,9 +441,7 @@ pub(crate) async fn build_reading_pane_view(
     // Must run after `sanitize_html`, which would strip/proxy the pixel. Skipped
     // for speculative renders, whose images `offline.js` may walk.
     let enabled_at = match purpose {
-        RenderPurpose::Reader => {
-            user_settings::get_pixel_tracking_enabled_at(&state.db, user_id).await?
-        }
+        RenderPurpose::Reader => settings.pixel_enabled_at,
         RenderPurpose::Speculative => None,
     };
     let content_html = PixelContext {
@@ -456,8 +453,7 @@ pub(crate) async fn build_reading_pane_view(
     }
     .maybe_inject(content_html, entry_id, entry_with_feed.entry.created_at);
 
-    let (summary_text, summary_in_flight, summary_error) =
-        resolve_summary(state, user_id, entry_id).await?;
+    let summary = resolve_summary(state, user_id, entry_id).await?;
 
     let published_at = entry_with_feed.entry.published_at;
     Ok(ReadingPaneView {
@@ -484,49 +480,67 @@ pub(crate) async fn build_reading_pane_view(
         content_html,
         is_read: entry_with_feed.entry.read_at.is_some(),
         is_starred: entry_with_feed.entry.starred_at.is_some(),
-        summary_text,
-        summary_in_flight,
-        summary_error,
-        has_kagi,
-        has_save,
+        summary_text: summary.text,
+        summary_in_flight: summary.in_flight,
+        summary_error: summary.error,
+        summary_status: summary.status,
+        has_kagi: settings.has_kagi,
+        has_save: settings.has_save,
         is_full_content: showing_full,
         has_stored_full_content: stored_full.is_some(),
     })
 }
 
-/// `(summary_text, in_flight, error)`: cache first, then the `entry_summary`
-/// table. Summaries are [`sanitize_summary`]-ed on output, like feed content.
+/// A pane's summary: cache first, then the `entry_summary` table. Text is
+/// [`sanitize_summary`]-ed on output, like feed content.
+struct ResolvedSummary {
+    text: Option<String>,
+    in_flight: bool,
+    error: Option<String>,
+    /// `None` when the entry has no summary.
+    status: Option<SummaryStatus>,
+}
+
+impl ResolvedSummary {
+    fn from_status(status: SummaryStatus, text: Option<&str>, error: Option<String>) -> Self {
+        let in_flight = matches!(status, SummaryStatus::Pending | SummaryStatus::Processing);
+        let completed = status == SummaryStatus::Completed;
+        Self {
+            text: text.filter(|_| completed).map(sanitize_summary),
+            in_flight,
+            error: error.filter(|_| status == SummaryStatus::Failed),
+            status: Some(status),
+        }
+    }
+}
+
 async fn resolve_summary(
     state: &AppState,
     user_id: i64,
     entry_id: i64,
-) -> AppResult<(Option<String>, bool, Option<String>)> {
+) -> AppResult<ResolvedSummary> {
     if let Some(cached) = state.summary_cache.get(user_id, entry_id) {
-        match cached.status {
-            SummaryStatus::Completed => {
-                return Ok((
-                    cached.summary_text.as_deref().map(sanitize_summary),
-                    false,
-                    None,
-                ));
-            }
-            SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true, None)),
-            SummaryStatus::Failed => {
-                // Fall through: a retry may have updated the DB row.
-            }
+        // A cached failure falls through: a retry may have updated the DB row.
+        if cached.status != SummaryStatus::Failed {
+            return Ok(ResolvedSummary::from_status(
+                cached.status,
+                cached.summary_text.as_deref(),
+                None,
+            ));
         }
     }
     let db_entry = entry_summary::find_by_user_and_entry(&state.db, user_id, entry_id).await?;
-    match db_entry {
-        Some(s) => match s.status {
-            SummaryStatus::Completed => {
-                Ok((s.summary_text.as_deref().map(sanitize_summary), false, None))
-            }
-            SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true, None)),
-            SummaryStatus::Failed => Ok((None, false, s.error_message)),
+    Ok(match db_entry {
+        Some(s) => {
+            ResolvedSummary::from_status(s.status, s.summary_text.as_deref(), s.error_message)
+        }
+        None => ResolvedSummary {
+            text: None,
+            in_flight: false,
+            error: None,
+            status: None,
         },
-        None => Ok((None, false, None)),
-    }
+    })
 }
 
 /// State to re-render the pane's Star button after a toggle.
@@ -876,7 +890,7 @@ pub async fn fetch_full_content_form(
         .clone()
         .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
 
-    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let settings = load_pane_settings(&state, user_id).await?;
 
     let flash = match fetch_and_extract(&link, &state.config.user_agent, &state.fetcher).await {
         Ok(extracted) => {
@@ -899,8 +913,7 @@ pub async fn fetch_full_content_form(
         ReadingPaneRequest {
             user_id,
             entry_with_feed: &entry_with_feed,
-            has_save,
-            has_kagi,
+            settings,
             view: ContentView::Full,
             purpose: RenderPurpose::Reader,
         },
@@ -993,14 +1006,13 @@ pub async fn save_entry_form(
         }
     };
 
-    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let settings = load_pane_settings(&state, user_id).await?;
     let pane = build_reading_pane_view(
         &state,
         ReadingPaneRequest {
             user_id,
             entry_with_feed: &entry_with_feed,
-            has_save,
-            has_kagi,
+            settings,
             view: ContentView::Full,
             purpose: RenderPurpose::Reader,
         },

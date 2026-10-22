@@ -69,13 +69,7 @@ async fn neighbors_filter(
     query: NeighborsQuery,
 ) -> AppResult<(i64, entry::EntryFilter)> {
     let user_id = auth_user.user.id;
-    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
-        .await?
-        .ok_or(AppError::EntryNotFound)?;
-    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
-        .await?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != user_id {
+    if !entry::is_owned_by(&state.db, user_id, id).await? {
         return Err(AppError::EntryNotFound);
     }
 

@@ -271,6 +271,41 @@ async fn test_mark_as_read() {
 }
 
 #[tokio::test]
+async fn is_owned_by_is_true_only_for_the_owner() {
+    let db = setup_db().await;
+    let owner = create_test_user(&db, "owner").await;
+    let other = create_test_user(&db, "other").await;
+    let category_id = create_test_category(&db, owner, "Tech").await;
+    let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+    let (entry, _) = upsert_entry(&db, &EntryUpsert::new(feed_id, "guid-owned"))
+        .await
+        .unwrap();
+
+    assert!(is_owned_by(&db, owner, entry.id).await.unwrap());
+    assert!(!is_owned_by(&db, other, entry.id).await.unwrap());
+    assert!(!is_owned_by(&db, owner, entry.id + 1000).await.unwrap());
+}
+
+#[tokio::test]
+async fn mark_as_read_quietly_sets_read_at_once() {
+    let db = setup_db().await;
+    let user_id = create_test_user(&db, "testuser").await;
+    let category_id = create_test_category(&db, user_id, "Tech").await;
+    let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+    let (entry, _) = upsert_entry(&db, &EntryUpsert::new(feed_id, "guid-quiet"))
+        .await
+        .unwrap();
+
+    mark_as_read_quietly(&db, entry.id).await.unwrap();
+    let first = find_by_id(&db, entry.id).await.unwrap().unwrap().read_at;
+    assert!(first.is_some());
+
+    mark_as_read_quietly(&db, entry.id).await.unwrap();
+    let second = find_by_id(&db, entry.id).await.unwrap().unwrap().read_at;
+    assert_eq!(first, second);
+}
+
+#[tokio::test]
 async fn mark_read_by_filter_marks_only_matching_unread_owned() {
     let db = setup_db().await;
     let user_id = create_test_user(&db, "testuser").await;

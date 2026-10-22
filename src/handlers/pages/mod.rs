@@ -136,6 +136,8 @@ pub struct ReadingPaneView {
     pub summary_in_flight: bool,
     /// Latest summary failure; distinguishes `failed` from "no summary".
     pub summary_error: Option<String>,
+    /// Feeds the row's summary badge; `None` when there is no summary.
+    pub summary_status: Option<SummaryStatus>,
     pub has_kagi: bool,
     pub has_save: bool,
     /// `content_html` is the fetched article, not the feed's body.
@@ -433,7 +435,7 @@ async fn maybe_build_reading_pane(
     let entry_with_feed = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await
         .ok()??;
-    let (has_save, has_kagi) = crate::handlers::entries::load_pane_action_flags(state, user_id)
+    let settings = crate::handlers::entries::load_pane_settings(state, user_id)
         .await
         .ok()?;
     crate::handlers::entries::build_reading_pane_view(
@@ -441,8 +443,7 @@ async fn maybe_build_reading_pane(
         crate::handlers::entries::ReadingPaneRequest {
             user_id,
             entry_with_feed: &entry_with_feed,
-            has_save,
-            has_kagi,
+            settings,
             view: crate::handlers::entries::ContentView::Full,
             // A list page rendered with `?entry=` is the reader looking at it.
             purpose: crate::handlers::entries::RenderPurpose::Reader,
