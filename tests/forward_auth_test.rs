@@ -192,6 +192,41 @@ async fn test_unknown_user_jit_created_as_admin_via_groups() {
     assert_eq!(created.role, rdrs::models::user::Role::Admin);
 }
 
+/// Without group mapping, only the first account on an empty instance is
+/// Admin; the default category is created with it.
+#[tokio::test]
+async fn test_jit_without_group_mapping_makes_only_the_first_user_admin() {
+    let (mut server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+        c.auth_proxy_user_creation = true;
+        c.auth_proxy_groups_header = String::new();
+    })
+    .await;
+
+    for name in ["first", "second"] {
+        // A valid session cookie would skip JIT creation for the next name.
+        server.clear_cookies();
+        let res = server.get("/").add_header("Remote-User", name).await;
+        assert!(res.status_code().is_redirection());
+    }
+
+    let first = rdrs::models::user::find_by_username(&db, "first")
+        .await
+        .unwrap()
+        .unwrap();
+    let second = rdrs::models::user::find_by_username(&db, "second")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.role, rdrs::models::user::Role::Admin);
+    assert_eq!(second.role, rdrs::models::user::Role::User);
+    let categories = rdrs::models::category::list_by_user(&db, first.id)
+        .await
+        .unwrap();
+    assert_eq!(categories.len(), 1);
+    assert_eq!(categories[0].name, "Uncategorized");
+}
+
 #[tokio::test]
 async fn test_disabled_user_rejected() {
     let (server, db) = create_server(|c| {

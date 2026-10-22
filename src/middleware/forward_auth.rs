@@ -147,15 +147,7 @@ pub async fn forward_auth(
             if !allow_creation {
                 return Ok(None);
             }
-            let role = match desired_role {
-                Some(r) => r,
-                None if user::count(&state.db).await? == 0 => Role::Admin,
-                None => Role::User,
-            };
-            // Sentinel hash never verifies: no local password login.
-            let created = user::create_user(&state.db, &username, "!", role).await?;
-            category::create_category(&state.db, created.id, "Uncategorized").await?;
-            created
+            create_proxy_user(&state.db, &username, desired_role).await?
         };
         let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
         audit::session_created(&audit::CredentialCreated {
@@ -194,6 +186,27 @@ pub async fn forward_auth(
         .map_or_else(|| "/".to_string(), |pq| pq.as_str().to_string());
 
     (jar.add(cookie).add(csrf), Redirect::to(&location)).into_response()
+}
+
+/// Count, create and default category share one tx so two concurrent first
+/// logins cannot both see an empty instance and both become Admin.
+async fn create_proxy_user(
+    db: &crate::db::Db,
+    username: &str,
+    desired_role: Option<Role>,
+) -> AppResult<user::User> {
+    let mut tx = db.begin().await?;
+    tx.lock_user_table().await?;
+    let role = match desired_role {
+        Some(r) => r,
+        None if user::count_tx(&mut tx).await? == 0 => Role::Admin,
+        None => Role::User,
+    };
+    // Sentinel hash never verifies: no local password login.
+    let created = user::create_user_tx(&mut tx, username, "!", role).await?;
+    category::create_category_tx(&mut tx, created.id, "Uncategorized").await?;
+    tx.commit().await?;
+    Ok(created)
 }
 
 #[cfg(test)]
