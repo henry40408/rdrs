@@ -10,7 +10,7 @@ mod filters;
 pub mod query;
 use filters::{
     Bind, Dialect, apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
-    published_sort_entry_hint,
+    published_sort_entry_hint, read_since_condition,
 };
 // Tests only; production reaches it via `published_sort_entry_hint`.
 #[cfg(test)]
@@ -1660,6 +1660,146 @@ pub struct EntryPosition {
     pub limit: i64,
 }
 
+/// One disjoint part of the filtered list, counted on its own.
+struct CountSlice {
+    filter: EntryFilter,
+    /// Count only entries read at-or-after this instant.
+    read_since: Option<String>,
+}
+
+/// The snapshot predicate `read_at IS NULL OR read_at >= ?` defeats every
+/// partial index (about 12k page misses on 20k entries), so it is counted as
+/// its two disjoint halves, each of which has an index.
+fn count_slices(filter: &EntryFilter) -> Vec<CountSlice> {
+    let snapshot = filter.read_after.clone().filter(|_| filter.unread_only);
+    let Some(read_after) = snapshot else {
+        return vec![CountSlice {
+            filter: filter.clone(),
+            read_since: None,
+        }];
+    };
+    let unread = EntryFilter {
+        read_after: None,
+        ..filter.clone()
+    };
+    let read_since = EntryFilter {
+        unread_only: false,
+        read_after: None,
+        ..filter.clone()
+    };
+    vec![
+        CountSlice {
+            filter: unread,
+            read_since: None,
+        },
+        CountSlice {
+            filter: read_since,
+            read_since: Some(read_after),
+        },
+    ]
+}
+
+struct PositionCounter {
+    user_id: i64,
+    entry_id: i64,
+    dialect: Dialect,
+    slices: Vec<CountSlice>,
+}
+
+impl PositionCounter {
+    /// `$1` is the user id and, when `cmp` is set, `$2` the entry whose sort key
+    /// `cmp` compares against; the filter's binds follow. `unread_index` is the
+    /// partial unread index to pin for a strict unread slice: with several to
+    /// choose from the planner flips on statistics (`total` went from 11 to 390
+    /// page misses via `idx_entry_read_at` once `idx_entry_unread_feed_sort`
+    /// existed).
+    fn slice_sql(
+        &self,
+        cmp: &str,
+        slice: &CountSlice,
+        unread_index: &'static str,
+    ) -> (String, Vec<Bind>) {
+        let mut conditions = Vec::new();
+        let mut binds: Vec<Bind> = vec![Bind::Int(self.user_id)];
+        if !cmp.is_empty() {
+            binds.push(Bind::Int(self.entry_id));
+        }
+        apply_filter_conditions(&mut conditions, &mut binds, &slice.filter, self.dialect);
+        // Entries read since the snapshot are few; the read_at range finds
+        // them, where the planner would otherwise walk every read entry.
+        let (entry_hint, join_kw) = match &slice.read_since {
+            Some(read_after) => {
+                conditions.push(read_since_condition(&mut binds, read_after, self.dialect));
+                // PostgreSQL's CROSS JOIN takes no ON clause.
+                let join_kw = match self.dialect {
+                    Dialect::Sqlite => "CROSS JOIN",
+                    Dialect::Postgres => "INNER JOIN",
+                };
+                (
+                    self.dialect.index_hint(" INDEXED BY idx_entry_read_at"),
+                    join_kw,
+                )
+            }
+            None if slice.filter.unread_only => {
+                (self.dialect.index_hint(unread_index), "INNER JOIN")
+            }
+            None => ("", "INNER JOIN"),
+        };
+        let extra = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT COUNT(*) FROM ( \
+                 SELECT 1 FROM entry e{entry_hint} \
+                 {join_kw} feed f ON e.feed_id = f.id \
+                 {join_kw} category c ON f.category_id = c.id \
+                 WHERE c.user_id = $1{cmp}{extra} \
+                 LIMIT {} \
+             ) capped",
+            POSITION_COUNT_LIMIT + 1
+        );
+        (sql, binds)
+    }
+
+    /// Rows matching `cmp` over all slices, capped at [`POSITION_COUNT_LIMIT`] + 1.
+    async fn capped_count(&self, db: &Db, cmp: &str, unread_index: &'static str) -> AppResult<i64> {
+        let mut sum = 0;
+        for slice in &self.slices {
+            let (sql, binds) = self.slice_sql(cmp, slice, unread_index);
+            sum += count_rows(db, sql, binds)
+                .await
+                .map_err(AppError::Database)?;
+            if sum > POSITION_COUNT_LIMIT {
+                break;
+            }
+        }
+        Ok(sum.min(POSITION_COUNT_LIMIT + 1))
+    }
+}
+
+async fn count_rows(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
+            bind_all!(
+                sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_one(pool)
+            .await
+        }
+        DbInner::Postgres(pool) => {
+            bind_all!(
+                sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
+                &binds
+            )
+            .fetch_one(pool)
+            .await
+        }
+    }
+}
+
 /// Where `entry_id` sits in the `published DESC, id DESC` order under `filter`:
 /// the entries ahead of it (itself included), against the same sort key
 /// `find_neighbors` walks. Counts are capped at [`POSITION_COUNT_LIMIT`] + 1.
@@ -1669,68 +1809,31 @@ pub async fn find_position(
     entry_id: i64,
     filter: &EntryFilter,
 ) -> AppResult<EntryPosition> {
-    let dialect = Dialect::from_db(db);
-
-    async fn count(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
-        match db.inner() {
-            DbInner::Sqlite(pool) => {
-                bind_all!(
-                    sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql)),
-                    &binds
-                )
-                .fetch_one(pool)
-                .await
-            }
-            DbInner::Postgres(pool) => {
-                bind_all!(
-                    sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql)),
-                    &binds
-                )
-                .fetch_one(pool)
-                .await
-            }
-        }
-    }
-
-    // `$1` is the user id and, when `by_entry`, `$2` the entry whose sort key
-    // `cmp` compares against; the filter's binds follow.
-    let capped_count = |by_entry: bool, cmp: &str| {
-        let mut conditions = Vec::new();
-        let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
-        if by_entry {
-            binds.push(Bind::Int(entry_id));
-        }
-        apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
-        let extra = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" AND {}", conditions.join(" AND "))
-        };
-        let sql = format!(
-            "SELECT COUNT(*) FROM ( \
-                 SELECT 1 FROM entry e \
-                 INNER JOIN feed f ON e.feed_id = f.id \
-                 INNER JOIN category c ON f.category_id = c.id \
-                 WHERE c.user_id = $1{cmp}{extra} \
-                 LIMIT {} \
-             ) capped",
-            POSITION_COUNT_LIMIT + 1
-        );
-        (sql, binds)
+    let counter = PositionCounter {
+        user_id,
+        entry_id,
+        dialect: Dialect::from_db(db),
+        slices: count_slices(filter),
     };
 
     let ts = "COALESCE(e.published_at, e.created_at)";
     let own_ts = "(SELECT COALESCE(s.published_at, s.created_at) FROM entry s WHERE s.id = $2)";
 
-    let (sql, binds) = capped_count(false, "");
-    let total = count(db, sql, binds).await.map_err(AppError::Database)?;
-
+    // `total` has no sort key, so `feed_id` alone covers it; the range wants
+    // `(feed_id, ts)`; the tie-break is an equality on `ts` that no feed scopes.
+    let total = counter
+        .capped_count(db, "", " INDEXED BY idx_entry_unread_feed")
+        .await?;
     // Split the tie-break from the range so the sort index can serve the range
     // half; an OR across both would force a scan.
-    let (sql, binds) = capped_count(true, &format!(" AND {ts} > {own_ts}"));
-    let ahead = count(db, sql, binds).await.map_err(AppError::Database)?;
-    let (sql, binds) = capped_count(true, &format!(" AND {ts} = {own_ts} AND e.id >= $2"));
-    let tied = count(db, sql, binds).await.map_err(AppError::Database)?;
+    let range = format!(" AND {ts} > {own_ts}");
+    let ahead = counter
+        .capped_count(db, &range, " INDEXED BY idx_entry_unread_feed_sort")
+        .await?;
+    let tie_break = format!(" AND {ts} = {own_ts} AND e.id >= $2");
+    let tied = counter
+        .capped_count(db, &tie_break, " INDEXED BY idx_entry_unread_sort")
+        .await?;
 
     Ok(EntryPosition {
         position: (ahead + tied).min(POSITION_COUNT_LIMIT + 1),

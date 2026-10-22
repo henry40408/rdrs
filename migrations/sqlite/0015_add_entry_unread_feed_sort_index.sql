@@ -1,0 +1,21 @@
+-- Serve the reading pane's "12 / 48" count (`find_position`) from an index alone
+-- on the unread list.
+--
+-- The count walks unread entries newer than the open one and stops at 1001.
+-- That needs the sort timestamp *and* `feed_id` (the join to feed and category
+-- scopes the user). The partial `idx_entry_unread_sort` has the timestamp but
+-- not `feed_id`, and `idx_entry_unread_feed` has `feed_id` but not the
+-- timestamp, so the planner walks the first and reads `feed_id` off the table
+-- row for each of up to 1001 entries, into the widest table in the schema.
+--
+-- Measured on 20k entries (85% read, ~3 KB per row, cold pager cache): the
+-- newer-than count for a mid-list unread entry takes 1035 page misses, and 27
+-- with this index. Its plan is a covering search on `(feed_id=? AND <expr>>?)`,
+-- pinned by `position_unread_count_is_index_covered`.
+--
+-- Partial on `read_at IS NULL`, matching `idx_entry_unread_sort` and 0011: it
+-- is proportional to the unread subset, and costs nothing on the write path for
+-- the read entries that are the overwhelming majority. About 96 KB at 3000
+-- unread entries.
+CREATE INDEX IF NOT EXISTS idx_entry_unread_feed_sort
+    ON entry(feed_id, COALESCE(published_at, created_at)) WHERE read_at IS NULL;
