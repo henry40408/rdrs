@@ -226,30 +226,51 @@ mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
-    /// Importers of `utils.js` must use a version-stamped URL, or `immutable`
-    /// keeps a stale copy across deploys.
+    /// Module specifiers of the static `import … from '…'` / `import '…'` lines.
+    fn import_specifiers(source: &str) -> Vec<&str> {
+        source
+            .lines()
+            .map(str::trim_start)
+            .filter_map(|line| {
+                let rest = line
+                    .strip_prefix("import ")
+                    .or_else(|| line.strip_prefix("} from "))?;
+                let rest = rest.rsplit_once(" from ").map_or(rest, |(_, spec)| spec);
+                let rest = rest.trim_start_matches(['\'', '"']);
+                rest.split(['\'', '"']).next()
+            })
+            .collect()
+    }
+
+    /// Every module a script imports must use a version-stamped URL, or
+    /// `immutable` keeps a stale copy across deploys.
     #[tokio::test]
     async fn js_nested_imports_are_version_busted() {
-        let expected = format!("utils.js?v={}", crate::GIT_VERSION);
-        for path in [
-            "js/app.js",
-            "js/components/rdrs-sidebar.js",
-            "js/passkey.js",
-        ] {
+        let stamp = format!(".js?v={}", crate::GIT_VERSION);
+        let mut checked = 0;
+        for (path, _) in FILES.iter().filter(|(name, _)| {
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|e| e == "js")
+        }) {
             let body = body_of(path).await;
             assert!(
                 !body.contains(ASSET_VERSION_PLACEHOLDER),
                 "{path}: placeholder was not substituted"
             );
-            assert!(
-                body.contains(&expected),
-                "{path}: expected a version-stamped utils.js import ({expected})"
-            );
-            assert!(
-                !body.contains("utils.js'") && !body.contains("utils.js\""),
-                "{path}: still imports utils.js without a ?v= cache-buster"
-            );
+            for specifier in import_specifiers(&body) {
+                assert!(
+                    specifier.ends_with(&stamp) || !specifier.contains(".js"),
+                    "{path}: import '{specifier}' lacks the ?v= cache-buster"
+                );
+                checked += 1;
+            }
         }
+        // Guards the scanner itself: app.js alone has four such imports.
+        assert!(
+            checked >= 5,
+            "only {checked} imports found; scanner broken?"
+        );
     }
 
     /// Every `/static/js/*.js` a template references must be in `FILES`, or it
