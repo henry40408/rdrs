@@ -246,6 +246,9 @@ async fn main() {
         unreachable!("the bench connects SQLite");
     };
     let (user_id, feed_id, category_id, mid_entry) = seed(&state.db, &args).await;
+    // Production runs this at startup; without statistics the planner picks
+    // different indexes than a real database gets.
+    state.db.optimize().await.unwrap();
     let bench_state = state.clone();
     let mut server = TestServer::builder()
         .save_cookies()
@@ -311,6 +314,21 @@ async fn main() {
     routes.push((
         "position (unread)",
         format!("/api/entries/{mid_entry}/position?unread_only=true"),
+    ));
+    // The unread view always echoes its snapshot as `read_after`
+    // (`currentEntryFilterParams`), so this is the pane's real unread request.
+    // Taken after seeding, as for a freshly loaded page: the entries `seed`
+    // marked read are not "read since", which only a few are in real use.
+    let snapshot = (chrono::Utc::now() + chrono::Duration::minutes(1))
+        .format("%Y-%m-%d%%20%H:%M:%S")
+        .to_string();
+    routes.push((
+        "neighbors (unread snap)",
+        format!("/api/entries/{mid_entry}/neighbors?unread_only=true&read_after={snapshot}"),
+    ));
+    routes.push((
+        "position (unread snap)",
+        format!("/api/entries/{mid_entry}/position?unread_only=true&read_after={snapshot}"),
     ));
     // Load More: page 2 of the busiest lists, through the cursor page 1 hands out.
     for (name, path) in [

@@ -130,6 +130,24 @@ pub(super) fn published_sort_entry_hint(filter: &EntryFilter) -> &'static str {
     }
 }
 
+/// `e.read_at` at-or-after `read_after`; `>=` so a same-second read still counts.
+pub(super) fn read_since_condition(
+    binds: &mut Vec<Bind>,
+    read_after: &str,
+    dialect: Dialect,
+) -> String {
+    let idx = binds.len() + 1;
+    let pg_ts = (dialect == Dialect::Postgres)
+        .then(|| parse_cursor_ts(read_after))
+        .flatten();
+    if let Some(ts) = pg_ts {
+        binds.push(Bind::Ts(ts));
+        return format!("e.read_at >= ${idx}");
+    }
+    binds.push(Bind::Text(read_after.to_string()));
+    format!("{} >= ${idx}", dialect.cursor_ts("e.read_at"))
+}
+
 pub(super) fn apply_filter_conditions(
     conditions: &mut Vec<String>,
     binds: &mut Vec<Bind>,
@@ -149,19 +167,9 @@ pub(super) fn apply_filter_conditions(
     if filter.unread_only {
         if let Some(ref read_after) = filter.read_after {
             // Snapshot: entries read during this page view stay in the unread
-            // set; `>=` so a same-second read still counts.
-            let idx = binds.len() + 1;
-            let pg_ts = (dialect == Dialect::Postgres)
-                .then(|| parse_cursor_ts(read_after))
-                .flatten();
-            if let Some(ts) = pg_ts {
-                conditions.push(format!("(e.read_at IS NULL OR e.read_at >= ${idx})"));
-                binds.push(Bind::Ts(ts));
-            } else {
-                let read_at = dialect.cursor_ts("e.read_at");
-                conditions.push(format!("(e.read_at IS NULL OR {read_at} >= ${idx})"));
-                binds.push(Bind::Text(read_after.clone()));
-            }
+            // set.
+            let read_since = read_since_condition(binds, read_after, dialect);
+            conditions.push(format!("(e.read_at IS NULL OR {read_since})"));
         } else {
             conditions.push("e.read_at IS NULL".to_string());
         }

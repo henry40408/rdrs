@@ -1508,6 +1508,193 @@ async fn test_find_position_stops_counting_at_the_limit() {
     assert_eq!(oldest.limit, POSITION_COUNT_LIMIT);
 }
 
+#[tokio::test]
+async fn test_find_position_unread_snapshot_counts_entries_read_since() {
+    let db = setup_db().await;
+    let user_id = create_test_user(&db, "testuser").await;
+    let category_id = create_test_category(&db, user_id, "Tech").await;
+    let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+    // entries[4] is newest in list order.
+    let mut entries = Vec::new();
+    for i in 0..5 {
+        let published = Utc::now() + chrono::Duration::seconds(i * 10);
+        let (entry, _) = upsert_entry(
+            &db,
+            &EntryUpsert {
+                title: Some(&format!("Entry {i}")),
+                published_at: Some(published),
+                ..EntryUpsert::new(feed_id, &format!("guid-{i}"))
+            },
+        )
+        .await
+        .unwrap();
+        entries.push(entry);
+    }
+    // entries[1] was read before the snapshot, entries[3] after it.
+    crate::db_execute!(
+        &db,
+        "UPDATE entry SET read_at = datetime('now', '-1 hour') WHERE id = $1",
+        entries[1].id
+    )
+    .unwrap();
+    crate::db_execute!(
+        &db,
+        "UPDATE entry SET read_at = datetime('now') WHERE id = $1",
+        entries[3].id
+    )
+    .unwrap();
+    let snapshot = (Utc::now() - chrono::Duration::minutes(10))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let filter = EntryFilter {
+        unread_only: true,
+        read_after: Some(snapshot),
+        ..Default::default()
+    };
+
+    // The list is entries 4, 3, 2, 0: entries[1] is gone, entries[3] stays.
+    let newest = find_position(&db, user_id, entries[4].id, &filter)
+        .await
+        .unwrap();
+    assert_eq!((newest.position, newest.total), (1, 4));
+    let read_since = find_position(&db, user_id, entries[3].id, &filter)
+        .await
+        .unwrap();
+    assert_eq!((read_since.position, read_since.total), (2, 4));
+    let oldest = find_position(&db, user_id, entries[0].id, &filter)
+        .await
+        .unwrap();
+    assert_eq!((oldest.position, oldest.total), (4, 4));
+}
+
+/// 20 feeds and 3000 entries, 85% of them read, then `ANALYZE`. The planner
+/// picks between the unread indexes on statistics, so an empty schema says
+/// nothing about which one a real list gets.
+async fn seed_mostly_read_entries(db: &Db) {
+    let user_id = create_test_user(db, "u").await;
+    let category_id = create_test_category(db, user_id, "Tech").await;
+    for i in 0..20 {
+        create_test_feed(db, category_id, &format!("https://example.com/{i}.xml")).await;
+    }
+    crate::db_execute!(
+        db,
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000) \
+         INSERT INTO entry(feed_id, guid, published_at, read_at, created_at) \
+         SELECT (SELECT MIN(id) FROM feed) + (i % 20), 'g' || i, \
+                strftime('%Y-%m-%dT%H:%M:%SZ', 1700000000 + i * 300, 'unixepoch'), \
+                CASE WHEN (i * 7919) % 100 < 85 THEN '2024-01-01 00:00:00' END, \
+                strftime('%Y-%m-%d %H:%M:%S', 1700000000 + i * 300, 'unixepoch') \
+         FROM n"
+    )
+    .unwrap();
+    crate::db_execute!(db, "ANALYZE").unwrap();
+}
+
+/// Plan of one position count over one of `filter`'s slices.
+async fn position_count_plan(db: &Db, filter: &EntryFilter, slice: usize) -> String {
+    let counter = PositionCounter {
+        user_id: 1,
+        entry_id: 1,
+        dialect: Dialect::Sqlite,
+        slices: count_slices(filter),
+    };
+    let range = " AND COALESCE(e.published_at, e.created_at) > \
+                  (SELECT COALESCE(s.published_at, s.created_at) FROM entry s WHERE s.id = $2)";
+    let index = " INDEXED BY idx_entry_unread_feed_sort";
+    let (sql, binds) = counter.slice_sql(range, &counter.slices[slice], index);
+    explain_plan_for(db, &sql, binds.len()).await
+}
+
+/// Every pinned index must be usable for its query: SQLite rejects an
+/// `INDEXED BY` it cannot use at prepare time, which no plan check would show.
+#[tokio::test]
+async fn find_position_runs_with_pinned_unread_indexes() {
+    let db = setup_db().await;
+    seed_mostly_read_entries(&db).await;
+    let user_id = crate::query_scalar!(&db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let entry_id =
+        crate::query_scalar!(&db, i64, "SELECT MIN(id) FROM entry WHERE read_at IS NULL").unwrap();
+    let strict = EntryFilter {
+        unread_only: true,
+        ..Default::default()
+    };
+    // After the seeded `read_at`, so no read entry counts as read since.
+    let snapshot = EntryFilter {
+        read_after: Some("2024-06-01 00:00:00".to_string()),
+        ..strict.clone()
+    };
+    for filter in [&strict, &snapshot] {
+        let position = find_position(&db, user_id, entry_id, filter).await.unwrap();
+        assert_eq!(position.total, 450, "{filter:?}");
+        assert_eq!(position.position, 450, "{filter:?}");
+    }
+}
+
+/// The newer-than count pins `idx_entry_unread_feed_sort`, so it needs the
+/// migration: without it `feed_id` is read off the table row for every entry
+/// counted (1035 page misses against 27 on 20k entries). The plan only shows
+/// the pin took effect; the page misses come from `cargo bench --bench entry_pages`.
+#[tokio::test]
+async fn position_unread_count_is_index_covered() {
+    let db = setup_db().await;
+    seed_mostly_read_entries(&db).await;
+    let filter = EntryFilter {
+        unread_only: true,
+        ..Default::default()
+    };
+    let plan = position_count_plan(&db, &filter, 0).await;
+    assert!(
+        plan.contains("idx_entry_unread_feed_sort"),
+        "unread position count must use idx_entry_unread_feed_sort: {plan}"
+    );
+}
+
+/// The snapshot predicate as one `OR` is O(table) (about 12k page misses on
+/// 20k entries), so each half is counted on its own index.
+#[tokio::test]
+async fn position_unread_snapshot_count_is_split_into_indexed_halves() {
+    let db = setup_db().await;
+    seed_mostly_read_entries(&db).await;
+    let filter = EntryFilter {
+        unread_only: true,
+        read_after: Some("2024-01-01 00:00:00".to_string()),
+        ..Default::default()
+    };
+    let unread = position_count_plan(&db, &filter, 0).await;
+    assert!(
+        unread.contains("idx_entry_unread_feed_sort"),
+        "unread half must use idx_entry_unread_feed_sort: {unread}"
+    );
+    let read_since = position_count_plan(&db, &filter, 1).await;
+    assert!(
+        read_since.contains("idx_entry_read_at"),
+        "read-since half must use idx_entry_read_at: {read_since}"
+    );
+}
+
+/// PostgreSQL's `CROSS JOIN` takes no `ON`, and `INDEXED BY` does not exist
+/// there; no test here runs on PostgreSQL, so check the generated text.
+#[test]
+fn position_count_sql_is_valid_postgres() {
+    let filter = EntryFilter {
+        unread_only: true,
+        read_after: Some("2024-01-01 00:00:00".to_string()),
+        ..Default::default()
+    };
+    let counter = PositionCounter {
+        user_id: 1,
+        entry_id: 1,
+        dialect: Dialect::Postgres,
+        slices: count_slices(&filter),
+    };
+    for slice in &counter.slices {
+        let (sql, _) = counter.slice_sql(" AND e.id > $2", slice, " INDEXED BY idx_x");
+        assert!(!sql.contains("CROSS JOIN"), "{sql}");
+        assert!(!sql.contains("INDEXED BY"), "{sql}");
+    }
+}
+
 /// Default-order [`EntryListQuery`] for the list tests.
 fn page(user_id: i64, filter: &EntryFilter, limit: i64, offset: i64) -> EntryListQuery<'_> {
     EntryListQuery {
