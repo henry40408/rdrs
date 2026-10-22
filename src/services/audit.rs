@@ -360,8 +360,9 @@ pub fn invite_revoked(user_id: i64, actor_user_id: i64) {
     );
 }
 
-/// An admin created an account, unusable until its [`invite_issued`] link is
-/// redeemed.
+/// An account was created: by an admin (unusable until its [`invite_issued`]
+/// link is redeemed), by `/setup`, or by the forward-auth proxy login (both
+/// have `actor_user_id == user_id`).
 pub fn account_created(user_id: i64, actor_user_id: i64, username_len: usize, role: &str) {
     tracing::info!(
         target: AUDIT_TARGET,
@@ -370,7 +371,7 @@ pub fn account_created(user_id: i64, actor_user_id: i64, username_len: usize, ro
         actor_user_id,
         username_len,
         role,
-        "account created by admin"
+        "account created"
     );
 }
 
