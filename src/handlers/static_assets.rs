@@ -23,6 +23,10 @@ const FILES: &[(&str, &str)] = &[
         "js/keyboard.js",
         include_str!("../../static/js/keyboard.js"),
     ),
+    (
+        "js/live-updates.js",
+        include_str!("../../static/js/live-updates.js"),
+    ),
     ("js/summary.js", include_str!("../../static/js/summary.js")),
     ("js/csrf.js", include_str!("../../static/js/csrf.js")),
     ("js/login.js", include_str!("../../static/js/login.js")),
