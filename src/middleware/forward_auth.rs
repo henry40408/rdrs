@@ -147,7 +147,15 @@ pub async fn forward_auth(
             if !allow_creation {
                 return Ok(None);
             }
-            create_proxy_user(&state.db, &username, desired_role).await?
+            let created = create_proxy_user(&state.db, &username, desired_role).await?;
+            // Self-provisioned by the proxy login, hence actor == subject (as in /setup).
+            audit::account_created(
+                created.id,
+                created.id,
+                created.username.chars().count(),
+                created.role.as_str(),
+            );
+            created
         };
         let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
         audit::session_created(&audit::CredentialCreated {
