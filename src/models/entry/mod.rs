@@ -667,17 +667,26 @@ pub async fn count_unread_by_user(db: &Db, user_id: i64) -> AppResult<i64> {
     .map_err(AppError::Database)
 }
 
+/// Unread count of feed `f` as a scalar subquery. The `read_at IS NULL` test
+/// sits in a `WHERE`, not a `LEFT JOIN ... ON`: in an `ON` clause `SQLite` does
+/// not treat the partial index as covering it and reads the table row of every
+/// unread entry (about 10k page misses on 20k entries), where this reads only
+/// the index.
+fn unread_count_subquery(db: &Db) -> String {
+    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    format!("(SELECT COUNT(*) FROM entry e{hint} WHERE e.feed_id = f.id AND e.read_at IS NULL)")
+}
+
 /// Returns a map of `feed_id` -> unread count for a user
 pub async fn count_unread_by_feed(
     db: &Db,
     user_id: i64,
 ) -> AppResult<std::collections::HashMap<i64, i64>> {
-    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let unread = unread_count_subquery(db);
     let sql = format!(
-        "SELECT f.id, COUNT(e.id) FROM feed f \
+        "SELECT f.id, {unread} FROM feed f \
          INNER JOIN category c ON f.category_id = c.id \
-         LEFT JOIN entry e{hint} ON e.feed_id = f.id AND e.read_at IS NULL \
-         WHERE c.user_id = $1 GROUP BY f.id"
+         WHERE c.user_id = $1"
     );
     let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id)])
         .await
@@ -693,12 +702,11 @@ pub async fn count_unread_by_feed_in_category(
     user_id: i64,
     category_id: i64,
 ) -> AppResult<std::collections::HashMap<i64, i64>> {
-    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let unread = unread_count_subquery(db);
     let sql = format!(
-        "SELECT f.id, COUNT(e.id) FROM feed f \
+        "SELECT f.id, {unread} FROM feed f \
          INNER JOIN category c ON f.category_id = c.id \
-         LEFT JOIN entry e{hint} ON e.feed_id = f.id AND e.read_at IS NULL \
-         WHERE c.user_id = $1 AND f.category_id = $2 GROUP BY f.id"
+         WHERE c.user_id = $1 AND f.category_id = $2"
     );
     let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id), Bind::Int(category_id)])
         .await
@@ -711,11 +719,11 @@ pub async fn count_unread_by_category(
     db: &Db,
     user_id: i64,
 ) -> AppResult<std::collections::HashMap<i64, i64>> {
-    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let unread = unread_count_subquery(db);
+    // `SUM` is `numeric` on PostgreSQL, so cast back to what the row decodes as.
     let sql = format!(
-        "SELECT c.id, COUNT(e.id) FROM category c \
+        "SELECT c.id, CAST(COALESCE(SUM({unread}), 0) AS BIGINT) FROM category c \
          LEFT JOIN feed f ON f.category_id = c.id \
-         LEFT JOIN entry e{hint} ON e.feed_id = f.id AND e.read_at IS NULL \
          WHERE c.user_id = $1 GROUP BY c.id"
     );
     let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id)])
