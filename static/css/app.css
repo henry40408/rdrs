@@ -3844,9 +3844,6 @@ summary {
 .search-form-row button[type="submit"] {
     padding-inline: var(--space-5);
 }
-.search-form-row .filter-chip-btn {
-    align-self: center;
-}
 .search-syntax-popover {
     max-width: min(40rem, calc(100vw - 2rem));
     padding: var(--space-4);
