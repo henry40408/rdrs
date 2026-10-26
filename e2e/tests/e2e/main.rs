@@ -3,6 +3,7 @@
 //! Viewport tags (`@mobile`, `@tablet`, `@desktop`) are documentation only:
 //! scenarios set their viewport through a `Given` step.
 
+mod shard;
 mod steps;
 
 use cucumber::World as _;
@@ -31,6 +32,8 @@ fn max_concurrent_scenarios() -> usize {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // First, so a malformed `RDRS_E2E_SHARD` fails before any server starts.
+    let shard = shard::Shard::from_env()?;
     // One server per concurrent scenario so none is shared (see `world::Pool`).
     let concurrency = max_concurrent_scenarios();
     let mut servers = Vec::with_capacity(concurrency);
@@ -59,10 +62,15 @@ async fn main() -> anyhow::Result<()> {
                 }
             })
         })
-        .run(std::env::var(FEATURES_VAR).unwrap_or_else(|_| FEATURES.to_owned()))
+        .filter_run(
+            std::env::var(FEATURES_VAR).unwrap_or_else(|_| FEATURES.to_owned()),
+            move |feature, _rule, scenario| {
+                shard.is_none_or(|shard| shard.includes(feature, scenario))
+            },
+        )
         .await;
 
     let failures = writer.failed_steps() + writer.parsing_errors() + writer.hook_errors();
     anyhow::ensure!(failures == 0, "{failures} cucumber failure(s)");
-    Ok(())
+    shard::ensure_selected(shard)
 }

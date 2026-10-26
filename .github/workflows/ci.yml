@@ -165,13 +165,15 @@ jobs:
           TEST_DATABASE_URL: postgres://rdrs:rdrs@localhost:5432/rdrs
         run: cargo nextest run --test postgres_test
 
-  # The browser suite: cucumber + thirtyfour, driving a real Chrome. One job
-  # rather than the three shards Playwright ran in — the whole suite finishes
-  # in a few minutes now that it starts one server per concurrent scenario and
-  # skips a Node install entirely, and sharding cost three Rust builds to save
-  # less than it spent.
-  e2e:
-    name: e2e
+  # The browser suite: cucumber + thirtyfour, driving a real Chrome. Split in
+  # two so sharding does not pay for the Rust build once per shard (what made the
+  # old Playwright shards a net loss): `e2e-build` compiles everything once and
+  # hands the binaries to the shards, which only run them. The harness reuses
+  # `target/debug/rdrs` when it exists, and `CARGO_MANIFEST_DIR` is baked into
+  # the test binaries, so the shards must check out to the same path as this job
+  # (they do: same repo, same runner image).
+  e2e-build:
+    name: e2e-build
     runs-on: ubuntu-latest
 
     steps:
@@ -195,6 +197,55 @@ jobs:
       - name: Build binary
         run: cargo build
 
+      # The retry helpers in `src/wait.rs` carry unit tests that need no
+      # browser; they run here because the shards only execute the cucumber
+      # binary.
+      - name: Run E2E unit tests
+        working-directory: e2e
+        run: cargo test --lib
+
+      # `--message-format=json` names the test binary; its path ends in a hash.
+      # Packed with tar because upload-artifact drops the executable bit.
+      - name: Build the e2e binaries
+        run: |
+          binary=$(cd e2e && cargo test --test e2e --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "e2e") | .executable')
+          test -x "$binary"
+          cp "$binary" e2e/e2e-test
+          (cd e2e && cargo build --bin csp-audit --bin nojs)
+          cp e2e/target/debug/csp-audit e2e/target/debug/nojs e2e/
+          tar -cf e2e-bundle.tar target/debug/rdrs e2e/e2e-test e2e/csp-audit e2e/nojs
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-bundle
+          path: e2e-bundle.tar
+          retention-days: 7
+          if-no-files-found: error
+
+  # Scenarios are split by hash (see `e2e/tests/e2e/shard.rs`), and each shard
+  # still runs its share concurrently, sized to the cores. A shard that selects
+  # no scenarios fails, so a bad split cannot pass by skipping tests.
+  e2e:
+    name: e2e (${{ matrix.shard }})
+    needs: e2e-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/3", "2/3", "3/3"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-bundle
+
+      - name: Unpack the binaries
+        run: tar -xf e2e-bundle.tar
+
       # `WebDriver::managed` downloads a chromedriver matching the browser on
       # the runner. `ubuntu-latest` already ships Chrome, so only the driver is
       # fetched — this is the replacement for the old ~/.cache/ms-playwright.
@@ -206,16 +257,15 @@ jobs:
           key: ${{ runner.os }}-chromedriver-${{ hashFiles('e2e/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-chromedriver-
 
-      # `--lib` alongside the cucumber suite: the retry helpers in `src/wait.rs`
-      # carry unit tests that need no browser, and selecting only `--test e2e`
-      # would compile them and never run them.
       - name: Run E2E tests
         working-directory: e2e
-        run: cargo test --lib --test e2e
+        env:
+          RDRS_E2E_SHARD: ${{ matrix.shard }}
+        run: ./e2e-test
 
-      # Browser-level CSP check. It lives here rather than in its own job so it
-      # inherits the Rust build this job has already paid for; a standalone job
-      # would repeat it to run a single ~10s audit.
+      # Browser-level CSP check. It runs in the first shard, which already has
+      # the binaries and the driver, so it needs no job of its own for a ~10s
+      # audit.
       #
       # This complements, not duplicates, the static scan in
       # `src/middleware/security_headers.rs`: that one greps the sources for
@@ -224,10 +274,11 @@ jobs:
       # webfonts, cross-origin @import). It carries its own positive control,
       # so a pass means the collector was demonstrably live.
       - name: CSP audit
+        if: matrix.shard == '1/3'
         working-directory: e2e
-        run: cargo run --bin csp-audit
+        run: ./csp-audit
 
-      # Rides on this job for the same reason as the CSP audit above.
+      # Rides on the first shard for the same reason as the CSP audit above.
       #
       # The Rust suite (`tests/no_js_test.rs`) covers the scriptless paths from
       # the server's side; this is the only check that runs a browser with
@@ -236,8 +287,9 @@ jobs:
       # unreachable without JavaScript (#489), a `fetch` DELETE no form could
       # ever send, which every server-side test had happily passed around.
       - name: No-JavaScript walkthrough
+        if: matrix.shard == '1/3'
         working-directory: e2e
-        run: cargo run --bin nojs
+        run: ./nojs
 
   coverage:
     name: coverage
