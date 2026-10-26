@@ -41,6 +41,10 @@ it — run fmt and clippy inside `e2e/` too (CI does, in the `lint-e2e` job). It
 
 - Run all: `cargo test --lib --test e2e` (`--lib` runs the wait-helper unit
   tests). One feature: `RDRS_E2E_FEATURES=features/reading.feature cargo test --test e2e`.
+  CI splits the suite into three jobs with `RDRS_E2E_SHARD=<n>/3` (scenarios are assigned
+  by hash; unset runs everything), so a shard can be reproduced locally. Do not combine it
+  with `--name`, `--tags` or `CUCUMBER_FILTER_TAGS`: cucumber then ignores the shard filter and the run fails with
+  "selected no scenarios".
 - Format / lint (CI gates): `cargo fmt --all -- --check`,
   `cargo clippy --all-targets -- -D warnings`.
 - README screenshots: `cargo run --bin screenshots` (writes `../screenshots/`).
