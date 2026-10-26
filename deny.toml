@@ -13,13 +13,6 @@ version = 2
 # records why it is safe here and what would let us drop it.
 yanked = "deny"
 ignore = [
-    # ammonia 4.2.1: CSS `url("")` is matched case-sensitively, so `URL("")`
-    # skips URL filtering, but only when the caller allows `style` and uses
-    # `filter_style_properties`; neither is used in src/services/sanitize.rs.
-    # Fix 4.2.4 was published 2026-10-17 03:45 UTC and is inside the 168h
-    # cooldown until 2026-10-24 03:45 UTC. Drop once ammonia is upgraded.
-    # Tracked in https://github.com/henry40408/rdrs/issues/610
-    "RUSTSEC-2026-0373",
     # rustls-webpki 0.103.15 and webpki-root-certs 1.0.9 (transitive via
     # reqwest -> rustls / rustls-platform-verifier) trust distrusted emSign
     # intermediates whose private keys are now public. Only outbound TLS
