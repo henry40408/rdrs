@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/*]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -21,6 +21,7 @@ jobs:
   # (fmt, deny) don't validate compilation anyway, so they make poor fail-fast
   # gates for a Rust project. Full parallelism is simplest and fastest.
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -54,6 +55,7 @@ jobs:
   # servers. (Windows was dropped earlier: 5-9 min per PR for no deployment
   # value.)
   build:
+    name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -72,6 +74,7 @@ jobs:
         run: cargo build --verbose
 
   deny:
+    name: deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,11 +84,39 @@ jobs:
       - name: cargo deny check
         run: cargo deny check
 
-  # PostgreSQL backend integration test. The default nextest run (lint/coverage)
+  # Unit and SQLite-backed tests. The Postgres test is excluded here because it
+  # needs a database; the `integration` job runs it.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: nextest
+
+      - name: Run tests
+        env:
+          RDRS_FAST_HASH: "1"
+        run: cargo nextest run -E 'not binary(postgres_test)'
+
+      # nextest does not run doctests.
+      - name: Run doctests
+        run: cargo test --doc
+
+  # PostgreSQL backend integration test. The default nextest run (test/coverage)
   # only exercises the SQLite backend; this job stands up a throwaway Postgres
   # and runs the dual-backend dialect-fork test (`tests/postgres_test.rs`)
   # against it. Gated by TEST_DATABASE_URL — without it the test skips.
-  postgres:
+  integration:
+    name: integration
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -125,7 +156,8 @@ jobs:
   # in a few minutes now that it starts one server per concurrent scenario and
   # skips a Node install entirely, and sharding cost three Rust builds to save
   # less than it spent.
-  e2e-tests:
+  e2e:
+    name: e2e
     runs-on: ubuntu-latest
 
     steps:
@@ -194,6 +226,7 @@ jobs:
         run: cargo run --bin nojs
 
   coverage:
+    name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -230,3 +263,23 @@ jobs:
           slug: henry40408/rdrs
           files: lcov.info
           fail_ci_if_error: ${{ github.actor != 'dependabot[bot]' }}
+
+  lint-workflow:
+    name: lint-workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # install-action has no actionlint manifest, so download the release and
+      # verify its checksum.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check
+          tar -xzf "$archive" actionlint
+      - run: ./actionlint
