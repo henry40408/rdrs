@@ -13,6 +13,12 @@ version = 2
 # records why it is safe here and what would let us drop it.
 yanked = "deny"
 ignore = [
+    # ctutils 0.4.0 (transitive via digest -> argon2/hmac/sha2): `Choice` mask
+    # generation and `u128` comparisons may branch. rdrs never calls
+    # `ctutils::Choice`. Fix 0.4.4 was published 2026-10-23 01:04 UTC and is
+    # inside the 168h cooldown until 2026-10-30 01:04 UTC. Remove when upgraded.
+    # Tracked in https://github.com/henry40408/rdrs/issues/668
+    "RUSTSEC-2026-0385",
     # rustls-webpki 0.103.15 and webpki-root-certs 1.0.9 (transitive via
     # reqwest -> rustls / rustls-platform-verifier) trust distrusted emSign
     # intermediates whose private keys are now public. Only outbound TLS
