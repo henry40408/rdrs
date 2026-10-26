@@ -36,7 +36,7 @@ it in production.
 
 `e2e/` is a **separate cargo workspace** (keeps browser deps out of root
 coverage), so root fmt, clippy, nextest, coverage and `cargo deny` don't reach
-it — run fmt and clippy inside `e2e/` too (CI does, in the `lint` job). Its
+it — run fmt and clippy inside `e2e/` too (CI does, in the `lint-e2e` job). Its
 `[lints]` mirror the root lint set and must stay in sync.
 
 - Run all: `cargo test --lib --test e2e` (`--lib` runs the wait-helper unit
