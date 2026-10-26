@@ -84,6 +84,33 @@ jobs:
       - name: cargo deny check
         run: cargo deny check
 
+  # Unit and SQLite-backed tests. The Postgres test is excluded here because it
+  # needs a database; the `integration` job runs it.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: nextest
+
+      - name: Run tests
+        env:
+          RDRS_FAST_HASH: "1"
+        run: cargo nextest run -E 'not binary(postgres_test)'
+
+      # nextest does not run doctests.
+      - name: Run doctests
+        run: cargo test --doc
+
   # PostgreSQL backend integration test. The default nextest run (lint/coverage)
   # only exercises the SQLite backend; this job stands up a throwaway Postgres
   # and runs the dual-backend dialect-fork test (`tests/postgres_test.rs`)
