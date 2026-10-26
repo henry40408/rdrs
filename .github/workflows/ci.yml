@@ -111,7 +111,7 @@ jobs:
       - name: Run doctests
         run: cargo test --doc
 
-  # PostgreSQL backend integration test. The default nextest run (lint/coverage)
+  # PostgreSQL backend integration test. The default nextest run (test/coverage)
   # only exercises the SQLite backend; this job stands up a throwaway Postgres
   # and runs the dual-backend dialect-fork test (`tests/postgres_test.rs`)
   # against it. Gated by TEST_DATABASE_URL — without it the test skips.

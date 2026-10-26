@@ -838,7 +838,7 @@ Setting `element.style` from script is fine — CSP polices markup, not the CSSO
 fails on any `securitypolicyviolation` (runtime markup, shadow-root `<style>`,
 cross-origin `@import`/fonts, unexpected `img-src`). It ends with a **positive
 control** (a planted `style=` that must be blocked). CI runs it in the
-`e2e-tests` job; locally `cd e2e && cargo run --bin csp-audit`.
+`e2e` job; locally `cd e2e && cargo run --bin csp-audit`.
 
 Deliberate omissions: **no `Cross-Origin-Resource-Policy`** (would block
 absolute `/api/proxy/image` URLs in native GReader webviews); **no
