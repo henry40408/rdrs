@@ -38,10 +38,24 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  lint-e2e:
+    name: lint-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: e2e
+
       # `e2e/` is deliberately its own workspace (so a `--workspace` coverage
       # run never compiles thirtyfour or drives a browser), which also means
-      # `--all` above does not reach it. Lint it explicitly, or the suite is
-      # the one part of the tree nothing checks.
+      # `--all` in the lint job does not reach it. Lint it explicitly, or the
+      # suite is the one part of the tree nothing checks.
       - name: Check E2E formatting
         working-directory: e2e
         run: cargo fmt --all -- --check
@@ -51,8 +65,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   # Cross-platform build / portability check (build-only; fmt + clippy live in
-  # the lint job). macOS is a portability sanity check; RDRS deploys to Linux
-  # servers. (Windows was dropped earlier: 5-9 min per PR for no deployment
+  # the lint and lint-e2e jobs). macOS is a portability sanity check; RDRS
+  # deploys to Linux servers. (Windows was dropped earlier: 5-9 min per PR for no deployment
   # value.)
   build:
     name: build (${{ matrix.os }})
