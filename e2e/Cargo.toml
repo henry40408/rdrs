@@ -57,7 +57,7 @@ tempfile = "3.26.0"
 # back. Deliberately **not** `bidi`: `Emulation.setScriptExecutionDisabled` and
 # `Emulation.setEmulatedMedia` have no BiDi equivalent, so CDP is required
 # regardless and a second protocol stack would buy nothing.
-thirtyfour = { version = "=0.37.8", features = ["cdp-events"] }
+thirtyfour = { version = "=0.38.1", features = ["cdp-events"] }
 tokio = { version = "1.53.1", features = [
   "macros",
   "net",
