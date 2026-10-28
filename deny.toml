@@ -19,17 +19,6 @@ ignore = [
     # inside the 168h cooldown until 2026-10-30 01:04 UTC. Remove when upgraded.
     # Tracked in https://github.com/henry40408/rdrs/issues/668
     "RUSTSEC-2026-0385",
-    # rustls-webpki 0.103.15 and webpki-root-certs 1.0.9 (transitive via
-    # reqwest -> rustls / rustls-platform-verifier) trust distrusted emSign
-    # intermediates whose private keys are now public. Only outbound TLS
-    # (feed, image and favicon fetches) is affected, and exploiting it needs an
-    # on-path attacker. Fix rustls-webpki 0.103.16 was published 2026-10-20
-    # 08:58 UTC, inside the 168h cooldown until 2026-10-27 08:58 UTC; fix
-    # webpki-root-certs 1.0.10 was published 2026-10-19 20:11 UTC. Drop both
-    # once the lockfile is upgraded.
-    # Tracked in https://github.com/henry40408/rdrs/issues/634
-    "RUSTSEC-2026-0382",
-    "RUSTSEC-2026-0383",
     # basic-toml 0.1.10 is unmaintained (repo archived). Reached only through
     # askama_derive, a compile-time proc-macro; it is not linked into the binary.
     # No patched version exists, so there is no cooldown date. Drop once an
