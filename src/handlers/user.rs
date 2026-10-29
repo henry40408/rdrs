@@ -92,18 +92,12 @@ pub async fn read_chrome_data(
     }
 
     // One row read covers theme and sidebar prefs.
-    let settings = user_settings::find_by_user_id(&state.db, user_id)
+    let settings = user_settings::load(&state.db, user_id)
         .await
-        .unwrap_or(None);
-    let theme = settings.as_ref().and_then(|s| s.theme.clone());
-    let sidebar_prefs = settings
-        .as_ref()
-        .map_or_else(user_settings::SidebarPrefs::default, |s| {
-            user_settings::sidebar_prefs_of(s)
-        });
-    let offline_keep = settings
-        .as_ref()
-        .map_or(user_settings::OFFLINE_KEEP_OFF, |s| s.offline_keep);
+        .unwrap_or_else(|_| user_settings::UserSettings::defaults(user_id));
+    let sidebar_prefs = user_settings::sidebar_prefs_of(&settings);
+    let offline_keep = settings.offline_keep;
+    let theme = settings.theme;
     let cats = category::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
