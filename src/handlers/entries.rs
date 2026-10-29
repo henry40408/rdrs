@@ -326,9 +326,7 @@ pub(crate) struct PaneSettings {
 }
 
 pub(crate) async fn load_pane_settings(state: &AppState, user_id: i64) -> AppResult<PaneSettings> {
-    let Some(settings) = user_settings::find_by_user_id(&state.db, user_id).await? else {
-        return Ok(PaneSettings::default());
-    };
+    let settings = user_settings::load(&state.db, user_id).await?;
     // An unreadable credential shows as absent; settings explains why.
     let cfg = settings
         .get_save_services_config(state.config.service_token_key())

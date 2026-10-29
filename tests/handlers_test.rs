@@ -2510,6 +2510,35 @@ async fn test_settings_forms_redirect_back_to_the_page() {
 }
 
 #[tokio::test]
+async fn test_update_preferences_form_stores_only_light_or_dark_theme() {
+    let server = authed_server().await;
+
+    for (submitted, stored) in [
+        ("light", Some("light")),
+        ("dark", Some("dark")),
+        ("system", None),
+        ("neon", None),
+    ] {
+        server
+            .post("/user-settings/preferences")
+            .form(&json!({
+                "theme": submitted,
+                "entries_per_page": 50,
+                "retention_read_days": 0,
+            }))
+            .await
+            .assert_status(StatusCode::SEE_OTHER);
+
+        // The layout renders the stored theme as a `data-theme` override.
+        let page = common::get_ok(&server, "/user-settings").await;
+        let rendered = ["light", "dark"]
+            .into_iter()
+            .find(|theme| page.contains(&format!(" data-theme=\"{theme}\"")));
+        assert_eq!(rendered, stored, "{submitted}");
+    }
+}
+
+#[tokio::test]
 async fn test_update_preferences_form_sets_sidebar_prefs() {
     let server = authed_server().await;
 
