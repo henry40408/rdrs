@@ -827,13 +827,6 @@ async fn test_entry_list_pages_render_ssr_layout() {
     }
 }
 
-// --- Entry Page with Save Services Tests ---
-
-// `has-save-services` and `has-kagi-configured` attributes are no longer
-// embedded server-side — `<rdrs-entries-page>` fetches `/api/user-settings`
-// after mount and sets them on `<rdrs-entry-list>` client-side. Coverage
-// for that wiring lives in the e2e suite.
-
 // --- Regular User Permissions Tests ---
 
 #[tokio::test]
@@ -851,57 +844,6 @@ async fn test_regular_user_unread_page_no_admin_link() {
 // Non-admin coverage lives in the /admin SSR page test above; the
 // /admin/users/{id}/* form actions reuse the same AdminUser extractor, so any
 // non-admin caller gets the same flow.
-
-// --- User Settings Page with Existing Config ---
-
-#[tokio::test]
-async fn test_api_user_settings_returns_linkding_configured() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-
-    let config = serde_json::json!({
-        "linkding": {
-            "api_url": "https://linkding.example.com",
-            "api_token": "secret"
-        }
-    });
-    rdrs::db_execute!(
-        &app.db,
-        "INSERT INTO user_settings (user_id, save_services) VALUES ($1, $2)",
-        1_i64,
-        config.to_string()
-    )
-    .unwrap();
-
-    login(&mut app.server, "admin").await;
-
-    let response = app.server.get("/api/user-settings").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["linkding_configured"], true);
-    assert_eq!(body["linkding_api_url"], "https://linkding.example.com");
-}
-
-#[tokio::test]
-async fn test_api_user_settings_returns_custom_entries_per_page() {
-    let mut app = create_test_app(default_test_config()).await;
-    setup_users(&app.db).await;
-
-    rdrs::db_execute!(
-        &app.db,
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2)",
-        1_i64,
-        100_i64
-    )
-    .unwrap();
-
-    login(&mut app.server, "admin").await;
-
-    let response = app.server.get("/api/user-settings").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["entries_per_page"], 100);
-}
 
 // --- Archive Entry Pages Tests ---
 

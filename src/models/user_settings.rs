@@ -268,10 +268,6 @@ pub async fn update_save_services(
     reload(db, user_id).await
 }
 
-pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
-    Ok(load(db, user_id).await?.theme)
-}
-
 pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppResult<()> {
     ensure_row(db, user_id).await?;
 
@@ -650,7 +646,7 @@ mod tests {
         let user = seed_user(&db, "testuser", Role::User).await;
 
         // No settings exist yet, should return None
-        let theme = get_theme(&db, user.id).await.unwrap();
+        let theme = load(&db, user.id).await.unwrap().theme;
         assert_eq!(theme, None);
     }
 
@@ -662,17 +658,17 @@ mod tests {
         update_theme(&db, user.id, Some("dark".to_string()))
             .await
             .unwrap();
-        let theme = get_theme(&db, user.id).await.unwrap();
+        let theme = load(&db, user.id).await.unwrap().theme;
         assert_eq!(theme, Some("dark".to_string()));
 
         update_theme(&db, user.id, Some("light".to_string()))
             .await
             .unwrap();
-        let theme = get_theme(&db, user.id).await.unwrap();
+        let theme = load(&db, user.id).await.unwrap().theme;
         assert_eq!(theme, Some("light".to_string()));
 
         update_theme(&db, user.id, None).await.unwrap();
-        let theme = get_theme(&db, user.id).await.unwrap();
+        let theme = load(&db, user.id).await.unwrap().theme;
         assert_eq!(theme, None);
     }
 
@@ -686,7 +682,7 @@ mod tests {
         update_theme(&db, user.id, Some("dark".to_string()))
             .await
             .unwrap();
-        let theme = get_theme(&db, user.id).await.unwrap();
+        let theme = load(&db, user.id).await.unwrap().theme;
         assert_eq!(theme, Some("dark".to_string()));
 
         let settings = find_by_user_id(&db, user.id).await.unwrap().unwrap();

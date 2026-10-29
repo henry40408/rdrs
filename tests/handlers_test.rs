@@ -164,7 +164,6 @@ async fn test_api_mutations_require_authentication() {
             "/reader/api/0/stream/contents/user/-/state/com.google/reading-list",
         ),
         (Method::POST, "/reader/api/0/subscription/import"),
-        (Method::PUT, "/api/user/settings/theme"),
         (Method::POST, "/api/session/reauth"),
         (Method::POST, "/api/passkey/register/start"),
         (Method::PUT, "/api/passkeys/1"),
@@ -186,7 +185,6 @@ async fn test_api_requires_authentication() {
         "/reader/api/0/tag/list",
         "/reader/api/0/subscription/list",
         "/reader/api/0/subscription/export",
-        "/api/user/settings/theme",
         "/api/feeds/1/icon",
         "/api/passkeys",
     ] {
@@ -833,78 +831,15 @@ async fn test_entries_filter_by_valid_category() {
     response.assert_status_ok();
 }
 
-// --- User Settings Handler Tests ---
-//
-// The JSON PUT/GET endpoints were replaced by SSR form actions (POST
-// /user-settings/{password,preferences,linkding,kagi}); coverage for those
-// lives in the test_*_form* tests below.
-
 #[tokio::test]
-async fn test_get_theme_default() {
+async fn test_empty_passkey_name_is_a_bad_request() {
     let server = authed_server().await;
-
-    let response = server.get("/api/user/settings/theme").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["theme"], serde_json::Value::Null);
-}
-
-#[tokio::test]
-async fn test_update_theme() {
-    let server = authed_server().await;
-
-    for theme in ["dark", "light"] {
-        server
-            .put("/api/user/settings/theme")
-            .json(&json!({ "theme": theme }))
-            .await
-            .assert_status_ok();
-
-        let response = server.get("/api/user/settings/theme").await;
-        response.assert_status_ok();
-        let body: serde_json::Value = response.json();
-        assert_eq!(body["theme"], theme);
-    }
-}
-
-#[tokio::test]
-async fn test_update_theme_system() {
-    let server = authed_server().await;
-
-    server
-        .put("/api/user/settings/theme")
-        .json(&json!({ "theme": "dark" }))
-        .await
-        .assert_status_ok();
 
     let response = server
-        .put("/api/user/settings/theme")
-        .json(&json!({ "theme": null }))
+        .put("/api/passkeys/1")
+        .json(&json!({ "name": "" }))
         .await;
-
-    response.assert_status_ok();
-
-    let response = server.get("/api/user/settings/theme").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["theme"], serde_json::Value::Null);
-}
-
-#[tokio::test]
-async fn test_invalid_theme_or_passkey_name_is_a_bad_request() {
-    let server = authed_server().await;
-
-    for (path, body) in [
-        (
-            "/api/user/settings/theme",
-            json!({ "theme": "invalid-theme" }),
-        ),
-        ("/api/passkeys/1", json!({ "name": "" })),
-    ] {
-        let response = server.put(path).json(&body).await;
-        assert_eq!(response.status_code(), StatusCode::BAD_REQUEST, "{path}");
-    }
+    assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
 }
 
 // --- Page Handler Tests ---
@@ -2682,7 +2617,7 @@ async fn test_revoke_other_sessions_form_keeps_current_deletes_others() {
     assert!(found.is_none(), "other session should be deleted");
 
     // The current (cookie) session still authenticates.
-    app.server.get("/api/me").await.assert_status_ok();
+    app.server.get("/api/user").await.assert_status_ok();
 }
 
 #[tokio::test]
@@ -2785,7 +2720,7 @@ async fn test_revoke_session_form_deletes_only_the_named_session() {
         "revoking one session must not touch the user's other sessions"
     );
     // The caller's own session still authenticates.
-    app.server.get("/api/me").await.assert_status_ok();
+    app.server.get("/api/user").await.assert_status_ok();
 }
 
 #[tokio::test]
@@ -2822,7 +2757,7 @@ async fn test_revoke_session_form_refuses_the_current_session() {
             .is_some(),
         "the caller's own session must survive"
     );
-    app.server.get("/api/me").await.assert_status_ok();
+    app.server.get("/api/user").await.assert_status_ok();
 }
 
 #[tokio::test]

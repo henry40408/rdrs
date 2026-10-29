@@ -1,5 +1,5 @@
 //! Integration tests for the SSR `/statistics` page and the
-//! shared `/api/me` + `/api/sidebar` endpoints used by the chrome.
+//! shared `/api/sidebar` endpoint used by the chrome.
 
 mod common;
 use common::{app_signed_in_as, create_test_app, default_test_config, login, setup_users};
@@ -308,38 +308,6 @@ async fn test_statistics_page_direct_labels_single_max_day() {
     );
     // The direct label shows the peak count (3 entries read that day).
     assert!(body.contains("<span class=\"stats-bar-value\">3</span>"));
-}
-
-// ----- /api/me + /api/sidebar -----
-
-#[tokio::test]
-async fn test_api_me_returns_role_and_flags() {
-    let (app, _) = app_signed_in_as("admin").await;
-
-    let response = app.server.get("/api/me").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["username"], "admin");
-    assert_eq!(body["role"], "admin");
-    assert_eq!(body["is_admin"], true);
-    assert_eq!(body["is_masquerading"], false);
-}
-
-#[tokio::test]
-async fn test_api_me_masquerade_flag_set() {
-    let (app, (_admin_id, user_id)) = app_signed_in_as("admin").await;
-    app.server
-        .post(&format!("/admin/users/{user_id}/masquerade"))
-        .await
-        .assert_status(axum::http::StatusCode::SEE_OTHER);
-
-    let response = app.server.get("/api/me").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["username"], "user");
-    assert_eq!(body["is_masquerading"], true);
-    // Original user is admin → is_admin remains true under masquerade.
-    assert_eq!(body["is_admin"], true);
 }
 
 #[tokio::test]
