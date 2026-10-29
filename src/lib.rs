@@ -107,18 +107,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/session", delete(handlers::auth::logout))
         .route("/api/session/reauth", post(handlers::auth::reauthenticate))
         .route("/api/user", get(handlers::user::get_current_user))
-        .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
         .route("/api/offline/manifest", get(handlers::offline::manifest))
         .route(
             "/api/sidebar/categories/{id}/feeds",
             get(handlers::user::get_sidebar_category_feeds),
-        )
-        .route("/api/user-settings", get(handlers::user::get_user_settings))
-        .route("/api/user/settings/theme", get(handlers::user::get_theme))
-        .route(
-            "/api/user/settings/theme",
-            put(handlers::user::update_theme),
         )
         .route(
             "/user-settings/password",

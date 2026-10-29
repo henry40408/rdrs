@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use axum::{
     Form, Json,
     extract::{ConnectInfo, Extension, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -20,101 +20,6 @@ use crate::models::user;
 use crate::models::user_settings;
 use crate::models::{category, entry};
 use crate::services::{KagiConfig, LinkdingConfig, audit};
-use crate::utils::datetime::format_display;
-
-#[derive(Debug, Serialize)]
-pub struct MeResponse {
-    pub id: i64,
-    pub username: String,
-    pub role: crate::models::Role,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    /// The real admin's id while masquerading.
-    pub original_user_id: Option<i64>,
-    pub created_at: String,
-    pub session_created_at: String,
-}
-
-/// The current user plus session-derived `is_admin` / `is_masquerading`.
-pub async fn get_me(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-) -> AppResult<Json<MeResponse>> {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        match auth_user.session.original_user_id {
-            Some(original_id) => {
-                let original = user::find_by_id(&state.db, original_id).await?;
-                original.is_some_and(|u| u.is_admin())
-            }
-            None => false,
-        }
-    } else {
-        auth_user.user.is_admin()
-    };
-
-    Ok(Json(MeResponse {
-        id: auth_user.user.id,
-        username: auth_user.user.username,
-        role: auth_user.user.role,
-        is_admin,
-        is_masquerading,
-        original_user_id: auth_user.session.original_user_id,
-        created_at: format_display(auth_user.user.created_at),
-        session_created_at: format_display(auth_user.session.created_at),
-    }))
-}
-
-#[derive(Debug, Serialize)]
-pub struct UserSettingsResponse {
-    pub entries_per_page: i64,
-    pub theme: Option<String>,
-    pub linkding_configured: bool,
-    pub linkding_api_url: String,
-    pub kagi_configured: bool,
-    pub kagi_language: String,
-    /// Stored credentials exist but this `RDRS_SECRET` cannot decrypt them.
-    pub credentials_unreadable: bool,
-}
-
-/// Read-only settings payload for the user-settings page.
-pub async fn get_user_settings(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-) -> AppResult<Json<UserSettingsResponse>> {
-    let user_id = auth_user.user.id;
-
-    let settings = user_settings::load(&state.db, user_id)
-        .await
-        .unwrap_or_else(|_| user_settings::UserSettings::defaults(user_id));
-    let entries_per_page = settings.entries_per_page;
-    let theme = settings.theme.clone();
-    let stored = settings.get_save_services_config(state.config.service_token_key());
-    let credentials_unreadable = stored.is_undecryptable();
-    let save_config = stored.or_default();
-
-    let linkding = save_config.linkding.as_ref();
-    let linkding_configured =
-        linkding.is_some_and(super::super::services::save::linkding::LinkdingConfig::is_configured);
-    let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
-
-    let kagi = save_config.kagi.as_ref();
-    let kagi_configured =
-        kagi.is_some_and(super::super::services::summarize::kagi::KagiConfig::is_configured);
-    let kagi_language = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
-
-    let response = UserSettingsResponse {
-        entries_per_page,
-        theme,
-        linkding_configured,
-        linkding_api_url,
-        kagi_configured,
-        kagi_language,
-        credentials_unreadable,
-    };
-
-    Ok(Json(response))
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SidebarCategoryDto {
@@ -370,49 +275,6 @@ fn extract_kagi_session_token(session_link: &str) -> Result<String, AppError> {
         .map(|(_, value)| value.to_string())
         .filter(|t| !t.is_empty())
         .ok_or_else(|| AppError::Validation("No token found in session link".to_string()))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateThemeRequest {
-    pub theme: Option<String>, // "dark", "light", or null/missing for system
-}
-
-#[derive(Debug, Serialize)]
-pub struct GetThemeResponse {
-    pub theme: Option<String>,
-}
-
-pub async fn get_theme(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-) -> AppResult<Json<GetThemeResponse>> {
-    let user_id = auth_user.user.id;
-
-    let theme = user_settings::get_theme(&state.db, user_id).await?;
-
-    Ok(Json(GetThemeResponse { theme }))
-}
-
-pub async fn update_theme(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-    Json(req): Json<UpdateThemeRequest>,
-) -> AppResult<StatusCode> {
-    let user_id = auth_user.user.id;
-
-    if let Some(ref theme) = req.theme
-        && theme != "dark"
-        && theme != "light"
-    {
-        return Err(AppError::Validation(
-            "Theme must be 'dark', 'light', or null".to_string(),
-        ));
-    }
-
-    user_settings::update_theme(&state.db, user_id, req.theme).await?;
-
-    state.sidebar_cache.bust(user_id);
-    Ok(StatusCode::OK)
 }
 
 // Form-action handlers for the SSR /user-settings page; each returns a FlashRedirect.
