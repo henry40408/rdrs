@@ -84,21 +84,12 @@ pub async fn get_user_settings(
 ) -> AppResult<Json<UserSettingsResponse>> {
     let user_id = auth_user.user.id;
 
-    let entries_per_page = user_settings::get_entries_per_page(&state.db, user_id)
+    let settings = user_settings::load(&state.db, user_id)
         .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-    let theme = user_settings::get_theme(&state.db, user_id)
-        .await
-        .unwrap_or(None);
-    let stored = user_settings::get_save_services_config(
-        &state.db,
-        user_id,
-        state.config.service_token_key(),
-    )
-    .await
-    .unwrap_or_else(|_| {
-        user_settings::StoredServices::Config(crate::services::save::SaveServicesConfig::default())
-    });
+        .unwrap_or_else(|_| user_settings::UserSettings::defaults(user_id));
+    let entries_per_page = settings.entries_per_page;
+    let theme = settings.theme.clone();
+    let stored = settings.get_save_services_config(state.config.service_token_key());
     let credentials_unreadable = stored.is_undecryptable();
     let save_config = stored.or_default();
 

@@ -121,6 +121,25 @@ impl StoredServices {
 }
 
 impl UserSettings {
+    /// What a user without a settings row sees.
+    pub fn defaults(user_id: i64) -> Self {
+        let now = Utc::now();
+        Self {
+            id: 0,
+            user_id,
+            entries_per_page: DEFAULT_ENTRIES_PER_PAGE,
+            retention_read_days: 0,
+            save_services: None,
+            theme: None,
+            sidebar_sort: DEFAULT_SIDEBAR_SORT.to_string(),
+            sidebar_hide_read: false,
+            offline_keep: OFFLINE_KEEP_OFF,
+            pixel_tracking_enabled_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     /// Read `save_services`, accepting legacy plaintext JSON until the next
     /// write seals it. `key` is `None` when `RDRS_SECRET` was generated — see
     /// [`crate::config::Config::service_token_key`].
@@ -152,11 +171,25 @@ pub async fn find_by_user_id(db: &Db, user_id: i64) -> AppResult<Option<UserSett
     .map_err(AppError::Database)
 }
 
+/// The user's settings, or the defaults when no row exists yet. Use it when
+/// reading more than one field, so the row is queried once.
+pub async fn load(db: &Db, user_id: i64) -> AppResult<UserSettings> {
+    Ok(find_by_user_id(db, user_id)
+        .await?
+        .unwrap_or_else(|| UserSettings::defaults(user_id)))
+}
+
+/// The row just written; absent means the write silently failed.
+async fn reload(db: &Db, user_id: i64) -> AppResult<UserSettings> {
+    find_by_user_id(db, user_id)
+        .await?
+        .ok_or(AppError::Internal(
+            "Failed to retrieve user settings after write".to_string(),
+        ))
+}
+
 pub async fn get_entries_per_page(db: &Db, user_id: i64) -> AppResult<i64> {
-    match find_by_user_id(db, user_id).await? {
-        Some(settings) => Ok(settings.entries_per_page),
-        None => Ok(DEFAULT_ENTRIES_PER_PAGE),
-    }
+    Ok(load(db, user_id).await?.entries_per_page)
 }
 
 pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<UserSettings> {
@@ -176,11 +209,7 @@ pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<U
     )
     .map_err(AppError::Database)?;
 
-    find_by_user_id(db, user_id)
-        .await?
-        .ok_or(AppError::Internal(
-            "Failed to retrieve user settings after upsert".to_string(),
-        ))
+    reload(db, user_id).await
 }
 
 /// Insert a default settings row if missing, so a following UPDATE has a target.
@@ -236,18 +265,11 @@ pub async fn update_save_services(
     )
     .map_err(AppError::Database)?;
 
-    find_by_user_id(db, user_id)
-        .await?
-        .ok_or(AppError::Internal(
-            "Failed to retrieve user settings after update".to_string(),
-        ))
+    reload(db, user_id).await
 }
 
 pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
-    match find_by_user_id(db, user_id).await? {
-        Some(settings) => Ok(settings.theme),
-        None => Ok(None),
-    }
+    Ok(load(db, user_id).await?.theme)
 }
 
 pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppResult<()> {
@@ -263,14 +285,6 @@ pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppRe
     .map_err(AppError::Database)?;
 
     Ok(())
-}
-
-/// Read-entry retention in days (0 = disabled).
-pub async fn get_retention_read_days(db: &Db, user_id: i64) -> AppResult<i64> {
-    match find_by_user_id(db, user_id).await? {
-        Some(settings) => Ok(settings.retention_read_days),
-        None => Ok(0),
-    }
 }
 
 /// Set read-entry retention in days; rejects values outside `0..=MAX_RETENTION_READ_DAYS`.
@@ -290,14 +304,6 @@ pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> App
     )
     .map_err(AppError::Database)?;
     Ok(())
-}
-
-/// Sidebar preferences; defaults when no settings row exists.
-pub async fn get_sidebar_prefs(db: &Db, user_id: i64) -> AppResult<SidebarPrefs> {
-    Ok(find_by_user_id(db, user_id)
-        .await?
-        .as_ref()
-        .map_or_else(SidebarPrefs::default, sidebar_prefs_of))
 }
 
 /// Sidebar preferences from an already-loaded row, saving a query.
@@ -331,9 +337,7 @@ pub async fn update_sidebar_prefs(
 
 /// Offline entry budget; no row means [`OFFLINE_KEEP_OFF`] (opt-in).
 pub async fn get_offline_keep(db: &Db, user_id: i64) -> AppResult<i64> {
-    Ok(find_by_user_id(db, user_id)
-        .await?
-        .map_or(OFFLINE_KEEP_OFF, |settings| settings.offline_keep))
+    Ok(load(db, user_id).await?.offline_keep)
 }
 
 /// Set the offline budget; out-of-range is rejected, not clamped, since it spends the reader's disk.
@@ -719,7 +723,7 @@ mod tests {
             update_retention_read_days(&db, user.id, v)
                 .await
                 .unwrap_or_else(|e| panic!("suggestion {v} rejected: {e:?}"));
-            assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), v);
+            assert_eq!(load(&db, user.id).await.unwrap().retention_read_days, v);
         }
 
         assert!(
@@ -733,7 +737,7 @@ mod tests {
     async fn test_retention_read_days_default_zero() {
         let db = setup_db().await;
         let user = seed_user(&db, "ret", Role::User).await;
-        assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), 0);
+        assert_eq!(load(&db, user.id).await.unwrap().retention_read_days, 0);
     }
 
     #[tokio::test]
@@ -742,7 +746,7 @@ mod tests {
         let user = seed_user(&db, "ret", Role::User).await;
 
         update_retention_read_days(&db, user.id, 30).await.unwrap();
-        assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), 30);
+        assert_eq!(load(&db, user.id).await.unwrap().retention_read_days, 30);
 
         // Preserves other settings.
         upsert(&db, user.id, 50).await.unwrap();
@@ -768,7 +772,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            get_retention_read_days(&db, user.id).await.unwrap(),
+            load(&db, user.id).await.unwrap().retention_read_days,
             MAX_RETENTION_READ_DAYS
         );
     }
@@ -780,13 +784,13 @@ mod tests {
 
         // No settings row at all.
         assert_eq!(
-            get_sidebar_prefs(&db, user.id).await.unwrap(),
+            sidebar_prefs_of(&load(&db, user.id).await.unwrap()),
             SidebarPrefs::default()
         );
 
         // A row created by another setting still reports the column defaults.
         upsert(&db, user.id, 50).await.unwrap();
-        let prefs = get_sidebar_prefs(&db, user.id).await.unwrap();
+        let prefs = sidebar_prefs_of(&load(&db, user.id).await.unwrap());
         assert_eq!(prefs.sort, SIDEBAR_SORT_NAME);
         assert!(!prefs.hide_read);
     }
@@ -799,7 +803,7 @@ mod tests {
         update_sidebar_prefs(&db, user.id, SIDEBAR_SORT_UNREAD, true)
             .await
             .unwrap();
-        let prefs = get_sidebar_prefs(&db, user.id).await.unwrap();
+        let prefs = sidebar_prefs_of(&load(&db, user.id).await.unwrap());
         assert_eq!(prefs.sort, SIDEBAR_SORT_UNREAD);
         assert!(prefs.hide_read);
 

@@ -8,48 +8,10 @@ use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::api_token;
 use crate::models::session;
-use crate::models::user_settings::{self, SidebarPrefs};
-use crate::services::save::SaveServicesConfig;
+use crate::models::user_settings::{self, UserSettings};
 use crate::services::save::linkding::LinkdingConfig;
 use crate::services::summarize::kagi::KagiConfig;
 use crate::utils::datetime::format_display;
-
-struct Preferences {
-    theme: Option<String>,
-    entries_per_page: i64,
-    retention_read_days: i64,
-    offline_keep: i64,
-    sidebar_prefs: SidebarPrefs,
-    pixel_tracking_enabled: bool,
-}
-
-async fn fetch_preferences(db: &Db, user_id: i64) -> Preferences {
-    let theme = user_settings::get_theme(db, user_id).await.unwrap_or(None);
-    let entries_per_page = user_settings::get_entries_per_page(db, user_id)
-        .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-    let retention_read_days = user_settings::get_retention_read_days(db, user_id)
-        .await
-        .unwrap_or(0);
-    let offline_keep = user_settings::get_offline_keep(db, user_id)
-        .await
-        .unwrap_or(user_settings::OFFLINE_KEEP_OFF);
-    let sidebar_prefs = user_settings::get_sidebar_prefs(db, user_id)
-        .await
-        .unwrap_or_default();
-    let pixel_tracking_enabled = user_settings::get_pixel_tracking_enabled_at(db, user_id)
-        .await
-        .unwrap_or(None)
-        .is_some();
-    Preferences {
-        theme,
-        entries_per_page,
-        retention_read_days,
-        offline_keep,
-        sidebar_prefs,
-        pixel_tracking_enabled,
-    }
-}
 
 /// What the page shows of the "save" and "summarize" services. The stored
 /// credentials themselves are never shown.
@@ -61,14 +23,8 @@ struct ServiceSettings {
     credentials_unreadable: bool,
 }
 
-async fn fetch_service_settings(state: &AppState, user_id: i64) -> ServiceSettings {
-    let stored = user_settings::get_save_services_config(
-        &state.db,
-        user_id,
-        state.config.service_token_key(),
-    )
-    .await
-    .unwrap_or_else(|_| user_settings::StoredServices::Config(SaveServicesConfig::default()));
+fn service_settings(state: &AppState, settings: &UserSettings) -> ServiceSettings {
+    let stored = settings.get_save_services_config(state.config.service_token_key());
     let credentials_unreadable = stored.is_undecryptable();
     let config = stored.or_default();
 
@@ -134,8 +90,13 @@ pub async fn user_settings_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
-    let preferences = fetch_preferences(&state.db, user_id).await;
-    let services = fetch_service_settings(&state, user_id).await;
+    // One row read covers every preference and the service credentials; a
+    // failed read degrades to the defaults.
+    let settings = user_settings::load(&state.db, user_id)
+        .await
+        .unwrap_or_else(|_| UserSettings::defaults(user_id));
+    let sidebar_prefs = user_settings::sidebar_prefs_of(&settings);
+    let services = service_settings(&state, &settings);
 
     let public_base_url = state
         .config
@@ -172,16 +133,16 @@ pub async fn user_settings_page(
             show_sessions: !is_masquerading,
             api_tokens,
             public_base_url,
-            theme: preferences.theme,
-            entries_per_page: preferences.entries_per_page,
-            retention_read_days: preferences.retention_read_days,
+            theme: settings.theme,
+            entries_per_page: settings.entries_per_page,
+            retention_read_days: settings.retention_read_days,
             entries_per_page_suggestions: user_settings::ENTRIES_PER_PAGE_SUGGESTIONS,
             retention_read_days_suggestions: user_settings::RETENTION_READ_DAYS_SUGGESTIONS,
             offline_keep_suggestions: user_settings::OFFLINE_KEEP_SUGGESTIONS,
-            offline_keep: preferences.offline_keep,
-            sidebar_sort: preferences.sidebar_prefs.sort,
-            sidebar_hide_read: preferences.sidebar_prefs.hide_read,
-            pixel_tracking_enabled: preferences.pixel_tracking_enabled,
+            offline_keep: settings.offline_keep,
+            sidebar_sort: sidebar_prefs.sort,
+            sidebar_hide_read: sidebar_prefs.hide_read,
+            pixel_tracking_enabled: settings.pixel_tracking_enabled_at.is_some(),
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
             password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
             linkding_configured: services.linkding_configured,
