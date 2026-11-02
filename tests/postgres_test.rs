@@ -376,19 +376,13 @@ async fn pg_dialect_smoke() {
     let total: i64 = counts.iter().map(|c| c.count).sum();
     assert_eq!(total, 1, "exactly one entry read today");
 
-    // A zone with a time-of-day bound: the instant, not the date, is compared
-    // against the timestamptz column.
+    // A zone east of UTC: the local-day bounds are not midnight UTC, so the
+    // instant, not the date, is compared against the timestamptz column.
     let taipei_today = rdrs::utils::timezone::today_in(chrono_tz::Tz::Asia__Taipei);
-    let taipei_from = statistics::utc_bound(
-        &taipei_today.format("%Y-%m-%d").to_string(),
-        chrono_tz::Tz::Asia__Taipei,
-    );
-    let taipei_to = statistics::utc_bound(
-        &(taipei_today + chrono::Duration::days(1))
-            .format("%Y-%m-%d")
-            .to_string(),
-        chrono_tz::Tz::Asia__Taipei,
-    );
+    let taipei_from = taipei_today.format("%Y-%m-%d").to_string();
+    let taipei_to = (taipei_today + chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
     let counts = statistics::get_daily_read_counts(
         &db,
         &statistics::DailyReadQuery {
