@@ -138,6 +138,14 @@
                 <form method="post" action="/user-settings/preferences">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
+                        <label for="timezone">Timezone</label>
+                        <input type="text" id="timezone" name="timezone" value="{{ timezone }}" list="timezone-list" autocomplete="off" spellcheck="false" data-testid="timezone" required>
+                        <datalist id="timezone-list">
+                            {% for v in timezone_suggestions %}<option value="{{ v }}">{% endfor %}
+                        </datalist>
+                        <span class="muted text-xs">An IANA name such as Asia/Taipei. Decides where <a href="/statistics">Statistics</a> cuts one day from the next; times elsewhere already show in your browser's timezone. Default UTC.</span>
+                    </div>
+                    <div class="form-group">
                         <label for="theme-select">Theme</label>
                         <select id="theme-select" name="theme" data-testid="theme-select">
                             <option value="system"{% if theme.is_none() %} selected{% endif %}>System (auto)</option>

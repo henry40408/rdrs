@@ -362,11 +362,46 @@ async fn pg_dialect_smoke() {
     let tomorrow = (chrono::Utc::now() + chrono::Duration::days(1))
         .format("%Y-%m-%d")
         .to_string();
-    let counts = statistics::get_daily_read_counts(&db, user_id, &today, &tomorrow)
-        .await
-        .unwrap();
+    let counts = statistics::get_daily_read_counts(
+        &db,
+        &statistics::DailyReadQuery {
+            user_id,
+            from: &today,
+            to: &tomorrow,
+            tz: chrono_tz::Tz::UTC,
+        },
+    )
+    .await
+    .unwrap();
     let total: i64 = counts.iter().map(|c| c.count).sum();
     assert_eq!(total, 1, "exactly one entry read today");
+
+    // A zone with a time-of-day bound: the instant, not the date, is compared
+    // against the timestamptz column.
+    let taipei_today = rdrs::utils::timezone::today_in(chrono_tz::Tz::Asia__Taipei);
+    let taipei_from = statistics::utc_bound(
+        &taipei_today.format("%Y-%m-%d").to_string(),
+        chrono_tz::Tz::Asia__Taipei,
+    );
+    let taipei_to = statistics::utc_bound(
+        &(taipei_today + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string(),
+        chrono_tz::Tz::Asia__Taipei,
+    );
+    let counts = statistics::get_daily_read_counts(
+        &db,
+        &statistics::DailyReadQuery {
+            user_id,
+            from: &taipei_from,
+            to: &taipei_to,
+            tz: chrono_tz::Tz::Asia__Taipei,
+        },
+    )
+    .await
+    .unwrap();
+    let total: i64 = counts.iter().map(|c| c.count).sum();
+    assert_eq!(total, 1, "the same read falls in exactly one Taipei day");
 
     // --- admin stats: pg_database_size + MIN/MAX(created_at) to_char ----------
     let admin = statistics::get_admin_database_stats(&db).await.unwrap();

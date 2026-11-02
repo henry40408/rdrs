@@ -1,5 +1,6 @@
 use askama::Template;
 use axum::extract::{Query, State};
+use chrono_tz::Tz;
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
@@ -12,6 +13,8 @@ use crate::models::statistics::{
     self, AdminCounts, AdminDatabaseStats, AdminEntryStats, CategoryCount, DailyReadCount,
     FeedCount, PersonalOverview,
 };
+use crate::models::user_settings;
+use crate::utils::timezone;
 
 #[derive(serde::Deserialize)]
 pub struct StatisticsQuery {
@@ -20,9 +23,10 @@ pub struct StatisticsQuery {
     pub to: Option<String>,
 }
 
-/// Returns (`from`, `to_exclusive`, `active_period`) as ISO dates.
-pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, String) {
-    let today = chrono::Utc::now().date_naive();
+/// Returns (`from`, `to_exclusive`, `active_period`) as ISO dates on the
+/// calendar of `tz`, where "today" is the reader's today.
+pub fn resolve_statistics_period(query: &StatisticsQuery, tz: Tz) -> (String, String, String) {
+    let today = timezone::today_in(tz);
     let days_ago = |n| today - chrono::Duration::days(n);
     let parse = |s: &Option<String>| {
         s.as_deref()
@@ -33,7 +37,7 @@ pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, St
     let (from, to, period) = match query.period.as_deref().unwrap_or("7d") {
         "30d" => (days_ago(30), today, "30d"),
         "90d" => (days_ago(90), today, "90d"),
-        "all" => (chrono::NaiveDate::default(), today, "all"),
+        "all" => (EARLIEST_DAY, today, "all"),
         "custom" => match (parse(&query.from), parse(&query.to)) {
             (Some(f), Some(t)) if f <= t => (f, t.min(f + chrono::Duration::days(365)), "custom"),
             _ => (days_ago(7), today, "7d"),
@@ -166,6 +170,10 @@ pub struct StatisticsTemplate {
 /// Cap bar count so long ranges stay tappable on mobile.
 const MAX_DAILY_BARS: usize = 14;
 
+/// Start of the "all" period: before any stored entry, and far enough from
+/// `NaiveDate::MIN` that shifting by a zone offset cannot overflow.
+const EARLIEST_DAY: chrono::NaiveDate = chrono::NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+
 /// The returned max is taken over buckets, not days, so bars scale to what is drawn.
 fn daily_read_views(daily: &[DailyReadCount]) -> (i64, Vec<DailyReadView>) {
     let buckets = crate::models::statistics::bucket_daily_counts(daily, MAX_DAILY_BARS);
@@ -295,11 +303,11 @@ fn shows_admin_stats(auth_user: &PageAuthUser) -> bool {
 
 /// The "all" period charts only the last 90 days; any other period charts its
 /// whole range.
-fn chart_range_start(active_period: &str, from: &str) -> String {
+fn chart_range_start(active_period: &str, from: &str, tz: Tz) -> String {
     if active_period != "all" {
         return from.to_string();
     }
-    let today = chrono::Utc::now().date_naive();
+    let today = timezone::today_in(tz);
     (today - chrono::Duration::days(90)).to_string()
 }
 
@@ -314,12 +322,23 @@ fn custom_range_inputs(query: &StatisticsQuery, active_period: &str) -> (String,
     )
 }
 
-/// Date bounds for the statistics queries; the daily chart may start later than
-/// the rest (see [`chart_range_start`]).
+/// Date bounds for the statistics queries, as local dates in `tz`; the daily
+/// chart may start later than the rest (see [`chart_range_start`]).
 struct StatsRange<'a> {
     from: &'a str,
     to: &'a str,
     chart_from: &'a str,
+    tz: Tz,
+}
+
+impl StatsRange<'_> {
+    /// `from` and `to` as the UTC instants the entry queries compare against.
+    fn utc_window(&self) -> (String, String) {
+        (
+            statistics::utc_bound(self.from, self.tz),
+            statistics::utc_bound(self.to, self.tz),
+        )
+    }
 }
 
 struct PersonalStats {
@@ -330,18 +349,24 @@ struct PersonalStats {
 }
 
 async fn fetch_personal_stats(db: &Db, user_id: i64, range: &StatsRange<'_>) -> PersonalStats {
-    let StatsRange {
-        from,
-        to,
-        chart_from,
-    } = *range;
+    let (from, to) = range.utc_window();
+    let (from, to) = (from.as_str(), to.as_str());
     let overview = log_and_default(
         "overview",
         statistics::get_personal_overview(db, user_id, from, to).await,
     );
     let daily = log_and_default(
         "daily_read_counts",
-        statistics::get_daily_read_counts(db, user_id, chart_from, to).await,
+        statistics::get_daily_read_counts(
+            db,
+            &statistics::DailyReadQuery {
+                user_id,
+                from: range.chart_from,
+                to: range.to,
+                tz: range.tz,
+            },
+        )
+        .await,
     );
     let categories = log_and_default(
         "entries_by_category",
@@ -376,13 +401,14 @@ struct AdminStats {
 }
 
 async fn fetch_admin_stats(state: &AppState, range: &StatsRange<'_>) -> AdminStats {
+    let (from, to) = range.utc_window();
     let counts = log_failure(
         "admin_counts",
         statistics::get_admin_counts(&state.db).await,
     );
     let entry_stats = log_failure(
         "admin_entry_stats",
-        statistics::get_admin_entry_stats(&state.db, range.from, range.to).await,
+        statistics::get_admin_entry_stats(&state.db, &from, &to).await,
     );
     let db_stats = cached_admin_db_stats(state).await;
     AdminStats {
@@ -405,7 +431,7 @@ async fn cached_admin_db_stats(state: &AppState) -> Option<AdminDatabaseStats> {
     Some(fresh)
 }
 
-async fn fetch_tracked_since(db: &Db, user_id: i64) -> Option<String> {
+async fn fetch_tracked_since(db: &Db, user_id: i64, tz: Tz) -> Option<String> {
     log_failure(
         "tracking_window",
         entry_open::tracking_window(db, user_id).await,
@@ -415,7 +441,7 @@ async fn fetch_tracked_since(db: &Db, user_id: i64) -> Option<String> {
         oldest_tracked: None,
     })
     .tracked_since()
-    .map(|t| t.format("%Y-%m-%d").to_string())
+    .map(|t| t.with_timezone(&tz).format("%Y-%m-%d").to_string())
 }
 
 /// `GET /statistics`.
@@ -428,15 +454,22 @@ pub async fn statistics_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let show_admin_stats = shows_admin_stats(&auth_user);
 
-    let (from, to, active_period) = resolve_statistics_period(&query);
-    let chart_from = chart_range_start(&active_period, &from);
+    let user_id = auth_user.user.id;
+    let tz = log_failure(
+        "timezone",
+        user_settings::get_timezone(&state.db, user_id).await,
+    )
+    .unwrap_or(Tz::UTC);
+
+    let (from, to, active_period) = resolve_statistics_period(&query, tz);
+    let chart_from = chart_range_start(&active_period, &from, tz);
     let range = StatsRange {
         from: &from,
         to: &to,
         chart_from: &chart_from,
+        tz,
     };
 
-    let user_id = auth_user.user.id;
     let personal = fetch_personal_stats(&state.db, user_id, &range).await;
     let admin_stats = if show_admin_stats {
         fetch_admin_stats(&state, &range).await
@@ -461,7 +494,7 @@ pub async fn statistics_page(
         "open_rates",
         entry_open::open_rates_by_feed(&state.db, user_id).await,
     ));
-    let tracked_since = fetch_tracked_since(&state.db, user_id).await;
+    let tracked_since = fetch_tracked_since(&state.db, user_id, tz).await;
 
     let admin = admin_stats_view(admin_stats.counts, admin_stats.entry_stats);
     let admin_db = admin_database_view(admin_stats.db_stats);
@@ -496,7 +529,35 @@ pub async fn statistics_page(
 
 #[cfg(test)]
 mod tests {
-    use super::format_db_bytes;
+    use super::{StatisticsQuery, chart_range_start, format_db_bytes, resolve_statistics_period};
+    use chrono_tz::Tz;
+
+    fn default_query() -> StatisticsQuery {
+        StatisticsQuery {
+            period: None,
+            from: None,
+            to: None,
+        }
+    }
+
+    /// Kiritimati (UTC+14) and Etc/GMT+12 (UTC-12) are 26 hours apart, so their
+    /// calendar dates differ at every instant: "today" is the reader's today.
+    #[test]
+    fn test_period_ends_on_the_readers_today() {
+        let (_, east_to, _) = resolve_statistics_period(&default_query(), Tz::Pacific__Kiritimati);
+        let (_, west_to, _) = resolve_statistics_period(&default_query(), Tz::Etc__GMTPlus12);
+
+        assert!(east_to > west_to, "{east_to} must be after {west_to}");
+    }
+
+    #[test]
+    fn test_the_all_period_chart_starts_ninety_days_before_the_readers_today() {
+        let east = chart_range_start("all", "0001-01-01", Tz::Pacific__Kiritimati);
+        let west = chart_range_start("all", "0001-01-01", Tz::Etc__GMTPlus12);
+
+        assert!(east > west, "{east} must be after {west}");
+        assert_eq!(chart_range_start("7d", "2026-01-01", Tz::UTC), "2026-01-01");
+    }
 
     #[test]
     fn test_format_db_bytes() {

@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::services::save::SaveServicesConfig;
+use crate::utils::timezone;
 use crate::{db_execute, query_opt};
 
 pub const DEFAULT_ENTRIES_PER_PAGE: i64 = 30;
@@ -74,6 +76,8 @@ pub struct UserSettings {
     pub sidebar_hide_read: bool,
     /// Newest unread entries to keep readable offline, or [`OFFLINE_KEEP_OFF`].
     pub offline_keep: i64,
+    /// IANA name; read it through [`UserSettings::tz`].
+    pub timezone: String,
     /// When open tracking was enabled (`None` = opted out); also the open-rate
     /// baseline — see [`update_pixel_tracking`].
     pub pixel_tracking_enabled_at: Option<DateTime<Utc>>,
@@ -134,10 +138,16 @@ impl UserSettings {
             sidebar_sort: DEFAULT_SIDEBAR_SORT.to_string(),
             sidebar_hide_read: false,
             offline_keep: OFFLINE_KEEP_OFF,
+            timezone: timezone::DEFAULT_TIMEZONE.to_string(),
             pixel_tracking_enabled_at: None,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// The stored timezone; UTC if the value no longer parses.
+    pub fn tz(&self) -> Tz {
+        timezone::parse_or_utc(&self.timezone)
     }
 
     /// Read `save_services`, accepting legacy plaintext JSON until the next
@@ -165,7 +175,7 @@ pub async fn find_by_user_id(db: &Db, user_id: i64) -> AppResult<Option<UserSett
     query_opt!(
         db,
         UserSettings,
-        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, offline_keep, pixel_tracking_enabled_at, created_at, updated_at FROM user_settings WHERE user_id = $1",
+        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, offline_keep, timezone, pixel_tracking_enabled_at, created_at, updated_at FROM user_settings WHERE user_id = $1",
         user_id
     )
     .map_err(AppError::Database)
@@ -324,6 +334,32 @@ pub async fn update_sidebar_prefs(
         "UPDATE user_settings SET sidebar_sort = $1, sidebar_hide_read = $2, updated_at = $3 WHERE user_id = $4",
         sort,
         hide_read,
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
+}
+
+/// The user's timezone; no row means UTC.
+pub async fn get_timezone(db: &Db, user_id: i64) -> AppResult<Tz> {
+    Ok(load(db, user_id).await?.tz())
+}
+
+/// Set the timezone; a name that is not an IANA zone is rejected, since the
+/// statistics would silently be cut at the wrong hour.
+pub async fn update_timezone(db: &Db, user_id: i64, name: &str) -> AppResult<()> {
+    let name = name.trim();
+    let Some(tz) = timezone::parse(name) else {
+        return Err(AppError::Validation(format!(
+            "\"{name}\" is not a timezone name; use one such as Asia/Taipei or America/New_York"
+        )));
+    };
+    ensure_row(db, user_id).await?;
+    db_execute!(
+        db,
+        "UPDATE user_settings SET timezone = $1, updated_at = $2 WHERE user_id = $3",
+        tz.name(),
         Utc::now(),
         user_id
     )
@@ -812,6 +848,67 @@ mod tests {
         assert_eq!(s.entries_per_page, 50);
         assert_eq!(s.sidebar_sort, SIDEBAR_SORT_NAME);
         assert!(!s.sidebar_hide_read);
+    }
+
+    #[tokio::test]
+    async fn test_timezone_defaults_to_utc() {
+        let db = setup_db().await;
+        let user = seed_user(&db, "tz-default", Role::User).await;
+
+        // No row yet, then a row created by an unrelated write.
+        assert_eq!(get_timezone(&db, user.id).await.unwrap(), Tz::UTC);
+        upsert(&db, user.id, 50).await.unwrap();
+        let s = find_by_user_id(&db, user.id).await.unwrap().unwrap();
+        assert_eq!(s.timezone, "UTC");
+        assert_eq!(s.tz(), Tz::UTC);
+    }
+
+    #[tokio::test]
+    async fn test_update_timezone_stores_the_canonical_name() {
+        let db = setup_db().await;
+        let user = seed_user(&db, "tz-set", Role::User).await;
+
+        update_timezone(&db, user.id, "  Asia/Taipei ")
+            .await
+            .unwrap();
+
+        let s = find_by_user_id(&db, user.id).await.unwrap().unwrap();
+        assert_eq!(s.timezone, "Asia/Taipei");
+        assert_eq!(get_timezone(&db, user.id).await.unwrap(), Tz::Asia__Taipei);
+
+        // Preserves the other settings.
+        upsert(&db, user.id, 50).await.unwrap();
+        assert_eq!(get_timezone(&db, user.id).await.unwrap(), Tz::Asia__Taipei);
+    }
+
+    #[tokio::test]
+    async fn test_update_timezone_rejects_an_unknown_name_and_keeps_the_old_one() {
+        let db = setup_db().await;
+        let user = seed_user(&db, "tz-bad", Role::User).await;
+        update_timezone(&db, user.id, "Asia/Tokyo").await.unwrap();
+
+        for bad in ["", "Mars/Olympus_Mons", "CST-8", "+08:00"] {
+            let err = update_timezone(&db, user.id, bad).await.unwrap_err();
+            assert!(matches!(err, AppError::Validation(_)), "{bad:?}");
+        }
+
+        assert_eq!(get_timezone(&db, user.id).await.unwrap(), Tz::Asia__Tokyo);
+    }
+
+    #[tokio::test]
+    async fn test_a_stored_timezone_that_no_longer_parses_reads_as_utc() {
+        let db = setup_db().await;
+        let user = seed_user(&db, "tz-stale", Role::User).await;
+        ensure_row(&db, user.id).await.unwrap();
+        crate::db_execute!(
+            &db,
+            "UPDATE user_settings SET timezone = $1 WHERE user_id = $2",
+            "Retired/Zone",
+            user.id
+        )
+        .unwrap();
+
+        assert_eq!(get_timezone(&db, user.id).await.unwrap(), Tz::UTC);
     }
 
     #[tokio::test]

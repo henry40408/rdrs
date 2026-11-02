@@ -12,6 +12,7 @@ use crate::models::user_settings::{self, UserSettings};
 use crate::services::save::linkding::LinkdingConfig;
 use crate::services::summarize::kagi::KagiConfig;
 use crate::utils::datetime::format_display;
+use crate::utils::timezone;
 
 /// What the page shows of the "save" and "summarize" services. The stored
 /// credentials themselves are never shown.
@@ -133,6 +134,8 @@ pub async fn user_settings_page(
             show_sessions: !is_masquerading,
             api_tokens,
             public_base_url,
+            timezone: settings.tz().name().to_string(),
+            timezone_suggestions: timezone::TIMEZONE_SUGGESTIONS,
             theme: settings.theme,
             entries_per_page: settings.entries_per_page,
             retention_read_days: settings.retention_read_days,
@@ -204,6 +207,9 @@ pub struct UserSettingsTemplate {
     /// Unexpired `GReader` tokens; empty while masquerading.
     pub api_tokens: Vec<ApiTokenRow>,
     pub public_base_url: String,
+    /// The IANA name in effect (UTC when the stored one does not parse).
+    pub timezone: String,
+    pub timezone_suggestions: &'static [&'static str],
     pub theme: Option<String>,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
