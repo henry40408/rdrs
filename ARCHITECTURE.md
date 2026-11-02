@@ -82,6 +82,7 @@ src/
 │   ├── han.rs           # Simplified-Chinese detection for the `lang` attribute
 │   ├── http.rs          # Request-header helpers (User-Agent)
 │   ├── text.rs          # HTML to plain text
+│   ├── timezone.rs      # Per-user IANA timezone: local dates <-> UTC instants
 │   └── url_validation.rs# URL validation and SSRF protection
 │
 ├── services/            # Business logic
@@ -212,6 +213,13 @@ Postgres migrations.
   pair in `models/entry/mod.rs`, because a `pg_rewrite` rule for `IS NOT` would
   also rewrite every `IS NOT NULL`.
 - PG connections pin `TimeZone=UTC` so timestamp-string cursors match SQLite.
+- Instants are UTC everywhere and the browser localises what it shows. The one
+  place a calendar day matters is `/statistics`: it cuts days in the user's
+  `user_settings.timezone` (default `UTC`, `utils/timezone`). Range bounds are
+  the UTC instant of a local midnight, and the daily-read chart buckets in Rust
+  (`SQLite` cannot apply a zone), so both backends share one path.
+- Feed dates without an offset are read as UTC (`utils/datetime`), never in the
+  server's `TZ`.
 
 **Planner statistics (SQLite only).** SQLite never refreshes `sqlite_stat1`
 itself, and stale (or missing, for a new index) stats cost plans.

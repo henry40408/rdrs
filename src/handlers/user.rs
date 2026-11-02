@@ -20,6 +20,7 @@ use crate::models::user;
 use crate::models::user_settings;
 use crate::models::{category, entry};
 use crate::services::{KagiConfig, LinkdingConfig, audit};
+use crate::utils::timezone;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SidebarCategoryDto {
@@ -484,6 +485,8 @@ pub struct UpdatePreferencesForm {
     pub offline_keep: Option<i64>,
     /// Checkbox: presence means on.
     pub pixel_tracking: Option<String>,
+    /// IANA name; absent leaves the setting unchanged.
+    pub timezone: Option<String>,
 }
 
 pub async fn update_preferences_form(
@@ -507,6 +510,20 @@ pub async fn update_preferences_form(
     let sidebar_hide_read = req.sidebar_hide_read.is_some();
     let pixel_tracking = req.pixel_tracking.is_some();
 
+    // Checked up front: a refusal after the first write would leave the form
+    // half saved and the sidebar cache stale.
+    if let Some(name) = req.timezone.as_deref()
+        && timezone::parse(name.trim()).is_none()
+    {
+        return FlashRedirect::error(
+            "/user-settings",
+            format!(
+                "\"{}\" is not a timezone name; use one such as Asia/Taipei",
+                name.trim()
+            ),
+        );
+    }
+
     let result: AppResult<()> = async {
         user_settings::upsert(&state.db, user_id, epp).await?;
         user_settings::update_theme(&state.db, user_id, theme).await?;
@@ -515,6 +532,9 @@ pub async fn update_preferences_form(
             .await?;
         if let Some(keep) = req.offline_keep {
             user_settings::update_offline_keep(&state.db, user_id, keep).await?;
+        }
+        if let Some(timezone) = &req.timezone {
+            user_settings::update_timezone(&state.db, user_id, timezone).await?;
         }
         user_settings::update_pixel_tracking(&state.db, user_id, pixel_tracking).await?;
         Ok(())

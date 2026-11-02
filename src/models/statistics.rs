@@ -1,7 +1,9 @@
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono_tz::Tz;
 
 use crate::db::{Db, DbInner};
 use crate::error::{AppError, AppResult};
+use crate::utils::timezone;
 use crate::{query_all, query_scalar};
 
 /// Render a timestamp column as `%Y-%m-%d %H:%M:%S` TEXT; PG `TIMESTAMPTZ`
@@ -14,10 +16,27 @@ fn ts_text(db: &Db, expr: &str) -> String {
     }
 }
 
-/// Parse a `YYYY-MM-DD` range bound as a `NaiveDate`, which compares correctly
-/// on both backends (a string bind would not coerce on PG). Falls back to today.
-fn parse_ymd(s: &str) -> NaiveDate {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap_or_else(|_| chrono::Utc::now().date_naive())
+/// A range bound as the `NaiveDateTime` that binds on both backends (a string
+/// bind would not coerce on PG). Takes `YYYY-MM-DD` (midnight UTC) or the
+/// `YYYY-MM-DD HH:MM:SS` that [`utc_bound`] returns. Falls back to today.
+fn parse_bound(s: &str) -> NaiveDateTime {
+    NaiveDateTime::parse_from_str(s, BOUND_FORMAT)
+        .or_else(|_| NaiveDate::parse_from_str(s, "%Y-%m-%d").map(|d| d.and_time(NaiveTime::MIN)))
+        .unwrap_or_else(|_| chrono::Utc::now().date_naive().and_time(NaiveTime::MIN))
+}
+
+const BOUND_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// The UTC instant at which the local date `date` (`YYYY-MM-DD`) begins in
+/// `tz`, as a range bound for the queries below. Unparseable input is passed
+/// through, so [`parse_bound`] applies its own fallback.
+pub fn utc_bound(date: &str, tz: Tz) -> String {
+    let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
+        return date.to_string();
+    };
+    timezone::start_of_day_utc(date, tz)
+        .format(BOUND_FORMAT)
+        .to_string()
 }
 
 /// Overview metrics for a user within a date range.
@@ -173,8 +192,8 @@ pub async fn get_personal_overview(
     from: &str,
     to: &str,
 ) -> AppResult<PersonalOverview> {
-    // Bind bounds as dates (see `parse_ymd`) for cross-backend comparisons.
-    let (from, to) = (parse_ymd(from), parse_ymd(to));
+    // Bind bounds as dates (see `parse_bound`) for cross-backend comparisons.
+    let (from, to) = (parse_bound(from), parse_bound(to));
     let total_entries: i64 = query_scalar!(
         db,
         i64,
@@ -226,50 +245,63 @@ pub async fn get_personal_overview(
     })
 }
 
-/// Daily-read chart query, hoisted for the query-plan test. Zero days are filled
-/// in Rust. Needs `idx_entry_feed_read_at` to stay covering (see 0012).
-fn daily_read_counts_sql(db: &Db) -> String {
-    let day_bucket = if db.is_postgres() {
-        "to_char(e.read_at, 'YYYY-MM-DD')"
-    } else {
-        "DATE(e.read_at)"
-    };
+/// Daily-read chart query, hoisted for the query-plan test. It returns each
+/// read instant rather than a per-day count, because which day an instant
+/// belongs to depends on the user's timezone, which `SQLite` cannot apply.
+/// Needs `idx_entry_feed_read_at` to stay covering (see 0012). Selected as text
+/// so one unreadable row is skipped instead of failing the whole chart.
+fn read_instants_sql(db: &Db) -> String {
     format!(
-        "SELECT {day_bucket} AS read_date, COUNT(e.id) AS cnt \
+        "SELECT {} \
          FROM entry e \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
          WHERE c.user_id = $1 \
            AND e.read_at >= $2 \
-           AND e.read_at < $3 \
-         GROUP BY read_date \
-         ORDER BY read_date"
+           AND e.read_at < $3",
+        ts_text(db, "e.read_at")
     )
 }
 
-/// Days with no reads are zero-filled. `from`/`to` are `YYYY-MM-DD`, range `[from, to)`.
+/// Range of a [`get_daily_read_counts`] lookup. `from`/`to` are local dates
+/// (`YYYY-MM-DD`) in `tz`, range `[from, to)`.
+pub struct DailyReadQuery<'a> {
+    pub user_id: i64,
+    pub from: &'a str,
+    pub to: &'a str,
+    pub tz: Tz,
+}
+
+/// Days with no reads are zero-filled.
 pub async fn get_daily_read_counts(
     db: &Db,
-    user_id: i64,
-    from: &str,
-    to: &str,
+    query: &DailyReadQuery<'_>,
 ) -> AppResult<Vec<DailyReadCount>> {
-    let (from_d, to_d) = (parse_ymd(from), parse_ymd(to));
-    let sql = daily_read_counts_sql(db);
-    let rows: Vec<(String, i64)> = match db.inner() {
+    let DailyReadQuery {
+        user_id,
+        from,
+        to,
+        tz,
+    } = *query;
+    let (from_utc, to_utc) = (
+        parse_bound(&utc_bound(from, tz)),
+        parse_bound(&utc_bound(to, tz)),
+    );
+    let sql = read_instants_sql(db);
+    let rows: Vec<(String,)> = match db.inner() {
         DbInner::Sqlite(pool) => {
-            sqlx::query_as::<sqlx::Sqlite, (String, i64)>(sqlx::AssertSqlSafe(sql))
+            sqlx::query_as::<sqlx::Sqlite, (String,)>(sqlx::AssertSqlSafe(sql))
                 .bind(user_id)
-                .bind(from_d)
-                .bind(to_d)
+                .bind(from_utc)
+                .bind(to_utc)
                 .fetch_all(pool)
                 .await
         }
         DbInner::Postgres(pool) => {
-            sqlx::query_as::<sqlx::Postgres, (String, i64)>(sqlx::AssertSqlSafe(sql))
+            sqlx::query_as::<sqlx::Postgres, (String,)>(sqlx::AssertSqlSafe(sql))
                 .bind(user_id)
-                .bind(from_d)
-                .bind(to_d)
+                .bind(from_utc)
+                .bind(to_utc)
                 .fetch_all(pool)
                 .await
         }
@@ -277,16 +309,19 @@ pub async fn get_daily_read_counts(
     .map_err(AppError::Database)?;
 
     let mut counts_map = std::collections::HashMap::new();
-    for (date_str, count) in rows {
-        if let Ok(date) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
-            counts_map.insert(date, count);
-        }
+    for (read_at,) in rows {
+        let Some(read_at) = crate::utils::datetime::try_parse_datetime(&read_at) else {
+            continue;
+        };
+        *counts_map
+            .entry(timezone::date_at(read_at, tz))
+            .or_insert(0_i64) += 1;
     }
 
-    let from_date = NaiveDate::parse_from_str(from, "%Y-%m-%d")
-        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
-    let to_date = NaiveDate::parse_from_str(to, "%Y-%m-%d")
-        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+    let from_date =
+        NaiveDate::parse_from_str(from, "%Y-%m-%d").unwrap_or_else(|_| timezone::today_in(tz));
+    let to_date =
+        NaiveDate::parse_from_str(to, "%Y-%m-%d").unwrap_or_else(|_| timezone::today_in(tz));
 
     let mut result = Vec::new();
     let mut current = from_date;
@@ -310,7 +345,7 @@ pub async fn get_entries_by_category(
     to: &str,
 ) -> AppResult<Vec<CategoryCount>> {
     // `AS count` so `FromRow` fills `count`; HAVING/ORDER BY use the aggregate.
-    let (from, to) = (parse_ymd(from), parse_ymd(to));
+    let (from, to) = (parse_bound(from), parse_bound(to));
     query_all!(
         db,
         CategoryCount,
@@ -350,7 +385,7 @@ pub async fn get_top_feeds(db: &Db, query: &TopFeedsQuery<'_>) -> AppResult<Vec<
         limit,
     } = *query;
     // `AS count` so `FromRow` fills `count`; HAVING/ORDER BY use the aggregate.
-    let (from, to) = (parse_ymd(from), parse_ymd(to));
+    let (from, to) = (parse_bound(from), parse_bound(to));
     query_all!(
         db,
         FeedCount,
@@ -390,7 +425,7 @@ pub async fn get_admin_counts(db: &Db) -> AppResult<AdminCounts> {
 }
 
 pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<AdminEntryStats> {
-    let (from, to) = (parse_ymd(from), parse_ymd(to));
+    let (from, to) = (parse_bound(from), parse_bound(to));
     let total_entries: i64 = query_scalar!(
         db,
         i64,
@@ -588,6 +623,13 @@ mod tests {
 
     /// Helper: insert an entry with a specific `published_at` date (YYYY-MM-DD).
     async fn insert_entry(db: &Db, feed_id: i64, guid: &str, published_at: &str) -> i64 {
+        // Stored values always carry a time; a bare date would sort before its own midnight.
+        let published_at = if published_at.len() == 10 {
+            format!("{published_at} 00:00:00")
+        } else {
+            published_at.to_string()
+        };
+        let published_at = published_at.as_str();
         query_scalar!(
             db,
             i64,
@@ -632,6 +674,26 @@ mod tests {
             entry_id,
         )
         .unwrap();
+    }
+
+    /// [`get_daily_read_counts`] in UTC, which is what the data below is written in.
+    async fn utc_daily_counts(db: &Db, user_id: i64, from: &str, to: &str) -> Vec<DailyReadCount> {
+        daily_counts_in(db, user_id, (from, to), Tz::UTC).await
+    }
+
+    async fn daily_counts_in(
+        db: &Db,
+        user_id: i64,
+        (from, to): (&str, &str),
+        tz: Tz,
+    ) -> Vec<DailyReadCount> {
+        let query = DailyReadQuery {
+            user_id,
+            from,
+            to,
+            tz,
+        };
+        get_daily_read_counts(db, &query).await.unwrap()
     }
 
     /// Helper: mark entry as starred at a specific datetime.
@@ -751,9 +813,7 @@ mod tests {
         let db = setup_db().await;
         let user_id = create_user_with_data(&db).await;
 
-        let counts = get_daily_read_counts(&db, user_id, "2024-01-01", "2024-01-04")
-            .await
-            .unwrap();
+        let counts = utc_daily_counts(&db, user_id, "2024-01-01", "2024-01-04").await;
 
         assert_eq!(counts.len(), 3); // Jan 1, 2, 3
         for c in &counts {
@@ -771,19 +831,86 @@ mod tests {
         let e2 = insert_entry(&db, feed_id, "g2", "2024-01-01").await;
         let e3 = insert_entry(&db, feed_id, "g3", "2024-01-02").await;
 
-        mark_read(&db, e1, "2024-01-02").await;
-        mark_read(&db, e2, "2024-01-02").await;
-        mark_read(&db, e3, "2024-01-03").await;
+        mark_read(&db, e1, "2024-01-02 09:00:00").await;
+        mark_read(&db, e2, "2024-01-02 09:00:00").await;
+        mark_read(&db, e3, "2024-01-03 09:00:00").await;
 
-        let counts = get_daily_read_counts(&db, user_id, "2024-01-01", "2024-01-05")
-            .await
-            .unwrap();
+        let counts = utc_daily_counts(&db, user_id, "2024-01-01", "2024-01-05").await;
 
         assert_eq!(counts.len(), 4); // Jan 1–4
         assert_eq!(counts[0].count, 0); // Jan 1: no reads on that day
         assert_eq!(counts[1].count, 2); // Jan 2: e1+e2 read
         assert_eq!(counts[2].count, 1); // Jan 3: e3 read
         assert_eq!(counts[3].count, 0); // Jan 4: nothing
+    }
+
+    /// The same instants fall on different days depending on the reader's zone:
+    /// 20:00 UTC on Jan 2 is already Jan 3 in Taipei, and still Jan 2 in Los Angeles.
+    #[tokio::test]
+    async fn test_daily_read_counts_follow_the_user_timezone() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        for (i, read_at) in ["2024-01-02 20:00:00", "2024-01-02 03:00:00"]
+            .into_iter()
+            .enumerate()
+        {
+            let e = insert_entry(&db, feed_id, &format!("g{i}"), "2023-12-01").await;
+            mark_read(&db, e, read_at).await;
+        }
+        let range = ("2024-01-01", "2024-01-05");
+        let per_day =
+            |daily: Vec<DailyReadCount>| daily.iter().map(|d| d.count).collect::<Vec<_>>();
+
+        let utc = daily_counts_in(&db, user_id, range, Tz::UTC).await;
+        assert_eq!(per_day(utc), vec![0, 2, 0, 0]);
+
+        // 03:00 UTC is 11:00 on Jan 2 in Taipei; 20:00 UTC is 04:00 on Jan 3.
+        let taipei = daily_counts_in(&db, user_id, range, Tz::Asia__Taipei).await;
+        assert_eq!(per_day(taipei), vec![0, 1, 1, 0]);
+
+        // 03:00 UTC is 19:00 on Jan 1 in Los Angeles; 20:00 UTC is 12:00 on Jan 2.
+        let los_angeles = daily_counts_in(&db, user_id, range, Tz::America__Los_Angeles).await;
+        assert_eq!(per_day(los_angeles), vec![1, 1, 0, 0]);
+    }
+
+    /// A read just inside the local range must not be lost to the UTC cut-off:
+    /// the Taipei day Jan 1 starts at 16:00 UTC on Dec 31.
+    #[tokio::test]
+    async fn test_daily_read_counts_include_the_local_day_that_starts_in_utc_yesterday() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        let e = insert_entry(&db, feed_id, "g", "2023-12-01").await;
+        mark_read(&db, e, "2023-12-31 16:30:00").await;
+
+        let taipei =
+            daily_counts_in(&db, user_id, ("2024-01-01", "2024-01-02"), Tz::Asia__Taipei).await;
+
+        assert_eq!(taipei.iter().map(|d| d.count).collect::<Vec<_>>(), vec![1]);
+    }
+
+    /// The overview windows use the same cut-off: an entry published at 20:00 UTC
+    /// belongs to the next day in Taipei.
+    #[tokio::test]
+    async fn test_overview_window_follows_the_user_timezone() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        insert_entry(&db, feed_id, "late", "2024-01-02 20:00:00").await;
+
+        let window = |tz| (utc_bound("2024-01-03", tz), utc_bound("2024-01-04", tz));
+        let (from, to) = window(Tz::UTC);
+        let in_utc = get_personal_overview(&db, user_id, &from, &to)
+            .await
+            .unwrap();
+        let (from, to) = window(Tz::Asia__Taipei);
+        let in_taipei = get_personal_overview(&db, user_id, &from, &to)
+            .await
+            .unwrap();
+
+        assert_eq!(in_utc.total_entries, 0);
+        assert_eq!(in_taipei.total_entries, 1);
     }
 
     /// One `DailyReadCount` per element of `counts`, from `2024-01-01`.
@@ -1072,8 +1199,8 @@ mod tests {
             "EXPLAIN QUERY PLAN {READ_ENTRIES_SQL}"
         )))
         .bind(user_id)
-        .bind(parse_ymd("2024-01-01"))
-        .bind(parse_ymd("2024-02-01"))
+        .bind(parse_bound("2024-01-01"))
+        .bind(parse_bound("2024-02-01"))
         .fetch_all(pool)
         .await
         .unwrap();
@@ -1104,11 +1231,11 @@ mod tests {
         };
         let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "EXPLAIN QUERY PLAN {}",
-            daily_read_counts_sql(&db)
+            read_instants_sql(&db)
         )))
         .bind(user_id)
-        .bind(parse_ymd("2024-01-01"))
-        .bind(parse_ymd("2024-02-01"))
+        .bind(parse_bound("2024-01-01"))
+        .bind(parse_bound("2024-02-01"))
         .fetch_all(pool)
         .await
         .unwrap();
@@ -1137,8 +1264,8 @@ mod tests {
             "EXPLAIN QUERY PLAN {STARRED_ENTRIES_SQL}"
         )))
         .bind(user_id)
-        .bind(parse_ymd("2024-01-01"))
-        .bind(parse_ymd("2024-02-01"))
+        .bind(parse_bound("2024-01-01"))
+        .bind(parse_bound("2024-02-01"))
         .fetch_all(pool)
         .await
         .unwrap();
@@ -1205,9 +1332,7 @@ mod tests {
         let outside = insert_entry(&db, feed_id, "outside", "2023-12-01").await;
         mark_read(&db, outside, "2024-02-10 09:00:00").await;
 
-        let daily = get_daily_read_counts(&db, user_id, "2024-01-01", "2024-01-04")
-            .await
-            .unwrap();
+        let daily = utc_daily_counts(&db, user_id, "2024-01-01", "2024-01-04").await;
 
         let counts: Vec<i64> = daily.iter().map(|d| d.count).collect();
         assert_eq!(counts, vec![2, 0, 1], "2024-01-02 must be a filled zero");

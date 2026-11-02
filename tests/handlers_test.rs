@@ -2539,6 +2539,68 @@ async fn test_update_preferences_form_stores_only_light_or_dark_theme() {
 }
 
 #[tokio::test]
+async fn test_update_preferences_form_sets_the_timezone() {
+    let server = authed_server().await;
+    let form = |timezone: Option<&str>| {
+        let mut form = json!({
+            "theme": "system",
+            "entries_per_page": 30,
+            "retention_read_days": 0,
+        });
+        if let Some(timezone) = timezone {
+            form["timezone"] = json!(timezone);
+        }
+        form
+    };
+    let shows =
+        |page: &str, name: &str| page.contains(&format!("name=\"timezone\" value=\"{name}\""));
+
+    let page = common::get_ok(&server, "/user-settings").await;
+    assert!(shows(&page, "UTC"), "UTC until the user chooses");
+
+    server
+        .post("/user-settings/preferences")
+        .form(&form(Some("Asia/Taipei")))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+    let page = common::get_ok(&server, "/user-settings").await;
+    assert!(shows(&page, "Asia/Taipei"));
+
+    // A form that omits the field leaves it alone.
+    server
+        .post("/user-settings/preferences")
+        .form(&form(None))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+    let page = common::get_ok(&server, "/user-settings").await;
+    assert!(shows(&page, "Asia/Taipei"));
+
+    // A name that is not a zone is refused, and the old choice survives.
+    server
+        .post("/user-settings/preferences")
+        .form(&form(Some("Mars/Olympus_Mons")))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+    let page = common::get_ok(&server, "/user-settings").await;
+    assert!(shows(&page, "Asia/Taipei"));
+    assert!(page.contains("is not a timezone name"));
+
+    // The refusal comes before any write: other fields in the form stay as they were.
+    server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "system",
+            "entries_per_page": 55,
+            "retention_read_days": 0,
+            "timezone": "Mars/Olympus_Mons",
+        }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+    let page = common::get_ok(&server, "/user-settings").await;
+    assert!(!page.contains("name=\"entries_per_page\" value=\"55\""));
+}
+
+#[tokio::test]
 async fn test_update_preferences_form_sets_sidebar_prefs() {
     let server = authed_server().await;
 

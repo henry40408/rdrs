@@ -32,8 +32,9 @@ fn parse_timezone_offset(s: &str) -> Option<i32> {
         _ => return None,
     };
 
-    let hours: i32 = s[1..3].parse().ok()?;
-    let minutes: i32 = s[3..5].parse().ok()?;
+    // `get`, not indexing: a multi-byte character inside the span would panic.
+    let hours: i32 = s.get(1..3)?.parse().ok()?;
+    let minutes: i32 = s.get(3..5)?.parse().ok()?;
 
     Some(sign * (hours * 3600 + minutes * 60))
 }
@@ -80,25 +81,33 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
 /// RFC 2822 dates, which dateparser rejects.
 pub fn normalize_timezone_format(text: &str) -> String {
     let text = text.trim();
-    let len = text.len();
-
-    if len >= 6 {
-        let suffix = &text[len - 6..];
-        if let Some(sign) = suffix.chars().next()
-            && (sign == '+' || sign == '-')
-            && suffix.chars().nth(3) == Some(':')
-            && suffix[1..3].chars().all(|c| c.is_ascii_digit())
-            && suffix[4..6].chars().all(|c| c.is_ascii_digit())
-        {
-            let mut result = text[..len - 6].to_string();
-            result.push(sign);
-            result.push_str(&suffix[1..3]);
-            result.push_str(&suffix[4..6]);
-            return result;
-        }
+    let Some(cut) = text.len().checked_sub(6) else {
+        return text.to_string();
+    };
+    // Matched on bytes: a suffix that matches is all ASCII, so `cut` is a char
+    // boundary; slicing by `&str` index first would panic inside a Chinese date.
+    let [sign @ (b'+' | b'-'), h1, h2, b':', m1, m2] = text.as_bytes()[cut..] else {
+        return text.to_string();
+    };
+    if ![h1, h2, m1, m2].iter().all(u8::is_ascii_digit) {
+        return text.to_string();
     }
+    format!(
+        "{}{}{}{}{}{}",
+        &text[..cut],
+        char::from(sign),
+        char::from(h1),
+        char::from(h2),
+        char::from(m1),
+        char::from(m2)
+    )
+}
 
-    text.to_string()
+/// `dateparser` reads a timestamp with no offset in the server's local zone and
+/// fills a date-only value with the time of the fetch. A feed says neither, so
+/// the stable reading is UTC and midnight, whatever `TZ` the server runs in.
+fn parse_as_utc(text: &str) -> Option<DateTime<Utc>> {
+    dateparser::parse_with(text, &Utc, NaiveTime::MIN).ok()
 }
 
 /// Parse a stored datetime, or `None` if every format fails (RFC 3339, SQL
@@ -110,8 +119,8 @@ pub fn try_parse_datetime(s: &str) -> Option<DateTime<Utc>> {
         .or_else(|_| {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
         .ok()
+        .or_else(|| parse_as_utc(s))
         .or_else(|| parse_chinese_datetime(s))
 }
 
@@ -130,17 +139,13 @@ pub fn parse_datetime(s: &str) -> DateTime<Utc> {
 /// feed-rs timestamp parser: dateparser, plus "+08:00" offsets in RFC 2822 and
 /// Chinese dates (e.g. "週二, 6 一月 2026 14:28:00 +0000").
 pub fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
-    dateparser::parse(text)
-        .map(|dt| dt.with_timezone(&Utc))
-        .ok()
+    parse_as_utc(text)
         .or_else(|| {
             let normalized = normalize_timezone_format(text);
             if normalized == text {
                 None
             } else {
-                dateparser::parse(&normalized)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .ok()
+                parse_as_utc(&normalized)
             }
         })
         .or_else(|| parse_chinese_datetime(text))
@@ -298,6 +303,46 @@ mod tests {
     #[test]
     fn test_parse_chinese_datetime_invalid_month() {
         assert!(parse_chinese_datetime("週二, 6 invalid 2026 14:28:00 +0000").is_none());
+    }
+
+    #[test]
+    fn test_parse_timezone_offset_with_multibyte_characters_is_none() {
+        assert!(parse_timezone_offset("+08中").is_none());
+        assert!(parse_timezone_offset("+中0800").is_none());
+    }
+
+    #[test]
+    fn test_normalize_timezone_format_cut_inside_a_multibyte_character() {
+        // 7 bytes: the last six start in the middle of the first character.
+        assert_eq!(normalize_timezone_format("日期x"), "日期x");
+        assert_eq!(normalize_timezone_format("2026年1月6日"), "2026年1月6日");
+    }
+
+    #[test]
+    fn test_parse_timestamp_without_offset_is_utc() {
+        let dt = parse_timestamp("2026-01-06 14:28:00").unwrap();
+        assert_eq!(dt.to_rfc3339(), "2026-01-06T14:28:00+00:00");
+    }
+
+    #[test]
+    fn test_parse_timestamp_date_only_is_midnight_utc_and_stable() {
+        let first = parse_timestamp("2026-01-06").unwrap();
+        assert_eq!(first.to_rfc3339(), "2026-01-06T00:00:00+00:00");
+        assert_eq!(parse_timestamp("2026-01-06"), Some(first));
+    }
+
+    #[test]
+    fn test_parse_timestamp_keeps_an_explicit_offset() {
+        let dt = parse_timestamp("Tue, 06 Jan 2026 14:28:00 +0800").unwrap();
+        assert_eq!(dt.to_rfc3339(), "2026-01-06T06:28:00+00:00");
+        let dt = parse_timestamp("Tue, 06 Jan 2026 14:28:00 +08:00").unwrap();
+        assert_eq!(dt.to_rfc3339(), "2026-01-06T06:28:00+00:00");
+    }
+
+    #[test]
+    fn test_try_parse_datetime_without_offset_is_utc() {
+        let dt = try_parse_datetime("Jan 6, 2026 14:28:00").unwrap();
+        assert_eq!(dt.to_rfc3339(), "2026-01-06T14:28:00+00:00");
     }
 
     #[test]
