@@ -341,6 +341,13 @@ async fn pg_dialect_smoke() {
     .await
     .unwrap();
     assert!(affected > 0, "everything was stored before the year 2100");
+    // Later checks need unread entries again; the target stays read.
+    rdrs::db_execute!(
+        &db,
+        "UPDATE entry SET read_at = NULL WHERE id <> $1",
+        target
+    )
+    .unwrap();
 
     // --- retention prune (column-driven make_interval fork) -------------------
     // Backdate the read entry 40 days (PG-only test SQL) and set 30-day
