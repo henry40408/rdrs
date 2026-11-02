@@ -35,15 +35,26 @@ Feature: Triage entries (star, mark-read, summarize)
     Then the entry title for "Test Entry 1" highlights on hover
 
   Scenario: Marking all entries read empties the unread list
+    Given the stored entries are older than the snapshot granularity
     When I open the inbox
     And I mark the document for reload detection
     And I mark all entries as read
     Then I see 0 entries in the entry list
     And the document did not reload
 
+  # Marked by what the page showed, not by what the database holds by now.
+  Scenario: Marking all entries read leaves one fetched after the list was rendered
+    Given the stored entries are older than the snapshot granularity
+    When I open the inbox
+    And the feed "Triage Feed" fetches an entry titled "Fresh Arrival" after the page loaded
+    And I mark all entries as read
+    Then the entry list shows "Fresh Arrival"
+    And I see 1 entry in the entry list
+
   # A `location.reload()` here would lose scroll and the open entry.
   Scenario: Marking entries older than 1 day as read swaps the list in place
     Given the feed "Triage Feed" has an entry titled "Ancient News" published 3 days ago
+    And the stored entries are older than the snapshot granularity
     When I open the inbox
     And I mark the document for reload detection
     And I mark entries older than 1 day as read
@@ -176,6 +187,7 @@ Feature: Triage entries (star, mark-read, summarize)
 
   Scenario: The Mark as Read dropdown keeps the rows and favicons already on screen
     Given the "Triage Feed" feed has a favicon
+    And the stored entries are older than the snapshot granularity
     When I open the entries page for category "Triage Category" showing all statuses
     And the entry list favicons have loaded
     And I tag the entry list contents

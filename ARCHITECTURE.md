@@ -262,6 +262,15 @@ count, not the requested count.
   (`handlers::greader::AFFECTED_HEADER`). `app.js` reads it, falling back to its
   DOM-row count.
 
+**Bulk mark-as-read is scoped by the rendered list.** The "Mark as Read..."
+dropdown sends the list's `data-snapshot-at` as `snapshot` (an rdrs extension
+to `mark-all-as-read`; other GReader clients omit it). `MarkAllRead::stored_by`
+then leaves entries with `created_at` at or after it unread (the stamp is taken
+before the list query and truncated to the second, hence strict), so a feed
+fetch between render and click cannot mark what the reader never saw. A malformed snapshot
+is a 400, never "no limit". `older_than_days` alone cannot do this: it tests
+`published_at`, which a late arrival may already have in the past.
+
 ### Middleware
 
 - **auth.rs** - `AuthUser` from the session cookie; `AdminUser` for admin routes

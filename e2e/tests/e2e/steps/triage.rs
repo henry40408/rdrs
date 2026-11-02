@@ -40,7 +40,32 @@ async fn aged_entry(world: &mut RdrsWorld, feed_title: String, title: String) ->
     world.seed().insert_entries(&[entry]).await.map(|_| ())
 }
 
+/// Inserted straight into the database, so no SSE event reaches the open page.
+/// The pause keeps its storage second strictly after the page's render second,
+/// which is as fine as the snapshot gets.
+#[when(expr = "the feed {string} fetches an entry titled {string} after the page loaded")]
+async fn fetched_after_render(
+    world: &mut RdrsWorld,
+    feed_title: String,
+    title: String,
+) -> Result<()> {
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let username = world.user.username.clone();
+    let feed_id = feed_id(world, &feed_title).await?;
+    let entry = NewEntry::new(feed_id, &format!("{username}-late-entry"), &title)
+        .link(format!("https://example.com/{username}/late-entry"))
+        .content(format!("<p>{title}</p>"));
+    world.seed().insert_entries(&[entry]).await.map(|_| ())
+}
+
 // ── Bulk marking ─────────────────────────────────────────────────────────────
+
+/// "Mark as Read..." leaves entries stored in the render's own second unread, so
+/// seeding and opening the page back to back would leave them behind.
+#[given("the stored entries are older than the snapshot granularity")]
+async fn stored_entries_are_a_second_old(_world: &mut RdrsWorld) {
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+}
 
 /// Auto-accepts the `confirm()`, then picks the option; `app.js` swaps the list
 /// in place, so there is no navigation to wait for.

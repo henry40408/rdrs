@@ -525,6 +525,8 @@ pub async fn unread_page(
     Query(query): Query<EntriesQuery>,
 ) -> Response {
     let user_id = auth_user.user.id;
+    // Taken before the list query: anything stored after it is not on screen.
+    let snapshot_at = snapshot_now();
     let page_size = entries_page_size(&state, user_id).await;
     let search = scoped_search(query.q.as_deref());
     let filter = entry::EntryFilter {
@@ -594,7 +596,7 @@ pub async fn unread_page(
         // Hidden during search: it would be confusable with the marks-all-loaded action.
         show_mark_above: search.raw.is_none(),
         onboarding: no_feeds,
-        snapshot_at: snapshot_now(),
+        snapshot_at,
         search_action: (!no_feeds).then(|| "/".to_string()),
         search: search.raw,
         search_error: search.error,
@@ -655,6 +657,8 @@ async fn entries_tab_page(
     query: EntriesQuery,
 ) -> Response {
     let user_id = auth_user.user.id;
+    // Taken before the list query: anything stored after it is not on screen.
+    let snapshot_at = snapshot_now();
     let page_size = entries_page_size(&state, user_id).await;
     let fragment = query.fragment == Some(1);
     let cursor = if fragment {
@@ -702,7 +706,7 @@ async fn entries_tab_page(
         path: tab.path.to_string(),
         show_tab_bar: true,
         mark_as_read_scope: tab.mark_as_read_scope.map(str::to_string),
-        snapshot_at: snapshot_now(),
+        snapshot_at,
         search_action: Some(tab.path.to_string()),
         search: search.raw,
         search_error: search.error,
@@ -975,6 +979,8 @@ async fn scoped_entries_page(
     query: EntriesQuery,
 ) -> Response {
     let user_id = auth_user.user.id;
+    // Taken before the list query: anything stored after it is not on screen.
+    let snapshot_at = snapshot_now();
     let page_size = entries_page_size(&state, user_id).await;
 
     // No `?status=` means unread.
@@ -1055,7 +1061,7 @@ async fn scoped_entries_page(
         status_filter: query.status.clone(),
         // Hidden during search: it would be confusable with "Mark N matching".
         show_mark_above: search.raw.is_none(),
-        snapshot_at: snapshot_now(),
+        snapshot_at,
         search: search.raw,
         search_error: search.error,
         matching_count,

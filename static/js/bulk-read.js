@@ -36,6 +36,10 @@ export function installMarkAsReadDropdown({ performSwap }) {
         const scope = select.dataset.markReadScope || READING_LIST_STREAM;
         const body = new URLSearchParams();
         body.set('s', scope);
+        // Entries fetched after this list was rendered stay unread. Refreshed
+        // with the list on every swap, so a second click covers what appeared.
+        const snapshotAt = document.querySelector('[data-entries-list]')?.dataset.snapshotAt;
+        if (snapshotAt) body.set('snapshot', snapshotAt);
         if (age !== 'all') {
             const days = parseInt(age, 10);
             const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;

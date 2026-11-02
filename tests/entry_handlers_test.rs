@@ -1072,6 +1072,64 @@ async fn test_mark_all_read_with_timestamp() {
     assert_eq!(response.text(), "OK");
 }
 
+async fn unread_count(server: &TestServer) -> usize {
+    let body: serde_json::Value = server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
+        .await
+        .json();
+    body["items"].as_array().unwrap().len()
+}
+
+#[tokio::test]
+async fn test_mark_all_read_snapshot_keeps_later_entries_unread() {
+    let (app, _) = seeded_app().await;
+    assert_eq!(unread_count(&app.server).await, 5);
+
+    // The seeded entries were stored just now, after this earlier render.
+    let response = app
+        .server
+        .post("/reader/api/0/mark-all-as-read")
+        .form(&[
+            ("s", "user/-/state/com.google/reading-list"),
+            ("snapshot", "2020-01-01 00:00:00"),
+        ])
+        .await;
+    response.assert_status_ok();
+    assert_eq!(unread_count(&app.server).await, 5);
+
+    // A render after they were stored covers all of them.
+    let later = (chrono::Utc::now() + chrono::Duration::minutes(1))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    app.server
+        .post("/reader/api/0/mark-all-as-read")
+        .form(&[
+            ("s", "user/-/state/com.google/reading-list"),
+            ("snapshot", later.as_str()),
+        ])
+        .await
+        .assert_status_ok();
+    assert_eq!(unread_count(&app.server).await, 0);
+}
+
+#[tokio::test]
+async fn test_mark_all_read_refuses_a_malformed_snapshot_and_marks_nothing() {
+    let (app, _) = seeded_app().await;
+
+    for bad in ["yesterday", "2026-05-01", "2026-05-01T09:00:00Z", ""] {
+        let response = app
+            .server
+            .post("/reader/api/0/mark-all-as-read")
+            .form(&[
+                ("s", "user/-/state/com.google/reading-list"),
+                ("snapshot", bad),
+            ])
+            .await;
+        response.assert_status(StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(unread_count(&app.server).await, 5);
+}
+
 // --- GReader Item Response Format Tests ---
 
 #[tokio::test]
