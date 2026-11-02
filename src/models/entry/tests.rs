@@ -2889,3 +2889,127 @@ async fn test_prune_batch_size_limits_rows() {
         );
     }
 }
+
+/// Three unread entries in one feed: stored an hour before the page was
+/// rendered, stored a minute after it (published days before), and stored a
+/// minute after it (published at the render). Returns the user, category and
+/// feed ids and the render instant.
+async fn seed_entries_around_a_render(db: &Db) -> (i64, i64, i64, DateTime<Utc>) {
+    let user_id = create_test_user(db, "u").await;
+    let category_id = create_test_category(db, user_id, "c").await;
+    let feed_id = create_test_feed(db, category_id, "https://example.com/f.xml").await;
+    let rendered = DateTime::parse_from_rfc3339("2026-05-01T09:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    for (guid, published, stored) in [
+        ("before", "2026-05-01 08:00:00", "2026-05-01 08:00:00"),
+        ("late-old", "2026-04-28 08:00:00", "2026-05-01 09:01:00"),
+        ("late-new", "2026-05-01 09:00:00", "2026-05-01 09:01:00"),
+    ] {
+        crate::db_execute!(
+            db,
+            "INSERT INTO entry (feed_id, guid, published_at, created_at) VALUES ($1, $2, $3, $4)",
+            feed_id,
+            guid,
+            published,
+            stored
+        )
+        .unwrap();
+    }
+    (user_id, category_id, feed_id, rendered)
+}
+
+async fn unread_guids(db: &Db) -> Vec<String> {
+    crate::query_all!(
+        db,
+        (String,),
+        "SELECT guid FROM entry WHERE read_at IS NULL ORDER BY guid"
+    )
+    .unwrap()
+    .into_iter()
+    .map(|(guid,)| guid)
+    .collect()
+}
+
+#[tokio::test]
+async fn mark_all_read_leaves_entries_stored_after_the_snapshot() {
+    let db = setup_db().await;
+    let (user_id, category_id, feed_id, rendered) = seed_entries_around_a_render(&db).await;
+    let limits = MarkAllRead {
+        stored_by: Some(rendered),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        mark_all_read_by_user(&db, user_id, limits).await.unwrap(),
+        1
+    );
+    assert_eq!(unread_guids(&db).await, ["late-new", "late-old"]);
+
+    // The other two scopes share the condition; undo and repeat for each.
+    crate::db_execute!(&db, "UPDATE entry SET read_at = NULL").unwrap();
+    assert_eq!(
+        mark_all_read_by_category(&db, category_id, limits)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(unread_guids(&db).await, ["late-new", "late-old"]);
+
+    crate::db_execute!(&db, "UPDATE entry SET read_at = NULL").unwrap();
+    assert_eq!(
+        mark_all_read_by_feed(&db, feed_id, limits).await.unwrap(),
+        1
+    );
+    assert_eq!(unread_guids(&db).await, ["late-new", "late-old"]);
+}
+
+#[tokio::test]
+async fn mark_all_read_older_than_a_day_ignores_late_arrivals_with_old_dates() {
+    let db = setup_db().await;
+    let (user_id, _, _, rendered) = seed_entries_around_a_render(&db).await;
+    // All three were published before today, so "older than 1 day" matches them
+    // all unless the snapshot holds the late arrivals back.
+    let limits = MarkAllRead {
+        older_than_days: Some(1),
+        stored_by: Some(rendered),
+    };
+
+    assert_eq!(
+        mark_all_read_by_user(&db, user_id, limits).await.unwrap(),
+        1
+    );
+    assert_eq!(unread_guids(&db).await, ["late-new", "late-old"]);
+}
+
+#[tokio::test]
+async fn mark_all_read_without_a_snapshot_marks_everything_as_before() {
+    let db = setup_db().await;
+    let (user_id, _, _, _) = seed_entries_around_a_render(&db).await;
+
+    let affected = mark_all_read_by_user(&db, user_id, MarkAllRead::default())
+        .await
+        .unwrap();
+    assert_eq!(affected, 3);
+    assert_eq!(unread_guids(&db).await, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn mark_all_read_snapshot_is_exclusive_of_the_render_second() {
+    let db = setup_db().await;
+    let (user_id, _, _, _) = seed_entries_around_a_render(&db).await;
+    // "before" was stored at exactly 08:00:00: a snapshot of that second must
+    // not take it, since the render's own second may postdate the list query.
+    let rendered = DateTime::parse_from_rfc3339("2026-05-01T08:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let limits = MarkAllRead {
+        stored_by: Some(rendered),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        mark_all_read_by_user(&db, user_id, limits).await.unwrap(),
+        0
+    );
+}

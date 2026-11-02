@@ -303,10 +303,44 @@ async fn pg_dialect_smoke() {
     );
 
     // --- mark_all_read_by_feed age cutoff (make_interval fork) ----------------
-    let affected = entry::mark_all_read_by_feed(&db, feed_id, Some(3650))
-        .await
-        .unwrap();
+    let affected = entry::mark_all_read_by_feed(
+        &db,
+        feed_id,
+        entry::MarkAllRead {
+            older_than_days: Some(3650),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(affected, 0, "no entry is older than 3650 days");
+
+    // A snapshot before every entry was stored holds all of them back; this is
+    // the timestamptz bind, which the SQLite run cannot prove.
+    let affected = entry::mark_all_read_by_feed(
+        &db,
+        feed_id,
+        entry::MarkAllRead {
+            stored_by: Some("2000-01-01T00:00:00Z".parse().unwrap()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(affected, 0, "nothing was stored by the year 2000");
+
+    // The opposite bound proves the bind matches rows, not just excludes them.
+    let affected = entry::mark_all_read_by_feed(
+        &db,
+        feed_id,
+        entry::MarkAllRead {
+            stored_by: Some("2100-01-01T00:00:00Z".parse().unwrap()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(affected > 0, "everything was stored before the year 2100");
 
     // --- retention prune (column-driven make_interval fork) -------------------
     // Backdate the read entry 40 days (PG-only test SQL) and set 30-day

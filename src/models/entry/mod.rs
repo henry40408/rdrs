@@ -1431,55 +1431,72 @@ pub fn next_continuation<T>(
         .map(|ts| ContinuationCursor::encode_composite(ts, id(last)))
 }
 
-/// Mark a feed's unread entries read, optionally only those older than
-/// `older_than_days`. Returns rows affected.
-pub async fn mark_all_read_by_feed(
-    db: &Db,
-    feed_id: i64,
-    older_than_days: Option<i64>,
-) -> AppResult<i64> {
-    // `days` is an `i64` (not injectable); the cutoff dialect-forks via `Dialect::days_ago`.
-    let age_condition = older_than_days
-        .map(|days| {
+/// Which unread entries a bulk "mark all as read" may touch, beyond its scope.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MarkAllRead {
+    /// Only entries published more than this many days ago.
+    pub older_than_days: Option<i64>,
+    /// Only entries stored strictly before this instant: when the page the user
+    /// clicked on was rendered. Strict, because the instant is truncated to the
+    /// second: an entry stored within it may postdate the list query.
+    pub stored_by: Option<DateTime<Utc>>,
+}
+
+impl MarkAllRead {
+    /// Extra `AND ...` conditions; `next` is the first free bind placeholder.
+    fn conditions(self, db: &Db, next: usize, binds: &mut Vec<Bind>) -> String {
+        let age = self.older_than_days.map(|days| {
+            // `days` is an `i64` (not injectable); the cutoff dialect-forks via `Dialect::days_ago`.
             let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
             format!(" AND COALESCE(published_at, created_at) < {cutoff}")
-        })
-        .unwrap_or_default();
+        });
+        let stored = self.stored_by.map(|stored_by| {
+            // SQLite keeps `created_at` as `YYYY-MM-DD HH:MM:SS` TEXT, which an
+            // RFC 3339 bind would mis-order ('T' sorts after ' '); PG compares
+            // natively, so its column stays sargable.
+            let dialect = Dialect::from_db(db);
+            if dialect == Dialect::Postgres {
+                binds.push(Bind::Ts(stored_by));
+            } else {
+                binds.push(Bind::Text(
+                    stored_by.format("%Y-%m-%d %H:%M:%S").to_string(),
+                ));
+            }
+            format!(" AND created_at < ${next}")
+        });
+        age.into_iter().chain(stored).collect()
+    }
+}
 
+/// Mark a feed's unread entries read within `limits`. Returns rows affected.
+pub async fn mark_all_read_by_feed(db: &Db, feed_id: i64, limits: MarkAllRead) -> AppResult<i64> {
+    let mut binds = vec![Bind::Int(feed_id)];
+    let extra = limits.conditions(db, 2, &mut binds);
     let sql = format!(
         "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') \
-         WHERE feed_id = $1 AND read_at IS NULL{age_condition}"
+         WHERE feed_id = $1 AND read_at IS NULL{extra}"
     );
 
-    let rows = exec_dynamic(db, sql, vec![Bind::Int(feed_id)])
+    let rows = exec_dynamic(db, sql, binds)
         .await
         .map_err(AppError::Database)?;
     Ok(rows as i64)
 }
 
-pub async fn mark_all_read_by_user(
-    db: &Db,
-    user_id: i64,
-    older_than_days: Option<i64>,
-) -> AppResult<i64> {
-    let age_condition = older_than_days
-        .map(|days| {
-            let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
-            format!(" AND COALESCE(published_at, created_at) < {cutoff}")
-        })
-        .unwrap_or_default();
-
+pub async fn mark_all_read_by_user(db: &Db, user_id: i64, limits: MarkAllRead) -> AppResult<i64> {
+    let mut binds = vec![Bind::Int(user_id)];
+    let extra = limits.conditions(db, 2, &mut binds);
     let sql = format!(
         "UPDATE entry \
          SET read_at = datetime('now'), updated_at = datetime('now') \
-         WHERE read_at IS NULL{age_condition} AND feed_id IN ( \
+         WHERE read_at IS NULL{extra} AND feed_id IN ( \
              SELECT f.id FROM feed f \
              INNER JOIN category c ON f.category_id = c.id \
              WHERE c.user_id = $1 \
          )"
     );
 
-    let rows = exec_dynamic(db, sql, vec![Bind::Int(user_id)])
+    let rows = exec_dynamic(db, sql, binds)
         .await
         .map_err(AppError::Database)?;
     Ok(rows as i64)
@@ -1882,24 +1899,19 @@ pub async fn find_position(
 pub async fn mark_all_read_by_category(
     db: &Db,
     category_id: i64,
-    older_than_days: Option<i64>,
+    limits: MarkAllRead,
 ) -> AppResult<i64> {
-    let age_condition = older_than_days
-        .map(|days| {
-            let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
-            format!(" AND COALESCE(published_at, created_at) < {cutoff}")
-        })
-        .unwrap_or_default();
-
+    let mut binds = vec![Bind::Int(category_id)];
+    let extra = limits.conditions(db, 2, &mut binds);
     let sql = format!(
         "UPDATE entry \
          SET read_at = datetime('now'), updated_at = datetime('now') \
-         WHERE read_at IS NULL{age_condition} AND feed_id IN ( \
+         WHERE read_at IS NULL{extra} AND feed_id IN ( \
              SELECT id FROM feed WHERE category_id = $1 \
          )"
     );
 
-    let rows = exec_dynamic(db, sql, vec![Bind::Int(category_id)])
+    let rows = exec_dynamic(db, sql, binds)
         .await
         .map_err(AppError::Database)?;
     Ok(rows as i64)

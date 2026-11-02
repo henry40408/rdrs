@@ -144,9 +144,25 @@ pub struct MarkAllReadForm {
     pub s: String,
     /// Timestamp in microseconds — only mark items older than this
     pub ts: Option<String>,
+    /// rdrs extension: UTC `YYYY-MM-DD HH:MM:SS` at which the caller's list was
+    /// rendered. Entries stored after it stay unread. Other `GReader` clients omit it.
+    pub snapshot: Option<String>,
     /// POST token
     #[serde(rename = "T")]
     pub token: Option<String>,
+}
+
+/// A malformed snapshot is refused rather than ignored: dropping it would mark
+/// everything, which is exactly what the caller asked to avoid.
+fn parse_snapshot(raw: Option<&str>) -> AppResult<Option<chrono::DateTime<chrono::Utc>>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+        .map(|t| Some(t.and_utc()))
+        .map_err(|_bad_format| {
+            AppError::Validation("snapshot must be UTC YYYY-MM-DD HH:MM:SS".into())
+        })
 }
 
 /// `POST /reader/api/0/mark-all-as-read`
@@ -157,6 +173,7 @@ pub async fn mark_all_as_read(
 ) -> AppResult<([(&'static str, String); 1], String)> {
     let stream_id = StreamId::parse(&form.s)?;
     let user_id = auth.user.id;
+    let stored_by = parse_snapshot(form.snapshot.as_deref())?;
 
     // Convert microsecond timestamp to older_than_days (approximate)
     let older_than_days = form.ts.as_ref().and_then(|ts_str| {
@@ -171,21 +188,23 @@ pub async fn mark_all_as_read(
         }
     });
 
+    let limits = entry::MarkAllRead {
+        older_than_days,
+        stored_by,
+    };
     let affected = match stream_id {
-        StreamId::ReadingList => {
-            entry::mark_all_read_by_user(&state.db, user_id, older_than_days).await?
-        }
+        StreamId::ReadingList => entry::mark_all_read_by_user(&state.db, user_id, limits).await?,
         StreamId::Feed(url) => {
             let f = feed::find_by_url_for_user(&state.db, &url, user_id)
                 .await?
                 .ok_or(AppError::FeedNotFound)?;
-            entry::mark_all_read_by_feed(&state.db, f.id, older_than_days).await?
+            entry::mark_all_read_by_feed(&state.db, f.id, limits).await?
         }
         StreamId::Label(name) => {
             let cat = category::find_by_name_and_user(&state.db, &name, user_id)
                 .await?
                 .ok_or(AppError::CategoryNotFound)?;
-            entry::mark_all_read_by_category(&state.db, cat.id, older_than_days).await?
+            entry::mark_all_read_by_category(&state.db, cat.id, limits).await?
         }
         _ => {
             return Err(AppError::Validation(
