@@ -37,6 +37,8 @@ pub struct SidebarResponse {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    /// Unread entries published today in the user's timezone.
+    pub total_today: i64,
     pub via_forward_auth: bool,
     /// `"name"` or `"unread"`; lists are sent in name order and the client
     /// re-orders (it knows which row is active).
@@ -52,6 +54,7 @@ pub struct ChromeData {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    pub total_today: i64,
     /// See [`crate::services::CachedChrome::unread_by_feed`].
     pub unread_by_feed: std::sync::Arc<std::collections::HashMap<i64, i64>>,
     pub sidebar_prefs: user_settings::SidebarPrefs,
@@ -79,12 +82,17 @@ pub async fn read_chrome_data(
     // Snapshot before any DB read so a concurrent bust blocks the publish.
     let generation = state.sidebar_cache.begin_read(user_id);
 
-    if let Some(cached) = state.sidebar_cache.get(user_id) {
+    if let Some(cached) = state
+        .sidebar_cache
+        .get(user_id)
+        .filter(crate::services::CachedChrome::is_current)
+    {
         return ChromeData {
             theme: cached.theme,
             categories: cached.categories,
             total_unread: cached.total_unread,
             total_summarized: cached.total_summarized,
+            total_today: cached.total_today,
             unread_by_feed: cached.unread_by_feed,
             sidebar_prefs: cached.sidebar_prefs,
             offline_keep: cached.offline_keep,
@@ -98,6 +106,7 @@ pub async fn read_chrome_data(
         .unwrap_or_else(|_| user_settings::UserSettings::defaults(user_id));
     let sidebar_prefs = user_settings::sidebar_prefs_of(&settings);
     let offline_keep = settings.offline_keep;
+    let timezone = settings.tz();
     let theme = settings.theme;
     let cats = category::list_by_user(&state.db, user_id)
         .await
@@ -119,6 +128,16 @@ pub async fn read_chrome_data(
     let total_summarized = crate::models::entry_summary::count_completed(&state.db, user_id)
         .await
         .unwrap_or(0);
+    // One reading of the date for the count and the cache label: midnight
+    // between two reads would label yesterday's count as today's.
+    let today = timezone::today_in(timezone);
+    let total_today = entry::count_by_user(
+        &state.db,
+        user_id,
+        &entry::unread_filter_on(today, timezone),
+    )
+    .await
+    .unwrap_or(0);
     let has_feeds = !feeds.is_empty();
     let categories: Vec<SidebarCategoryDto> = cats
         .into_iter()
@@ -133,6 +152,9 @@ pub async fn read_chrome_data(
         categories,
         total_unread,
         total_summarized,
+        total_today,
+        timezone,
+        today,
         unread_by_feed: std::sync::Arc::new(unread_by_feed),
         sidebar_prefs,
         offline_keep,
@@ -150,6 +172,7 @@ pub async fn read_chrome_data(
         categories: fresh.categories,
         total_unread: fresh.total_unread,
         total_summarized: fresh.total_summarized,
+        total_today: fresh.total_today,
         unread_by_feed: fresh.unread_by_feed,
         sidebar_prefs: fresh.sidebar_prefs,
         offline_keep: fresh.offline_keep,
@@ -189,6 +212,7 @@ pub async fn build_sidebar_response(
         categories: chrome.categories,
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
+        total_today: chrome.total_today,
         via_forward_auth,
         sidebar_sort: chrome.sidebar_prefs.sort,
         sidebar_hide_read: chrome.sidebar_prefs.hide_read,

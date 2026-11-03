@@ -74,6 +74,25 @@ export function installMarkAsReadDropdown({ performSwap }) {
     });
 }
 
+// A "mark everything in this list" form posts the list's render time. The list
+// can be refreshed in place after the page loaded, so the field is read at
+// submit from the list itself, not from the markup that was first served.
+// Capture phase, like `data-confirm`, so it runs before app.js sends the form.
+export function installSnapshotFormSync() {
+    document.addEventListener(
+        'submit',
+        (event) => {
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            if (!form.hasAttribute('data-snapshot-from-list')) return;
+            const snapshotAt = document.querySelector('[data-entries-list]')?.dataset.snapshotAt;
+            const field = form.elements.namedItem('snapshot');
+            if (snapshotAt && field) field.value = snapshotAt;
+        },
+        true
+    );
+}
+
 /// Re-render the current list in place from `?fragment=1` (page 1). Resolves
 /// `false` if there is nothing to swap, so callers can reload instead.
 async function refreshEntriesList({ performSwap }) {

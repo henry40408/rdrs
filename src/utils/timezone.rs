@@ -63,6 +63,15 @@ pub fn start_of_day_utc(date: NaiveDate, tz: Tz) -> NaiveDateTime {
     }
 }
 
+/// `[start, end)` of `date` in `tz` as UTC instants; a DST day is not 24 hours.
+pub fn day_bounds_utc(date: NaiveDate, tz: Tz) -> (DateTime<Utc>, DateTime<Utc>) {
+    let next = date.succ_opt().unwrap_or(date);
+    (
+        start_of_day_utc(date, tz).and_utc(),
+        start_of_day_utc(next, tz).and_utc(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +82,26 @@ mod tests {
 
     fn utc(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
+    }
+
+    #[test]
+    fn day_bounds_span_the_local_day() {
+        let taipei = parse("Asia/Taipei").unwrap();
+        let (start, end) = day_bounds_utc(ymd(2026, 5, 1), taipei);
+        assert_eq!(start, utc(2026, 4, 30, 16, 0));
+        assert_eq!(end, utc(2026, 5, 1, 16, 0));
+    }
+
+    #[test]
+    fn day_bounds_are_not_24_hours_across_dst() {
+        let new_york = parse("America/New_York").unwrap();
+        let hours = |date| {
+            let (start, end) = day_bounds_utc(date, new_york);
+            (end - start).num_hours()
+        };
+        assert_eq!(hours(ymd(2026, 3, 8)), 23, "spring forward");
+        assert_eq!(hours(ymd(2026, 11, 1)), 25, "fall back");
+        assert_eq!(hours(ymd(2026, 6, 1)), 24);
     }
 
     #[test]

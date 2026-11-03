@@ -271,6 +271,16 @@ fetch between render and click cannot mark what the reader never saw. A malforme
 is a 400, never "no limit". `older_than_days` alone cannot do this: it tests
 `published_at`, which a late arrival may already have in the past.
 
+**Today** (`/entries/today`, sidebar item after Unread) is the unread entries
+whose `COALESCE(published_at, created_at)` falls on the current day in the
+user's timezone. `entry::today_unread_filter` is the one definition behind the
+list, the sidebar badge, the reader's neighbours (`today=true`) and mark-all, so
+the badge always equals the list. Day bounds come from `timezone::day_bounds_utc`
+(23 or 25 hours across DST). Its "Mark all as Read" posts to
+`/entries/today/mark-read` with the same `snapshot` rule as above, applied as
+`EntryFilter::stored_before`; the form copies the list's `data-snapshot-at`
+client-side (`installSnapshotFormSync`).
+
 ### Middleware
 
 - **auth.rs** - `AuthUser` from the session cookie; `AdminUser` for admin routes
@@ -594,7 +604,9 @@ Timeout layers, which would buffer or cut a long-lived stream.
   `read_chrome_data` captures it before reading and publishes via
   `insert_if_current`, so a bust during population isn't overwritten by a stale
   value. `RDRS_DISABLE_SIDEBAR_CACHE` disables it (E2E only — it seeds SQLite
-  directly, bypassing bust hooks).
+  directly, bypassing bust hooks). The Today count depends on the clock, not
+  just on data, so a slot records the user's timezone and local day and
+  `CachedChrome::is_current` rejects it once that day has passed.
 - **Page cache** (`page_cache.rs`) — helper over `moka::sync::Cache` for
   per-user TTL page payloads.
 - **Admin database stats** (`AdminDbStatsCache` in `page_cache.rs`) — the one

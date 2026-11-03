@@ -349,6 +349,39 @@ async fn pg_dialect_smoke() {
     )
     .unwrap();
 
+    // --- published_between / stored_before (timestamptz binds) -----------------
+    let published_between = |from: &str, to: &str| entry::EntryFilter {
+        published_between: Some((from.parse().unwrap(), to.parse().unwrap())),
+        ..Default::default()
+    };
+    let in_this_century = published_between("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z");
+    assert!(
+        entry::count_by_user(&db, user_id, &in_this_century)
+            .await
+            .unwrap()
+            > 0,
+        "every entry was published or stored between 2000 and 2100"
+    );
+    let in_a_past_day = published_between("2000-01-01T00:00:00Z", "2000-01-02T00:00:00Z");
+    assert_eq!(
+        entry::count_by_user(&db, user_id, &in_a_past_day)
+            .await
+            .unwrap(),
+        0,
+        "nothing was published on 2000-01-01"
+    );
+    let stored_in_2000 = entry::EntryFilter {
+        stored_before: Some("2000-01-01T00:00:00Z".parse().unwrap()),
+        ..Default::default()
+    };
+    assert_eq!(
+        entry::mark_read_by_filter(&db, user_id, &stored_in_2000)
+            .await
+            .unwrap(),
+        0,
+        "nothing was stored by the year 2000"
+    );
+
     // --- retention prune (column-driven make_interval fork) -------------------
     // Backdate the read entry 40 days (PG-only test SQL) and set 30-day
     // retention so it becomes a prune victim.

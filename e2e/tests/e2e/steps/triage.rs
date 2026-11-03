@@ -88,6 +88,13 @@ async fn mark_older_than_a_day(world: &mut RdrsWorld) -> Result<()> {
     mark_read_via_dropdown(world, "1").await
 }
 
+/// A plain form POST (and redirect) after the confirm, not an in-place swap.
+#[when("I mark all of today's entries as read")]
+async fn mark_all_of_today_read(world: &mut RdrsWorld) -> Result<()> {
+    super::keyboard::accept_next_dialog(world).await?;
+    world.driver()?.click("mark-all-btn").await
+}
+
 /// Confirms and swaps like the dropdown.
 #[when("I mark the loaded entries as read")]
 async fn mark_loaded_read(world: &mut RdrsWorld) -> Result<()> {

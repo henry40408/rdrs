@@ -14,6 +14,7 @@
 import { escapeHtml } from '/static/js/utils.js?v=__RDRS_ASSET_VERSION__';
 
 const ICON = {
+  calendar: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   inbox: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.4 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.4-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.8 1.1z"/></svg>',
   star: '<svg class="ico is-filled" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.3 6.6 20l1-6L3.3 9.9l6-.9z"/></svg>',
   sparkle: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-4.9L6 9.3l4.3-1.7z"/><path d="M18 15l.7 1.8L20.5 17.5l-1.8.7L18 20l-.7-1.8L15.5 17.5l1.8-.7z"/></svg>',
@@ -474,6 +475,11 @@ class RdrsSidebar extends HTMLElement {
             const total = data.total_unread || 0;
             totalEl.textContent = total > 0 ? String(total) : '';
         }
+        const todayEl = this.querySelector('#today-count');
+        if (todayEl) {
+            const today = data.total_today || 0;
+            todayEl.textContent = today > 0 ? String(today) : '';
+        }
         const sumEl = this.querySelector('#summarized-count');
         if (sumEl) {
             const sum = data.total_summarized || 0;
@@ -510,6 +516,7 @@ class RdrsSidebar extends HTMLElement {
         const cats = arrangeSidebarRows(data?.categories, sidebarPrefs(data), activeCatId);
         const totalUnread = data ? data.total_unread : 0;
         const totalSummarized = data ? data.total_summarized : 0;
+        const totalToday = data ? data.total_today : 0;
 
         const isActive = (name) => navIsActive(name, active) ? ' active' : '';
 
@@ -580,6 +587,11 @@ class RdrsSidebar extends HTMLElement {
                 <span class="sidebar-item-icon">${ICON.inbox}</span>
                 <span>Unread</span>
                 <span class="sidebar-badge" id="unread-count">${totalUnread > 0 ? totalUnread : ''}</span>
+            </a>
+            <a href="/entries/today" class="sidebar-item${isActive('today')}" data-nav="today" data-testid="nav-today">
+                <span class="sidebar-item-icon">${ICON.calendar}</span>
+                <span>Today</span>
+                <span class="sidebar-badge" id="today-count">${totalToday > 0 ? totalToday : ''}</span>
             </a>
             <a href="/entries/starred" class="sidebar-item${isActive('starred')}" data-nav="starred">
                 <span class="sidebar-item-icon">${ICON.star}</span>

@@ -154,7 +154,9 @@ pub struct MarkAllReadForm {
 
 /// A malformed snapshot is refused rather than ignored: dropping it would mark
 /// everything, which is exactly what the caller asked to avoid.
-fn parse_snapshot(raw: Option<&str>) -> AppResult<Option<chrono::DateTime<chrono::Utc>>> {
+pub(crate) fn parse_snapshot(
+    raw: Option<&str>,
+) -> AppResult<Option<chrono::DateTime<chrono::Utc>>> {
     let Some(raw) = raw else {
         return Ok(None);
     };

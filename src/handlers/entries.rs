@@ -112,7 +112,11 @@ fn is_scoped_entries_path(path: &str, kind: &str) -> bool {
 fn is_entry_list_path(path: &str) -> bool {
     matches!(
         path,
-        "/" | "/entries" | "/entries/read" | "/entries/starred" | "/entries/summarized"
+        "/" | "/entries"
+            | "/entries/read"
+            | "/entries/starred"
+            | "/entries/summarized"
+            | "/entries/today"
     ) || is_scoped_entries_path(path, "categories")
         || is_scoped_entries_path(path, "feeds")
 }

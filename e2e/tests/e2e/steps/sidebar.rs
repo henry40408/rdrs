@@ -240,6 +240,37 @@ async fn summarized_count(world: &mut RdrsWorld, count: String) -> Result<()> {
     .await
 }
 
+#[then(expr = "the sidebar Today item shows a count of {string}")]
+async fn today_count(world: &mut RdrsWorld, count: String) -> Result<()> {
+    let driver = world.driver()?;
+    eventually_eq("the Today count", count, || async {
+        Ok(driver
+            .css(r#"[data-testid="nav-today"] #today-count"#)
+            .await?
+            .content_text()
+            .await?
+            .trim()
+            .to_owned())
+    })
+    .await
+}
+
+/// An empty badge is hidden, so the link's visible text is just its label.
+#[then("the sidebar Today item shows no count")]
+async fn today_has_no_count(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    eventually_eq("the Today link text", "Today".to_owned(), || async {
+        Ok(driver
+            .css(r#"[data-testid="nav-today"]"#)
+            .await?
+            .content_text()
+            .await?
+            .trim()
+            .to_owned())
+    })
+    .await
+}
+
 /// Regression: a reload or `innerHTML` re-render reset `.sidebar-nav` scroll to
 /// the top, hiding the just-clicked category.
 #[when("I scroll the sidebar categories to the bottom")]

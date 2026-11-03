@@ -15,12 +15,26 @@ pub struct CachedChrome {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    /// Unread entries published `today` in `timezone`.
+    pub total_today: i64,
+    /// The user's timezone and the date `total_today` was counted for; see
+    /// [`CachedChrome::is_current`].
+    pub timezone: chrono_tz::Tz,
+    pub today: chrono::NaiveDate,
     /// `feed_id` -> unread count; lets `/feeds` skip its own full-table count.
     pub unread_by_feed: Arc<HashMap<i64, i64>>,
     /// How the client orders and filters the category / feed lists.
     pub sidebar_prefs: crate::models::user_settings::SidebarPrefs,
     /// Entries kept readable offline; same row as `sidebar_prefs`, so free to carry.
     pub offline_keep: i64,
+}
+
+impl CachedChrome {
+    /// False once the user's calendar day has moved on: `total_today` then
+    /// counts yesterday, and nothing busts the cache at midnight.
+    pub fn is_current(&self) -> bool {
+        crate::utils::timezone::today_in(self.timezone) == self.today
+    }
 }
 
 /// Bust count taken before a read-through fill and checked on publish, so a
@@ -144,6 +158,9 @@ mod tests {
             }],
             total_unread: unread,
             total_summarized: 0,
+            total_today: 0,
+            timezone: chrono_tz::Tz::UTC,
+            today: crate::utils::timezone::today_in(chrono_tz::Tz::UTC),
             unread_by_feed: Arc::default(),
             sidebar_prefs: crate::models::user_settings::SidebarPrefs::default(),
             offline_keep: crate::models::user_settings::OFFLINE_KEEP_OFF,
@@ -154,6 +171,20 @@ mod tests {
     fn publish(cache: &SidebarCache, user_id: i64, chrome: CachedChrome) {
         let generation = cache.begin_read(user_id);
         cache.insert_if_current(user_id, generation, chrome);
+    }
+
+    #[test]
+    fn chrome_counted_for_an_earlier_day_is_not_current() {
+        let tz = chrono_tz::Asia::Taipei;
+        let today = crate::utils::timezone::today_in(tz);
+        let counted_on = |day| CachedChrome {
+            timezone: tz,
+            today: day,
+            ..sample_chrome(1)
+        };
+
+        assert!(counted_on(today).is_current());
+        assert!(!counted_on(today.pred_opt().unwrap()).is_current());
     }
 
     // Not `default()`: `RDRS_DISABLE_SIDEBAR_CACHE` would disable caching.

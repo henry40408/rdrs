@@ -222,6 +222,11 @@ pub fn create_router(state: AppState) -> Router {
             "/entries/summarized",
             get(handlers::pages::summarized_entries_page),
         )
+        .route("/entries/today", get(handlers::pages::today_entries_page))
+        .route(
+            "/entries/today/mark-read",
+            post(handlers::pages::today_mark_read_form),
+        )
         .route(
             "/entries/offline",
             get(handlers::pages::offline_entries_page),
