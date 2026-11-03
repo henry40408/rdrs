@@ -8,6 +8,9 @@
 <template data-swap-target="[data-search-error]">
 <div class="search-error search-drawer-error" role="alert" data-search-error data-testid="scoped-search-error"{% if entries_layout.search_error.is_none() %} hidden{% endif %}>{% if let Some(err) = entries_layout.search_error.as_ref() %}{{ err }}{% endif %}</div>
 </template>
+<template data-swap-target="[data-mark-all-slot]">
+<span class="mark-all-slot" data-mark-all-slot>{% include "_mark_all_button.html" %}</span>
+</template>
 <template data-swap-target="[data-mark-matching-slot]">
 <span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>
 </template>

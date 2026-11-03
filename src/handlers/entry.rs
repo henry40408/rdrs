@@ -35,6 +35,10 @@ pub struct NeighborsQuery {
     pub read_after: Option<String>,
     /// The list page's `?q=` search; parsed like the list pages do.
     pub q: Option<String>,
+    /// `/entries/today`: restrict to what was published today in the user's
+    /// timezone.
+    #[serde(default)]
+    pub today: bool,
 }
 
 pub async fn get_entry_neighbors(
@@ -80,6 +84,13 @@ async fn neighbors_filter(
         None => None,
     };
 
+    let published_between = if query.today {
+        let tz = user_settings::get_timezone(&state.db, user_id).await?;
+        entry::today_unread_filter(tz).published_between
+    } else {
+        None
+    };
+
     let filter = entry::EntryFilter {
         feed_id: query.feed_id,
         category_id: query.category_id,
@@ -89,6 +100,7 @@ async fn neighbors_filter(
         has_summary: query.has_summary,
         read_after: query.read_after,
         query: search,
+        published_between,
         ..Default::default()
     };
     Ok((user_id, filter))

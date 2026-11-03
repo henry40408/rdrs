@@ -42,7 +42,7 @@
             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
         </div>
         {% endif %}
-        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() %}
+        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() || entries_layout.mark_all_action.is_some() %}
         <div class="filter-bar">
             {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
             <div class="form-group form-group-inline" data-status-filter>
@@ -62,6 +62,9 @@
                     <option value="all">All entries</option>
                 </select>
             </div>
+            {% endif %}
+            {% if entries_layout.mark_all_action.is_some() %}
+            <span class="mark-all-slot" data-mark-all-slot>{% include "_mark_all_button.html" %}</span>
             {% endif %}
             {% if entries_layout.search_action.is_some() %}
             <span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>

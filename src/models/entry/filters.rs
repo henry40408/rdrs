@@ -109,6 +109,8 @@ pub(super) fn is_no_entry_side_predicate(filter: &EntryFilter) -> bool {
         && !filter.read_only
         && filter.search.is_none()
         && filter.has_summary.is_none()
+        && filter.published_between.is_none()
+        && filter.stored_before.is_none()
         && filter.query.is_none()
 }
 
@@ -127,6 +129,15 @@ pub(super) fn published_sort_entry_hint(filter: &EntryFilter) -> &'static str {
         " INDEXED BY idx_entry_sort_ts"
     } else {
         ""
+    }
+}
+
+/// `SQLite` keeps timestamps as `YYYY-MM-DD HH:MM:SS` TEXT, and an RFC 3339
+/// bind would mis-order against it; `PostgreSQL` compares natively.
+fn timestamp_bind(instant: DateTime<Utc>, dialect: Dialect) -> Bind {
+    match dialect {
+        Dialect::Postgres => Bind::Ts(instant),
+        Dialect::Sqlite => Bind::Text(instant.format("%Y-%m-%d %H:%M:%S").to_string()),
     }
 }
 
@@ -192,6 +203,22 @@ pub(super) fn apply_filter_conditions(
             dialect.ci_like("e.content_text", idx)
         ));
         binds.push(Bind::Text(search_pattern));
+    }
+
+    if let Some((start, end)) = filter.published_between {
+        let sort_ts = "COALESCE(e.published_at, e.created_at)";
+        let first = binds.len() + 1;
+        binds.push(timestamp_bind(start, dialect));
+        binds.push(timestamp_bind(end, dialect));
+        conditions.push(format!(
+            "({sort_ts} >= ${first} AND {sort_ts} < ${})",
+            first + 1
+        ));
+    }
+
+    if let Some(stored_before) = filter.stored_before {
+        conditions.push(format!("e.created_at < ${}", binds.len() + 1));
+        binds.push(timestamp_bind(stored_before, dialect));
     }
 
     if let Some(has_summary) = filter.has_summary {

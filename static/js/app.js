@@ -5,6 +5,7 @@
 import {
     installMarkAboveButton,
     installMarkAsReadDropdown,
+    installSnapshotFormSync,
     markLoadedEntriesAsRead,
 } from './bulk-read.js?v=__RDRS_ASSET_VERSION__';
 import { installEntriesSearch } from './entries-search.js?v=__RDRS_ASSET_VERSION__';
@@ -250,7 +251,11 @@ function isMorphTarget(selector) {
 /// Targets that also live inside `[data-list-pane]`, which a pane swap replaces
 /// without touching `lastServerMarkup`: a cached response would then match a
 /// stale banner or button and skip the swap that should have fixed it.
-const ALWAYS_SWAP = new Set(['[data-search-error]', '[data-mark-matching-slot]']);
+const ALWAYS_SWAP = new Set([
+    '[data-search-error]',
+    '[data-mark-matching-slot]',
+    '[data-mark-all-slot]',
+]);
 
 /// Client-written attributes a morph must keep. Losing `data-…-bound` would
 /// bind a second listener: one click, two POSTs.
@@ -782,6 +787,7 @@ function currentEntryFilterParams() {
     else if (pathname === '/entries/read') out.set('read_only', 'true');
     else if (pathname === '/entries/starred') out.set('starred_only', 'true');
     else if (pathname === '/entries/summarized') out.set('has_summary', 'true');
+    else if (pathname === '/entries/today') { out.set('unread_only', 'true'); out.set('today', 'true'); }
     else if (feed) { out.set('feed_id', feed[1]); applyStatus(status); }
     else if (cat) { out.set('category_id', cat[1]); applyStatus(status); }
     // Echo `data-snapshot-at` as `read_after` so entries read during this view
@@ -1048,6 +1054,7 @@ installKeyboard({
 
 installSummaryActions({ currentPaneEntryId });
 
+installSnapshotFormSync();
 installMarkAsReadDropdown({ performSwap });
 document.addEventListener('rdrs:swap-complete', () => installMarkAsReadDropdown({ performSwap }));
 

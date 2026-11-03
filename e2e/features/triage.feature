@@ -42,6 +42,24 @@ Feature: Triage entries (star, mark-read, summarize)
     Then I see 0 entries in the entry list
     And the document did not reload
 
+  Scenario: Today lists what was published today and counts it in the sidebar
+    Given the feed "Triage Feed" has an entry titled "Ancient News" published 3 days ago
+    When I visit "/entries/today"
+    Then I see 3 entries in the entry list
+    And the entry list does not show "Ancient News"
+    And the sidebar Today item shows a count of "3"
+
+  Scenario: Marking all of Today read leaves older unread entries in Unread
+    Given the feed "Triage Feed" has an entry titled "Ancient News" published 3 days ago
+    And the stored entries are older than the snapshot granularity
+    When I visit "/entries/today"
+    And I mark all of today's entries as read
+    Then I see 0 entries in the entry list
+    And the sidebar Today item shows no count
+    When I open the inbox
+    Then I see 1 entry in the entry list
+    And the entry list shows "Ancient News"
+
   # Marked by what the page showed, not by what the database holds by now.
   Scenario: Marking all entries read leaves one fetched after the list was rendered
     Given the stored entries are older than the snapshot granularity

@@ -3013,3 +3013,124 @@ async fn mark_all_read_snapshot_is_exclusive_of_the_render_second() {
         0
     );
 }
+
+/// Entries around the 2026-05-01 day in Taipei, which is `[04-30 16:00Z,
+/// 05-01 16:00Z)`. Returns the user id and that day's filter.
+async fn seed_entries_around_a_taipei_day(db: &Db) -> (i64, EntryFilter) {
+    let user_id = create_test_user(db, "u").await;
+    let category_id = create_test_category(db, user_id, "c").await;
+    let feed_id = create_test_feed(db, category_id, "https://example.com/f.xml").await;
+    // (guid, published_at, created_at, read_at)
+    let rows: [(&str, Option<&str>, &str, Option<&str>); 7] = [
+        (
+            "first-second",
+            Some("2026-04-30 16:00:00"),
+            "2026-04-30 17:00:00",
+            None,
+        ),
+        (
+            "last-second",
+            Some("2026-05-01 15:59:59"),
+            "2026-05-01 15:59:59",
+            None,
+        ),
+        (
+            "next-day",
+            Some("2026-05-01 16:00:00"),
+            "2026-05-01 16:00:00",
+            None,
+        ),
+        (
+            "prev-day",
+            Some("2026-04-30 15:59:59"),
+            "2026-04-30 15:59:59",
+            None,
+        ),
+        ("undated", None, "2026-05-01 03:00:00", None),
+        ("undated-prev-day", None, "2026-04-30 03:00:00", None),
+        (
+            "already-read",
+            Some("2026-05-01 02:00:00"),
+            "2026-05-01 02:00:00",
+            Some("2026-05-01 03:00:00"),
+        ),
+    ];
+    for (guid, published, created, read) in rows {
+        crate::db_execute!(
+            db,
+            "INSERT INTO entry (feed_id, guid, published_at, created_at, read_at) \
+             VALUES ($1, $2, $3, $4, $5)",
+            feed_id,
+            guid,
+            published,
+            created,
+            read
+        )
+        .unwrap();
+    }
+    let taipei: chrono_tz::Tz = "Asia/Taipei".parse().unwrap();
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+    let filter = EntryFilter {
+        unread_only: true,
+        published_between: Some(crate::utils::timezone::day_bounds_utc(day, taipei)),
+        ..Default::default()
+    };
+    (user_id, filter)
+}
+
+#[tokio::test]
+async fn today_filter_counts_unread_entries_published_inside_the_local_day() {
+    let db = setup_db().await;
+    let (user_id, filter) = seed_entries_around_a_taipei_day(&db).await;
+
+    // The day starts inclusive and ends exclusive, an undated entry counts by
+    // when it was stored, and a read entry never counts.
+    assert_eq!(count_by_user(&db, user_id, &filter).await.unwrap(), 3);
+}
+
+#[tokio::test]
+async fn today_filter_marks_only_what_it_counts() {
+    let db = setup_db().await;
+    let (user_id, filter) = seed_entries_around_a_taipei_day(&db).await;
+
+    assert_eq!(mark_read_by_filter(&db, user_id, &filter).await.unwrap(), 3);
+    assert_eq!(
+        unread_guids(&db).await,
+        ["next-day", "prev-day", "undated-prev-day"]
+    );
+}
+
+#[tokio::test]
+async fn stored_before_leaves_entries_stored_since_the_render() {
+    let db = setup_db().await;
+    let (user_id, mut filter) = seed_entries_around_a_taipei_day(&db).await;
+    // "first-second" was stored at 17:00; a render at 17:00 sharp must not take
+    // it, nor the two stored later in the day.
+    filter.stored_before = Some(
+        DateTime::parse_from_rfc3339("2026-04-30T17:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc),
+    );
+
+    assert_eq!(mark_read_by_filter(&db, user_id, &filter).await.unwrap(), 0);
+
+    filter.stored_before = Some(
+        DateTime::parse_from_rfc3339("2026-05-01T04:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc),
+    );
+    // Now "first-second" and "undated" (stored 03:00) qualify; "last-second"
+    // (stored 15:59) does not.
+    assert_eq!(mark_read_by_filter(&db, user_id, &filter).await.unwrap(), 2);
+    assert!(unread_guids(&db).await.contains(&"last-second".to_string()));
+}
+
+#[tokio::test]
+async fn today_filter_belongs_to_one_user() {
+    let db = setup_db().await;
+    let (_, filter) = seed_entries_around_a_taipei_day(&db).await;
+    let other = create_test_user(&db, "other").await;
+
+    assert_eq!(count_by_user(&db, other, &filter).await.unwrap(), 0);
+    assert_eq!(mark_read_by_filter(&db, other, &filter).await.unwrap(), 0);
+}

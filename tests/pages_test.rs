@@ -4527,3 +4527,198 @@ async fn test_feeds_page_unread_count_follows_mark_read() {
     }
     panic!("/feeds kept the old unread count: {after}");
 }
+
+// --- Today ---
+
+/// Admin signed in with a feed holding two entries published just now (the
+/// first newer) and one published three days ago. Returns the app and the three entry ids.
+async fn app_with_today_entries() -> (TestApp, [i64; 3]) {
+    let mut app = create_test_app(default_test_config()).await;
+    let (admin_id, _) = setup_users(&app.db).await;
+    let cat = rdrs::models::category::create_category(&app.db, admin_id, "TodayCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/today-feed",
+            title: Some("Today Feed"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut ids = [0; 3];
+    for (slot, (guid, title, age)) in [
+        ("today-a", "Fresh Alpha", chrono::Duration::zero()),
+        ("today-b", "Fresh Beta", chrono::Duration::seconds(5)),
+        ("old", "Stale Gamma", chrono::Duration::days(3)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (entry, _) = rdrs::models::entry::upsert_entry(
+            &app.db,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid,
+                title: Some(title),
+                link: None,
+                content: None,
+                summary: None,
+                author: None,
+                published_at: Some(chrono::Utc::now() - age),
+            },
+        )
+        .await
+        .unwrap();
+        ids[slot] = entry.id;
+    }
+    login(&mut app.server, "admin").await;
+    (app, ids)
+}
+
+async fn is_read(app: &TestApp, id: i64) -> bool {
+    rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        id
+    )
+    .unwrap()
+    .is_some()
+}
+
+#[tokio::test]
+async fn test_today_page_lists_only_entries_published_today() {
+    let (app, _) = app_with_today_entries().await;
+
+    let body = common::get_ok(&app.server, "/entries/today").await;
+
+    assert!(body.contains("Fresh Alpha") && body.contains("Fresh Beta"));
+    assert!(!body.contains("Stale Gamma"), "published three days ago");
+    assert!(body.contains(r#"data-testid="mark-all-form""#));
+    assert!(
+        !body.contains(r#"data-testid="tab-all""#),
+        "Today is not one of the All/Read/Starred/Summarized tabs"
+    );
+}
+
+#[tokio::test]
+async fn test_today_sidebar_badge_counts_what_the_page_lists() {
+    let (app, _) = app_with_today_entries().await;
+
+    let body = common::get_ok(&app.server, "/entries/today").await;
+
+    assert!(
+        body.contains(r#""total_today":2"#),
+        "the bootstrap carries the badge count"
+    );
+}
+
+#[tokio::test]
+async fn test_today_mark_read_marks_only_todays_entries() {
+    let (app, [alpha, beta, old]) = app_with_today_entries().await;
+    // The page's day comes from its snapshot, so it must be a moment of today.
+    let after_the_seed = (chrono::Utc::now() + chrono::Duration::seconds(30))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+
+    let response = app
+        .server
+        .post("/entries/today/mark-read")
+        .form(&[("snapshot", after_the_seed.as_str())])
+        .await;
+
+    response.assert_status_see_other();
+    assert_eq!(response.header(header::LOCATION), "/entries/today");
+    assert!(is_read(&app, alpha).await && is_read(&app, beta).await);
+    assert!(
+        !is_read(&app, old).await,
+        "an older unread entry stays unread"
+    );
+}
+
+#[tokio::test]
+async fn test_today_mark_read_leaves_entries_stored_after_the_snapshot() {
+    let (app, [alpha, beta, _]) = app_with_today_entries().await;
+
+    app.server
+        .post("/entries/today/mark-read")
+        .form(&[("snapshot", "2000-01-01 00:00:00")])
+        .await
+        .assert_status_see_other();
+
+    assert!(!is_read(&app, alpha).await && !is_read(&app, beta).await);
+}
+
+#[tokio::test]
+async fn test_today_mark_read_refuses_a_malformed_snapshot() {
+    let (app, [alpha, beta, _]) = app_with_today_entries().await;
+
+    let response = app
+        .server
+        .post("/entries/today/mark-read")
+        .form(&[("snapshot", "yesterday")])
+        .await;
+
+    // Dropping it would mark everything, which the snapshot exists to prevent.
+    response.assert_status_see_other();
+    assert_eq!(response.header(header::LOCATION), "/entries/today");
+    assert!(!is_read(&app, alpha).await && !is_read(&app, beta).await);
+}
+
+#[tokio::test]
+async fn test_today_neighbors_stay_inside_today() {
+    let (app, [alpha, beta, _]) = app_with_today_entries().await;
+
+    // Beta is the older of today's two; the entry older still is not in Today.
+    let neighbors: serde_json::Value = app
+        .server
+        .get(&format!(
+            "/api/entries/{beta}/neighbors?unread_only=true&today=true"
+        ))
+        .await
+        .json();
+
+    assert_eq!(neighbors["prev_id"].as_i64(), Some(alpha));
+    assert!(neighbors["next_id"].is_null(), "{neighbors}");
+}
+
+#[tokio::test]
+async fn test_today_mark_read_requires_a_snapshot() {
+    let (app, [alpha, beta, _]) = app_with_today_entries().await;
+
+    let response = app
+        .server
+        .post("/entries/today/mark-read")
+        .form(&[("unrelated", "x")])
+        .await;
+
+    response.assert_status_see_other();
+    assert!(!is_read(&app, alpha).await && !is_read(&app, beta).await);
+}
+
+#[tokio::test]
+async fn test_today_mark_all_follows_the_scoped_search() {
+    let (app, _) = app_with_today_entries().await;
+    let button = r#"data-testid="mark-all-btn""#;
+
+    let page = common::get_ok(&app.server, "/entries/today").await;
+    let searched = common::get_ok(&app.server, "/entries/today?q=Alpha").await;
+    let live = common::get_ok(&app.server, "/entries/today?fragment=1&q=Alpha").await;
+    let cleared = common::get_ok(&app.server, "/entries/today?fragment=1&q=").await;
+
+    assert!(page.contains(button));
+    assert!(
+        !searched.contains(button),
+        "it would mark rows the search hides"
+    );
+    assert!(
+        searched.contains("data-mark-all-slot"),
+        "the slot stays so a later refresh can bring the button back"
+    );
+    assert!(!live.contains(button) && live.contains("data-mark-all-slot"));
+    assert!(cleared.contains(button));
+}

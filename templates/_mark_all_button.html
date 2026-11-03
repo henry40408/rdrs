@@ -1,0 +1,10 @@
+{%- import "macros.html" as macros -%}
+{# Hidden while searching: it would mark rows the list does not show. #}
+{% if let Some(action) = entries_layout.mark_all_action.as_ref() %}{% if entries_layout.search.is_none() %}
+{# `data-snapshot-from-list` refreshes the field at submit, after any in-place list refresh. #}
+<form class="form-group form-group-inline" method="post" action="{{ action }}" data-confirm="Mark all of today's unread entries as read?" data-snapshot-from-list data-testid="mark-all-form">
+    {% call macros::csrf_field(csrf_token) %}{% endcall %}
+    <input type="hidden" name="snapshot" value="{{ entries_layout.snapshot_at }}">
+    <button type="submit" class="btn btn-secondary" data-testid="mark-all-btn">Mark all as Read</button>
+</form>
+{% endif %}{% endif %}

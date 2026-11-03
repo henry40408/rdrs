@@ -215,6 +215,9 @@ pub struct EntriesLayoutContext {
     pub status_filter: Option<String>,
     /// Show "Mark Above as Read" (marks only rows currently in the DOM).
     pub show_mark_above: bool,
+    /// Form action of a "Mark all as Read" button for the whole list (the
+    /// POST carries `snapshot_at`); `None` hides it.
+    pub mark_all_action: Option<String>,
     /// Render onboarding instead of the empty state (landing page, no feeds).
     pub onboarding: bool,
     /// See `snapshot_now()`.
@@ -644,6 +647,10 @@ struct EntriesTab {
     empty_title: &'static str,
     empty_detail: &'static str,
     mark_as_read_scope: Option<&'static str>,
+    /// See [`EntriesLayoutContext::mark_all_action`].
+    mark_all_action: Option<&'static str>,
+    /// All/Read/Starred/Summarized bar; off for pages that are not one of them.
+    show_tab_bar: bool,
     filter: entry::EntryFilter,
     sort: entry::EntrySortOrder,
 }
@@ -670,11 +677,16 @@ async fn entries_tab_page(
         None
     };
     let search = scoped_search(query.q.as_deref());
+    let mut filter = tab.filter;
+    if filter.unread_only {
+        // Only set by the Load-More form, so entries read meanwhile stay listed.
+        filter.read_after = query.snapshot.clone();
+    }
     let (entries, next_cursor) = build_searched_entries_page(
         &state,
         SearchedEntriesPage {
             user_id,
-            filter: tab.filter,
+            filter,
             search: &search,
             sort: tab.sort,
             page_size,
@@ -704,8 +716,9 @@ async fn entries_tab_page(
         empty_title: tab.empty_title,
         empty_detail: tab.empty_detail,
         path: tab.path.to_string(),
-        show_tab_bar: true,
+        show_tab_bar: tab.show_tab_bar,
         mark_as_read_scope: tab.mark_as_read_scope.map(str::to_string),
+        mark_all_action: tab.mark_all_action.map(str::to_string),
         snapshot_at,
         search_action: Some(tab.path.to_string()),
         search: search.raw,
@@ -759,6 +772,8 @@ pub async fn entries_page(
         empty_title: "Nothing to read yet",
         empty_detail: "Subscribe to a few feeds and their entries will gather here.",
         mark_as_read_scope: Some("user/-/state/com.google/reading-list"),
+        mark_all_action: None,
+        show_tab_bar: true,
         filter: entry::EntryFilter::default(),
         sort: entry::EntrySortOrder::PublishedAt,
     };
@@ -801,6 +816,7 @@ pub async fn entry_page(
         "read" => "/entries/read".to_string(),
         "starred" => "/entries/starred".to_string(),
         "summarized" => "/entries/summarized".to_string(),
+        "today" => "/entries/today".to_string(),
         "entries" => "/entries".to_string(),
         "search" => "/search".to_string(),
         _ => "/".to_string(),
@@ -824,6 +840,8 @@ pub async fn read_entries_page(
         empty_title: "No read entries yet",
         empty_detail: "Entries stay here once you've opened and read them.",
         mark_as_read_scope: None,
+        mark_all_action: None,
+        show_tab_bar: true,
         filter: entry::EntryFilter {
             read_only: true,
             ..Default::default()
@@ -847,6 +865,8 @@ pub async fn starred_entries_page(
         empty_title: "No starred entries",
         empty_detail: "Star an entry and it'll wait for you here.",
         mark_as_read_scope: None,
+        mark_all_action: None,
+        show_tab_bar: true,
         filter: entry::EntryFilter {
             starred_only: true,
             ..Default::default()
@@ -928,6 +948,8 @@ pub async fn summarized_entries_page(
         empty_title: "No summaries yet",
         empty_detail: "Entries you summarize are collected on this page.",
         mark_as_read_scope: None,
+        mark_all_action: None,
+        show_tab_bar: true,
         filter: entry::EntryFilter {
             has_summary: Some(true),
             ..Default::default()
@@ -935,6 +957,89 @@ pub async fn summarized_entries_page(
         sort: entry::EntrySortOrder::SummarizedAt,
     };
     entries_tab_page(tab, auth_user, state, flash, query).await
+}
+
+/// `GET /entries/today` — unread entries published today in the user's timezone.
+pub async fn today_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    let tz = user_settings::get_timezone(&state.db, auth_user.user.id)
+        .await
+        .unwrap_or(chrono_tz::Tz::UTC);
+    // Load More carries the page's snapshot; stay on the day it was rendered.
+    let day = crate::handlers::greader::tag::parse_snapshot(query.snapshot.as_deref())
+        .ok()
+        .flatten()
+        .map_or_else(
+            || crate::utils::timezone::today_in(tz),
+            |snapshot| entry::day_of_snapshot(snapshot, tz),
+        );
+    let tab = EntriesTab {
+        path: "/entries/today",
+        title: "Today",
+        active: "today",
+        empty_title: "Nothing new today",
+        empty_detail: "Unread entries published today show up here.",
+        mark_as_read_scope: None,
+        mark_all_action: Some("/entries/today/mark-read"),
+        show_tab_bar: false,
+        filter: entry::unread_filter_on(day, tz),
+        sort: entry::EntrySortOrder::PublishedAt,
+    };
+    entries_tab_page(tab, auth_user, state, flash, query).await
+}
+
+#[derive(serde::Deserialize)]
+pub struct TodayMarkReadForm {
+    /// UTC render time of the list the button was on; see `snapshot_now()`.
+    pub snapshot: Option<String>,
+}
+
+/// `POST /entries/today/mark-read` — mark today's unread entries read, except
+/// those stored after the page was rendered.
+pub async fn today_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    axum::Form(form): axum::Form<TodayMarkReadForm>,
+) -> Response {
+    const BACK: &str = "/entries/today";
+    let user_id = auth_user.user.id;
+    // Absent or malformed would mean "no limit", which the snapshot exists to prevent.
+    let Ok(Some(stored_before)) =
+        crate::handlers::greader::tag::parse_snapshot(form.snapshot.as_deref())
+    else {
+        return FlashRedirect::error(BACK, "The page is out of date. Reload and try again.")
+            .into_response();
+    };
+    let tz = user_settings::get_timezone(&state.db, user_id)
+        .await
+        .unwrap_or(chrono_tz::Tz::UTC);
+    let filter = entry::EntryFilter {
+        stored_before: Some(stored_before),
+        ..entry::unread_filter_on(entry::day_of_snapshot(stored_before, tz), tz)
+    };
+    let affected = match entry::mark_read_by_filter(&state.db, user_id, &filter).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(
+                event = "entry.mark_today_read_failed",
+                user_id,
+                error = %e,
+                "mark_read_by_filter failed"
+            );
+            return FlashRedirect::error(BACK, "Failed to mark today's entries as read.")
+                .into_response();
+        }
+    };
+    if affected > 0 {
+        state.sidebar_cache.bust(user_id);
+        state.events.emit_sidebar(user_id);
+    }
+    let noun = if affected == 1 { "entry" } else { "entries" };
+    FlashRedirect::success(BACK, format!("Marked {affected} {noun} as read.")).into_response()
 }
 
 /// Category- or feed-specific settings for [`scoped_entries_page`].
@@ -1428,6 +1533,7 @@ pub async fn build_app_layout(
         categories: chrome.categories,
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
+        total_today: chrome.total_today,
         via_forward_auth: auth_user.via_forward_auth,
         sidebar_sort: chrome.sidebar_prefs.sort,
         sidebar_hide_read: chrome.sidebar_prefs.hide_read,

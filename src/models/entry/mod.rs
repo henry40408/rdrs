@@ -83,6 +83,15 @@ pub struct EntryFilter {
     pub read_only: bool,
     pub search: Option<String>,
     pub has_summary: Option<bool>,
+    /// `COALESCE(published_at, created_at)` in `[start, end)`; the sort column,
+    /// so the unread sort index can serve the range. Set by `/entries/today`.
+    #[serde(skip)]
+    pub published_between: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    /// Only entries stored strictly before this instant: lets a bulk mark skip
+    /// what arrived after the list it was clicked on was rendered. Strict,
+    /// because the instant is truncated to the second.
+    #[serde(skip)]
+    pub stored_before: Option<DateTime<Utc>>,
     /// With `unread_only`, entries read at-or-after this UTC `YYYY-MM-DD HH:MM:SS`
     /// instant still count as unread, so reading-pane navigation can return to them.
     pub read_after: Option<String>,
@@ -641,9 +650,22 @@ pub async fn count_by_user(db: &Db, user_id: i64, filter: &EntryFilter) -> AppRe
 
     let where_clause = conditions.join(" AND ");
 
+    // Without a hint SQLite scans every entry to count one day. The covering
+    // `(feed_id, sort_ts)` index lets category -> feed -> entry count each
+    // feed's day range without reading entry rows. `index_hint` is a no-op on PG.
+    // A snapshot's `read_at >= ?` is outside the partial index, so skip it then.
+    let hint = if filter.published_between.is_some()
+        && filter.unread_only
+        && filter.read_after.is_none()
+    {
+        dialect.index_hint(" INDEXED BY idx_entry_unread_feed_sort")
+    } else {
+        ""
+    };
+
     let sql = format!(
         "SELECT COUNT(*) \
-         FROM entry e \
+         FROM entry e{hint} \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
          WHERE {where_clause}"
@@ -652,6 +674,28 @@ pub async fn count_by_user(db: &Db, user_id: i64, filter: &EntryFilter) -> AppRe
     fetch_scalar_i64(db, sql, binds)
         .await
         .map_err(AppError::Database)
+}
+
+/// Unread entries published today in `tz`: the one definition behind the
+/// `/entries/today` list, its sidebar badge, prev/next and mark-all.
+pub fn today_unread_filter(tz: chrono_tz::Tz) -> EntryFilter {
+    unread_filter_on(crate::utils::timezone::today_in(tz), tz)
+}
+
+/// [`today_unread_filter`] for a given local day. Follow-up requests (Load More,
+/// mark-all) take the day of the page's snapshot so they keep meaning the list
+/// the reader saw when midnight passes in between.
+pub fn unread_filter_on(day: chrono::NaiveDate, tz: chrono_tz::Tz) -> EntryFilter {
+    EntryFilter {
+        unread_only: true,
+        published_between: Some(crate::utils::timezone::day_bounds_utc(day, tz)),
+        ..Default::default()
+    }
+}
+
+/// Local day of a snapshot taken at `instant`.
+pub fn day_of_snapshot(instant: DateTime<Utc>, tz: chrono_tz::Tz) -> chrono::NaiveDate {
+    instant.with_timezone(&tz).date_naive()
 }
 
 pub async fn count_unread_by_user(db: &Db, user_id: i64) -> AppResult<i64> {
