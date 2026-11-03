@@ -650,10 +650,15 @@ pub async fn count_by_user(db: &Db, user_id: i64, filter: &EntryFilter) -> AppRe
 
     let where_clause = conditions.join(" AND ");
 
-    // Without it SQLite scans every entry to count one day; `index_hint` is a
-    // no-op on PG.
-    let hint = if filter.published_between.is_some() {
-        dialect.index_hint(published_sort_entry_hint(filter))
+    // Without a hint SQLite scans every entry to count one day. The covering
+    // `(feed_id, sort_ts)` index lets category -> feed -> entry count each
+    // feed's day range without reading entry rows. `index_hint` is a no-op on PG.
+    // A snapshot's `read_at >= ?` is outside the partial index, so skip it then.
+    let hint = if filter.published_between.is_some()
+        && filter.unread_only
+        && filter.read_after.is_none()
+    {
+        dialect.index_hint(" INDEXED BY idx_entry_unread_feed_sort")
     } else {
         ""
     };
