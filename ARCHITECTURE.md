@@ -56,6 +56,7 @@ src/
 │   ├── invite.rs        # Anonymous redemption of a one-time account link
 │   ├── admin.rs         # Admin operations
 │   ├── user.rs          # User operations + sidebar payload
+│   ├── client_info.rs   # Browser-only facts (timezone) compared with settings
 │   ├── categories.rs    # Category form actions (SSR)
 │   ├── feeds.rs         # Feed form actions: create/edit/delete/refresh/OPML import (SSR)
 │   ├── feed.rs          # Per-feed JSON endpoints (e.g. icon)
@@ -285,6 +286,24 @@ client-side (`installSnapshotFormSync`).
 
 - **auth.rs** - `AuthUser` from the session cookie; `AdminUser` for admin routes
 - **flash.rs** - flash messages in cookies
+
+### Browser-only facts
+
+`PUT /api/user/client-info` (`handlers/client_info.rs`) takes what only the
+browser knows (today its timezone). It stores nothing: it compares each fact
+with the account's settings and answers `200 {"hints": [...]}`; the page shows
+each hint with `<rdrs-flash>.show()`. A hint links to the settings form
+(`/user-settings?timezone=…` pre-fills the field, marked unsaved; the user still
+presses Save). Hints are not flash cookies: the report is sent after the page
+has loaded, and a cookie set then is consumed by whichever request reads flashes
+next, often a fragment swap that renders none.
+
+`static/js/client-info.js` sends a report only when it differs from the last one
+this browser delivered (`localStorage`, keyed per account), which is what makes
+an offer one-time per browser. Zones are compared by behaviour over the next
+year (`timezone::same_rules`), since browsers report aliases such as
+`Asia/Calcutta`. The body is a typed struct of `Option` fields, not a free-form
+map: a new fact is one field plus one check function.
 
 ### Account Creation
 

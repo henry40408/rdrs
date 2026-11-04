@@ -107,6 +107,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/session", delete(handlers::auth::logout))
         .route("/api/session/reauth", post(handlers::auth::reauthenticate))
         .route("/api/user", get(handlers::user::get_current_user))
+        .route(
+            "/api/user/client-info",
+            put(handlers::client_info::put_client_info),
+        )
         .route("/api/sidebar", get(handlers::user::get_sidebar))
         .route("/api/offline/manifest", get(handlers::offline::manifest))
         .route(

@@ -143,6 +143,7 @@
                         <datalist id="timezone-list">
                             {% for v in timezone_suggestions %}<option value="{{ v }}">{% endfor %}
                         </datalist>
+                        {% if timezone_is_suggestion %}<span class="banner banner--warning" role="status" data-testid="timezone-suggestion">Filled in from your browser's timezone. It is not saved yet: check it, then press Save.</span>{% endif %}
                         <span class="muted text-xs">An IANA name such as Asia/Taipei. Decides where <a href="/statistics">Statistics</a> cuts one day from the next; times elsewhere already show in your browser's timezone. Default UTC.</span>
                     </div>
                     <div class="form-group">

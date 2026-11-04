@@ -26,6 +26,8 @@
     <script type="module" src="/static/js/pwa.js?v={{ layout.git_version }}"></script>
     {# Offline reading; runs after paint, no modulepreload. #}
     <script type="module" src="/static/js/offline.js?v={{ layout.git_version }}"></script>
+    {# Reports browser-only facts once per change; after paint, no modulepreload. #}
+    <script type="module" src="/static/js/client-info.js?v={{ layout.git_version }}"></script>
     {% block page_script %}{% endblock %}
 {% endblock %}
 

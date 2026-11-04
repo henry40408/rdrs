@@ -38,3 +38,27 @@ Feature: Preferences
   Scenario: Setting a read-article retention period persists
     When I set the retention period to "30" days
     Then the retention period field shows "30"
+
+  # The browser reports its timezone once; the server answers with a notice that
+  # links to the settings form, where the user confirms before anything changes.
+  # The harness pins every browser to UTC, the account's default, so nothing is
+  # offered until a scenario moves the browser.
+  Scenario: A browser in another timezone is offered a change that the user confirms
+    When my browser is in the timezone "Asia/Taipei"
+    And I open the inbox
+    Then I am offered to review the timezone "Asia/Taipei"
+    When I follow the timezone suggestion for "Asia/Taipei"
+    Then the timezone field shows "Asia/Taipei"
+    And the timezone is marked as not saved
+    When I save the preferences
+    Then the timezone field shows "Asia/Taipei"
+    And the timezone is not marked as not saved
+
+  Scenario: An offer that was ignored is not made again
+    When my browser is in the timezone "Asia/Taipei"
+    And I open the inbox
+    Then I am offered to review the timezone "Asia/Taipei"
+    When I watch for browser reports
+    And I open the inbox
+    Then no browser report is sent
+    And I am not offered to review the timezone

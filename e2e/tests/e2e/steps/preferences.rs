@@ -1,9 +1,9 @@
-//! Theme, password and retention settings.
+//! Theme, password, retention and timezone settings.
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
 use rdrs_e2e::dom::Dom;
-use rdrs_e2e::wait::eventually_eq;
+use rdrs_e2e::wait::{eventually, eventually_eq};
 use rdrs_e2e::world::RdrsWorld;
 
 /// Shares test ids with the password form, hence the `form[action=…]` prefix.
@@ -131,4 +131,98 @@ async fn retention_shows(world: &mut RdrsWorld, value: String) -> Result<()> {
         driver.value_of("retention-read-days")
     })
     .await
+}
+
+/// The page reads the zone when it loads, so this applies to the pages opened
+/// after it.
+#[when(expr = "my browser is in the timezone {string}")]
+async fn browser_in_timezone(world: &mut RdrsWorld, zone: String) -> Result<()> {
+    world
+        .driver()?
+        .cdp()
+        .send_raw(
+            "Emulation.setTimezoneOverride",
+            serde_json::json!({ "timezoneId": zone }),
+        )
+        .await?;
+    Ok(())
+}
+
+/// The report is sent after the page loads, and the notice appears on that
+/// same page when the reply arrives.
+#[then(expr = "I am offered to review the timezone {string}")]
+async fn offered_timezone(world: &mut RdrsWorld, zone: String) -> Result<()> {
+    eventually("the browser timezone offer", || async {
+        Ok(world
+            .driver()?
+            .css_opt(&timezone_action(&zone))
+            .await?
+            .is_some())
+    })
+    .await
+}
+
+/// The link that suggests `zone`.
+fn timezone_action(zone: &str) -> String {
+    let encoded = zone.replace('/', "%2F");
+    format!(r#"[data-testid="flash-action"][href$="timezone={encoded}"]"#)
+}
+
+#[then("I am not offered to review the timezone")]
+async fn not_offered_timezone(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.expect_absent("flash-action").await
+}
+
+#[when("I watch for browser reports")]
+async fn watch_browser_reports(world: &mut RdrsWorld) -> Result<()> {
+    let handle = world
+        .watch_requests(r"/api/user/client-info(\?|$)", "PUT")
+        .await?;
+    world.client_info_puts = Some(handle);
+    Ok(())
+}
+
+#[then("no browser report is sent")]
+async fn no_browser_report(world: &mut RdrsWorld) -> Result<()> {
+    let handle = world
+        .client_info_puts
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no report watch was armed"))?;
+    // The page sends its report right after loading.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let count = handle.arrived();
+    ensure!(count == 0, "{count} browser report(s) were sent");
+    Ok(())
+}
+
+#[when(expr = "I follow the timezone suggestion for {string}")]
+async fn follow_timezone_suggestion(world: &mut RdrsWorld, zone: String) -> Result<()> {
+    let driver = world.driver()?;
+    driver.click_css(&timezone_action(&zone)).await?;
+    driver.expect_visible("timezone-suggestion").await
+}
+
+#[then(expr = "the timezone field shows {string}")]
+async fn timezone_shows(world: &mut RdrsWorld, zone: String) -> Result<()> {
+    let driver = world.driver()?;
+    eventually_eq("the timezone field", zone, || driver.value_of("timezone")).await
+}
+
+#[then("the timezone is marked as not saved")]
+async fn timezone_marked_unsaved(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.expect_visible("timezone-suggestion").await
+}
+
+#[then("the timezone is not marked as not saved")]
+async fn timezone_not_marked_unsaved(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.expect_absent("timezone-suggestion").await
+}
+
+#[when("I save the preferences")]
+async fn save_preferences(world: &mut RdrsWorld) -> Result<()> {
+    world
+        .driver()?
+        .submit_css(&format!("{PREFERENCES_FORM} button[type=submit]"))
+        .await?;
+    world.expect_path("/user-settings").await
 }

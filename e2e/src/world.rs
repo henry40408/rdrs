@@ -83,6 +83,7 @@ pub struct RdrsWorld {
     pub held_summary_fragment: Option<RouteHandle>,
     /// Counts re-queue POSTs, to prove an in-flight toggle is inert.
     pub summarize_posts: Option<RouteHandle>,
+    pub client_info_puts: Option<RouteHandle>,
     /// Held summarize POST, so the busy label stays up long enough to measure.
     pub delayed_summarize: Option<RouteHandle>,
     /// Mobile action bar `(label, x, width)` per button, captured before a
@@ -140,6 +141,7 @@ impl RdrsWorld {
             pane_stamp: None,
             held_summary_fragment: None,
             summarize_posts: None,
+            client_info_puts: None,
             delayed_summarize: None,
             action_bar: None,
             endpoints: Some(endpoints),
