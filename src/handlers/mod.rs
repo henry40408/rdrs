@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod categories;
+pub mod client_info;
 pub mod entries;
 pub mod entry;
 pub mod events;

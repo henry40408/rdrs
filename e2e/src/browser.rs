@@ -86,6 +86,17 @@ impl Browser {
         // `--window-size` sizes the window, not the viewport; landing even
         // slightly under 1024px would trip the touch layout.
         browser.set_viewport(DESKTOP).await?;
+        // The app offers to switch to a browser timezone that differs from the
+        // account's (UTC by default); without a pin, a developer's machine would
+        // put that banner into every scenario and screenshot.
+        browser
+            .driver
+            .cdp()
+            .send_raw(
+                "Emulation.setTimezoneOverride",
+                serde_json::json!({ "timezoneId": "UTC" }),
+            )
+            .await?;
         if scripting == Scripting::Disabled {
             browser.disable_scripting().await?;
         }

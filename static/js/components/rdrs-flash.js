@@ -24,13 +24,17 @@ class RdrsFlash extends HTMLElement {
         // Server renders the page's own banners here (no-JS path); this only adds `show()`.
     }
 
-    /** Show a flash message immediately on the page. */
-    show(level, message) {
+    /**
+     * Show a flash message immediately on the page. `action` ({ label, href })
+     * adds a link after the text; the href must come from the server.
+     */
+    show(level, message, action = null) {
         if (!this.parentNode) {
             document.body.insertBefore(this, document.body.firstChild);
         }
 
-        const existing = this.querySelectorAll('.banner');
+        // Persistent notices are not trimmed: the user has not acted on them yet.
+        const existing = this.querySelectorAll('.banner:not([data-persistent])');
         if (existing.length >= MAX_MESSAGES) {
             for (let i = 0; i <= existing.length - MAX_MESSAGES; i++) {
                 existing[i].remove();
@@ -58,6 +62,16 @@ class RdrsFlash extends HTMLElement {
         msg.className = 'banner-message';
         msg.textContent = message;
         body.append(srLevel, msg);
+        if (action) {
+            // A notice to act on outlives navigation swaps; only dismissing removes it.
+            banner.dataset.persistent = '';
+            const link = document.createElement('a');
+            link.className = 'banner-action';
+            link.href = action.href;
+            link.textContent = action.label;
+            link.setAttribute('data-testid', 'flash-action');
+            body.append(' ', link);
+        }
 
         // Client time is the one signal every emit path shares.
         const now = new Date();
@@ -94,7 +108,7 @@ class RdrsFlash extends HTMLElement {
 
     /** Clears toasts on navigation-like swaps so they don't follow the reader. */
     clear() {
-        for (const banner of Array.from(this.querySelectorAll('.banner'))) {
+        for (const banner of Array.from(this.querySelectorAll('.banner:not([data-persistent])'))) {
             banner.remove();
         }
     }

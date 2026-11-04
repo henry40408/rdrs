@@ -1,5 +1,7 @@
 use askama::Template;
-use axum::extract::State;
+use axum::extract::{RawQuery, State};
+use chrono::Utc;
+use url::form_urlencoded;
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
@@ -82,10 +84,21 @@ async fn api_token_rows(db: &Db, user_id: i64) -> Vec<ApiTokenRow> {
         .collect()
 }
 
+/// The `?timezone=` suggestion from the browser-timezone notice, when it names a
+/// zone that cuts days differently from the stored one. Anything else is
+/// ignored, so a mangled link (even a repeated parameter) still opens the page.
+fn suggested_timezone(raw_query: Option<&str>, stored: chrono_tz::Tz) -> Option<chrono_tz::Tz> {
+    let (_, name) =
+        form_urlencoded::parse(raw_query?.as_bytes()).find(|(key, _)| key == "timezone")?;
+    let suggested = timezone::parse(name.trim())?;
+    (!timezone::same_rules(suggested, stored, Utc::now())).then_some(suggested)
+}
+
 /// `GET /user-settings`.
 pub async fn user_settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    RawQuery(raw_query): RawQuery,
     flash: Flash,
 ) -> (Flash, UserSettingsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
@@ -98,6 +111,7 @@ pub async fn user_settings_page(
         .unwrap_or_else(|_| UserSettings::defaults(user_id));
     let sidebar_prefs = user_settings::sidebar_prefs_of(&settings);
     let services = service_settings(&state, &settings);
+    let suggested_timezone = suggested_timezone(raw_query.as_deref(), settings.tz());
 
     let public_base_url = state
         .config
@@ -134,7 +148,11 @@ pub async fn user_settings_page(
             show_sessions: !is_masquerading,
             api_tokens,
             public_base_url,
-            timezone: settings.tz().name().to_string(),
+            timezone: suggested_timezone
+                .unwrap_or_else(|| settings.tz())
+                .name()
+                .to_string(),
+            timezone_is_suggestion: suggested_timezone.is_some(),
             timezone_suggestions: timezone::TIMEZONE_SUGGESTIONS,
             theme: settings.theme,
             entries_per_page: settings.entries_per_page,
@@ -209,6 +227,9 @@ pub struct UserSettingsTemplate {
     pub public_base_url: String,
     /// The IANA name in effect (UTC when the stored one does not parse).
     pub timezone: String,
+    /// `timezone` came from the link, not the stored value; nothing is saved
+    /// until the form is submitted.
+    pub timezone_is_suggestion: bool,
     pub timezone_suggestions: &'static [&'static str],
     pub theme: Option<String>,
     pub entries_per_page: i64,

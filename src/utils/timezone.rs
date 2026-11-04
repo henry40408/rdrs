@@ -2,7 +2,7 @@
 //! the next. Instants are stored in UTC everywhere; this only maps calendar
 //! dates to and from them.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 
 /// What a user who never chose a timezone gets.
@@ -33,6 +33,21 @@ pub fn parse(name: &str) -> Option<Tz> {
 /// preference can never break a page render.
 pub fn parse_or_utc(name: &str) -> Tz {
     parse(name).unwrap_or(Tz::UTC)
+}
+
+/// Whether `a` and `b` cut days at the same instants for the next year.
+///
+/// Compared by behaviour because the database lists aliases as separate zones
+/// (`Asia/Calcutta` and `Asia/Kolkata`, `Etc/UTC` and `UTC`), and browsers
+/// report either spelling. Offsets are compared every day for a year, so
+/// daylight-saving rules that differ for only a few weeks still count.
+pub fn same_rules(a: Tz, b: Tz, now: DateTime<Utc>) -> bool {
+    let offset_at = |tz: Tz, at: DateTime<Utc>| at.with_timezone(&tz).offset().fix();
+    a == b
+        || (0..=366).all(|day| {
+            let at = now + Duration::days(day);
+            offset_at(a, at) == offset_at(b, at)
+        })
 }
 
 /// The calendar date `instant` falls on in `tz`.
@@ -102,6 +117,26 @@ mod tests {
         assert_eq!(hours(ymd(2026, 3, 8)), 23, "spring forward");
         assert_eq!(hours(ymd(2026, 11, 1)), 25, "fall back");
         assert_eq!(hours(ymd(2026, 6, 1)), 24);
+    }
+
+    #[test]
+    fn same_rules_sees_through_aliases_but_not_real_differences() {
+        let zone = |name| parse(name).unwrap();
+        let now = utc(2026, 11, 4, 0, 0);
+        let same = |a, b| same_rules(zone(a), zone(b), now);
+
+        assert!(same("Asia/Calcutta", "Asia/Kolkata"), "alias");
+        assert!(same("Etc/UTC", "UTC"), "alias");
+        assert!(same("Asia/Taipei", "Asia/Shanghai"), "same offset all year");
+        assert!(!same("Asia/Taipei", "Asia/Tokyo"), "one hour apart");
+        assert!(
+            !same("Europe/London", "Africa/Abidjan"),
+            "equal in winter, apart in summer"
+        );
+        assert!(
+            !same("Africa/Cairo", "Asia/Jerusalem"),
+            "differ only for a few weeks around the transitions"
+        );
     }
 
     #[test]
