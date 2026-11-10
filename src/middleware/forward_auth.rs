@@ -147,6 +147,16 @@ pub async fn forward_auth(
             if !allow_creation {
                 return Ok(None);
             }
+            if let Err(e) = user::validate_username(&username) {
+                // Length and reason only: the name is untrusted header input.
+                tracing::warn!(
+                    event = "forward_auth.rejected",
+                    username_chars = username.chars().count(),
+                    reason = %e,
+                    "forward-auth username rejected; not creating an account"
+                );
+                return Ok(None);
+            }
             let created = create_proxy_user(&state.db, &username, desired_role).await?;
             // Self-provisioned by the proxy login, hence actor == subject (as in /setup).
             audit::account_created(

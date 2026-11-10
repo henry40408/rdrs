@@ -181,10 +181,12 @@ pub async fn client_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
+    let (account_key, found) = user::find_for_login(&state.db, &username).await?;
+
     // Per-account budget too, so a spray can't pick the unwatched protocol.
     if let Some(retry_after_secs) = state
         .login_rate_limiter
-        .try_acquire_account(Bucket::Login, &username)
+        .try_acquire_account(Bucket::Login, &account_key)
         .retry_after_secs()
     {
         tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, subject = "account", endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
@@ -196,7 +198,7 @@ pub async fn client_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    let Some(user) = user::find_by_username(&state.db, &username).await? else {
+    let Some(user) = found else {
         // Equalise timing with the wrong-password path.
         verify_dummy_password(&password);
         audit::login_failed(username.len(), "unknown_user", &ip.to_string(), &user_agent);
@@ -212,7 +214,7 @@ pub async fn client_login(
     state.login_rate_limiter.release(Bucket::Login, ip);
     state
         .login_rate_limiter
-        .release_account(Bucket::Login, &username);
+        .release_account(Bucket::Login, &account_key);
 
     if user.is_disabled() {
         audit::login_failed(username.len(), "disabled", &ip.to_string(), &user_agent);

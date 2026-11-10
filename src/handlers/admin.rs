@@ -231,10 +231,13 @@ pub async fn create_user_form(
         return redirect;
     }
 
-    let username = req.username.trim().to_string();
-    if username.is_empty() {
-        return FlashRedirect::error("/admin", "Username is required.");
-    }
+    let username = match user::validate_username(&req.username) {
+        Ok(username) => username,
+        Err(AppError::Validation(msg)) => {
+            return FlashRedirect::error("/admin", format!("{msg}."));
+        }
+        Err(_) => return FlashRedirect::error("/admin", "Invalid username."),
+    };
 
     let actor_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let result: AppResult<String> = async {

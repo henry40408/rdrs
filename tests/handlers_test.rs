@@ -6378,6 +6378,28 @@ async fn an_admin_created_account_is_activated_through_its_link() {
 }
 
 #[tokio::test]
+async fn an_admin_cannot_create_an_account_with_an_invalid_username() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    for bad in ["   ", "a\tb"] {
+        let refused = app
+            .server
+            .post("/admin/users")
+            .form(&json!({ "username": bad, "role": "user" }))
+            .await;
+        refused.assert_status(StatusCode::SEE_OTHER);
+        assert!(!flash_text(&refused).contains("/invite/"), "{bad:?}");
+        assert!(
+            rdrs::models::user::find_by_username(&app.db, bad.trim())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_failed_account_creation_leaves_no_account_behind() {
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;

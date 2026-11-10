@@ -84,6 +84,19 @@ async fn create_test_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
 // --- ClientLogin Tests ---
 
 #[tokio::test]
+async fn test_client_login_trims_username_whitespace() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
+
+    let form = vec![
+        ("Email", "testuser ".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
+    ];
+    let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+    response.assert_status_ok();
+}
+
+#[tokio::test]
 async fn test_client_login_success() {
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app).await;

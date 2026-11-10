@@ -70,9 +70,7 @@ async fn perform_setup(
     req: &SetupRequest,
     endpoint: &'static str,
 ) -> AppResult<SetupResponse> {
-    if req.username.is_empty() {
-        return Err(AppError::Validation("Username is required".to_string()));
-    }
+    let username = user::validate_username(&req.username)?;
 
     // Reserve before any DB query or hashing. Never released: unlike login,
     // there is no "correct credential" outcome to refund.
@@ -107,7 +105,7 @@ async fn perform_setup(
     }
 
     // Behind the limiter: zxcvbn's worst case (~79ms) rivals Argon2.
-    validate_password_strength(&req.password, &[&req.username])?;
+    validate_password_strength(&req.password, &[&username])?;
 
     let password_hash = hash_password(&req.password)?;
 
@@ -118,7 +116,7 @@ async fn perform_setup(
     if !config.can_setup(user::count_tx(&mut tx).await?) {
         return Err(AppError::RegistrationNotAllowed);
     }
-    let user = user::create_user_tx(&mut tx, &req.username, &password_hash, Role::Admin).await?;
+    let user = user::create_user_tx(&mut tx, &username, &password_hash, Role::Admin).await?;
     // Same default as OPML import and the GReader subscription API.
     category::create_category_tx(&mut tx, user.id, "Uncategorized").await?;
     tx.commit().await?;
@@ -244,10 +242,14 @@ async fn perform_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
+    // Resolve the account first so the budget is keyed by the name that
+    // matched, not by whichever spelling the client typed.
+    let (account_key, found) = user::find_for_login(&state.db, &req.username).await?;
+
     // Per-account budget too: the per-IP one is useless against rotating IPs.
     if let Some(retry_after_secs) = state
         .login_rate_limiter
-        .try_acquire_account(Bucket::Login, &req.username)
+        .try_acquire_account(Bucket::Login, &account_key)
         .retry_after_secs()
     {
         tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, subject = "account", endpoint, "credential attempt rate limited");
@@ -255,7 +257,7 @@ async fn perform_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    let Some(user) = user::find_by_username(&state.db, &req.username).await? else {
+    let Some(user) = found else {
         // Equalize timing with "wrong password" to avoid user enumeration.
         verify_dummy_password(&req.password);
         audit::login_failed(
@@ -282,7 +284,7 @@ async fn perform_login(
     state.login_rate_limiter.release(Bucket::Login, ip);
     state
         .login_rate_limiter
-        .release_account(Bucket::Login, &req.username);
+        .release_account(Bucket::Login, &account_key);
 
     if user.is_disabled() {
         audit::login_failed(req.username.len(), "disabled", &ip.to_string(), &user_agent);

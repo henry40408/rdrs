@@ -590,3 +590,47 @@ async fn test_reauth_on_forward_auth_session_refreshes_without_a_password() {
         .await;
     res.assert_status(StatusCode::NO_CONTENT);
 }
+
+/// An unusable header value neither creates an account nor yields a 500.
+#[tokio::test]
+async fn test_jit_refuses_overlong_username_without_error() {
+    let (server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+        c.auth_proxy_user_creation = true;
+    })
+    .await;
+
+    let name = "a".repeat(65);
+    let res = server
+        .get("/")
+        .add_header("Remote-User", name.as_str())
+        .await;
+
+    assert!(res.status_code().is_redirection());
+    assert_eq!(res.header("location"), "/login");
+    assert!(res.maybe_cookie("session_token").is_none());
+    assert_eq!(rdrs::models::user::count(&db).await.unwrap(), 0);
+}
+
+/// SSO identities with spaces or backslashes must still be provisioned.
+#[tokio::test]
+async fn test_jit_accepts_sso_style_username() {
+    let (server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+        c.auth_proxy_user_creation = true;
+    })
+    .await;
+
+    let res = server
+        .get("/")
+        .add_header("Remote-User", "CORP\\Alice Smith")
+        .await;
+
+    assert!(res.maybe_cookie("session_token").is_some());
+    assert!(
+        rdrs::models::user::find_by_username(&db, "CORP\\Alice Smith")
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
