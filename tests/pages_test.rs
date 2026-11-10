@@ -4849,3 +4849,64 @@ async fn test_unread_and_all_mark_read_refuse_blank_query_and_bad_snapshot() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_today_page_offers_mark_matching_only_while_searching() {
+    let (app, _) = app_with_today_entries().await;
+    backdate_stored_entries(&app.db).await;
+
+    let plain = app.server.get("/entries/today").await.text();
+    assert!(!plain.contains("mark-matching-btn"), "no search: {plain}");
+
+    let html = app.server.get("/entries/today?q=Alpha").await.text();
+    assert!(html.contains("Mark 1 matching as Read"), "{html}");
+    assert!(html.contains(r#"action="/entries/today/mark-matching""#));
+
+    // The old entry matches the term but is not part of today's list.
+    let html = app.server.get("/entries/today?q=Gamma").await.text();
+    assert!(!html.contains("mark-matching-btn"), "{html}");
+}
+
+#[tokio::test]
+async fn test_today_mark_matching_marks_only_todays_matches() {
+    let (app, [alpha, beta, old]) = app_with_today_entries().await;
+
+    let response = app
+        .server
+        .post("/entries/today/mark-matching")
+        .form(&[("q", "Alpha"), ("snapshot", after_the_seed().as_str())])
+        .await;
+    response.assert_status_see_other();
+    assert_eq!(response.header(header::LOCATION), "/entries/today?q=Alpha");
+    assert!(is_read(&app, alpha).await);
+    assert!(!is_read(&app, beta).await, "not a match");
+
+    app.server
+        .post("/entries/today/mark-matching")
+        .form(&[("q", "Gamma"), ("snapshot", after_the_seed().as_str())])
+        .await
+        .assert_status_see_other();
+    assert!(!is_read(&app, old).await, "published before today");
+}
+
+#[tokio::test]
+async fn test_today_mark_matching_refuses_blank_query_and_bad_snapshot() {
+    let (app, ids) = app_with_today_entries().await;
+    let fresh = after_the_seed();
+
+    for form in [
+        vec![("q", ""), ("snapshot", fresh.as_str())],
+        vec![("q", "Fresh")],
+        vec![("q", "Fresh"), ("snapshot", "yesterday")],
+        vec![("q", "Fresh"), ("snapshot", "2000-01-01 00:00:00")],
+    ] {
+        app.server
+            .post("/entries/today/mark-matching")
+            .form(&form)
+            .await
+            .assert_status_see_other();
+        for id in ids {
+            assert!(!is_read(&app, id).await, "{form:?}");
+        }
+    }
+}

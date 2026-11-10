@@ -715,6 +715,7 @@ async fn entries_tab_page(
         None
     };
     let search = scoped_search(query.q.as_deref());
+    let scope = tab.filter.clone();
     let mut filter = tab.filter;
     if filter.unread_only {
         // Only set by the Load-More form, so entries read meanwhile stay listed.
@@ -750,16 +751,7 @@ async fn entries_tab_page(
     }
 
     let matching_count = match tab.mark_matching_action {
-        Some(_) => {
-            count_matching_unread(
-                &state,
-                user_id,
-                entry::EntryFilter::default(),
-                &search,
-                &snapshot_at,
-            )
-            .await
-        }
+        Some(_) => count_matching_unread(&state, user_id, scope, &search, &snapshot_at).await,
         None => None,
     };
 
@@ -1043,12 +1035,44 @@ pub async fn today_entries_page(
         empty_detail: "Unread entries published today show up here.",
         mark_as_read_scope: None,
         mark_all_action: Some("/entries/today/mark-read"),
-        mark_matching_action: None,
+        mark_matching_action: Some("/entries/today/mark-matching"),
         show_tab_bar: false,
         filter: entry::unread_filter_on(day, tz),
         sort: entry::EntrySortOrder::PublishedAt,
     };
     entries_tab_page(tab, auth_user, state, flash, query).await
+}
+
+/// `POST /entries/today/mark-matching` — mark today's unread entries matching
+/// `q` read, except those stored after the page was rendered.
+pub async fn today_mark_matching_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    let user_id = auth_user.user.id;
+    let tz = user_settings::get_timezone(&state.db, user_id)
+        .await
+        .unwrap_or(chrono_tz::Tz::UTC);
+    // A bad snapshot leaves the scope unbounded, but `mark_read_scoped` refuses
+    // it before anything is marked.
+    let scope = crate::handlers::greader::tag::parse_snapshot(form.snapshot.as_deref())
+        .ok()
+        .flatten()
+        .map(|snapshot| entry::unread_filter_on(entry::day_of_snapshot(snapshot, tz), tz))
+        .unwrap_or_default();
+    mark_read_scoped(
+        &state,
+        MarkReadScope {
+            user_id,
+            scope,
+            q: form.q,
+            status: None,
+            snapshot: form.snapshot,
+            base_path: "/entries/today",
+        },
+    )
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -1413,8 +1437,10 @@ pub async fn category_mark_read_form(
         &state,
         MarkReadScope {
             user_id: auth_user.user.id,
-            category_id: Some(id),
-            feed_id: None,
+            scope: entry::EntryFilter {
+                category_id: Some(id),
+                ..Default::default()
+            },
             q: form.q,
             status: form.status,
             snapshot: form.snapshot,
@@ -1435,8 +1461,10 @@ pub async fn feed_mark_read_form(
         &state,
         MarkReadScope {
             user_id: auth_user.user.id,
-            category_id: None,
-            feed_id: Some(id),
+            scope: entry::EntryFilter {
+                feed_id: Some(id),
+                ..Default::default()
+            },
             q: form.q,
             status: form.status,
             snapshot: form.snapshot,
@@ -1474,8 +1502,7 @@ async fn mark_read_unscoped(
         state,
         MarkReadScope {
             user_id,
-            category_id: None,
-            feed_id: None,
+            scope: entry::EntryFilter::default(),
             q: form.q,
             status: None,
             snapshot: form.snapshot,
@@ -1510,24 +1537,23 @@ fn build_scoped_redirect(base_path: &str, search: Option<&str>, status: Option<&
 /// Request for [`mark_read_scoped`]: the scope to mark and the page to return to.
 struct MarkReadScope<'a> {
     user_id: i64,
-    category_id: Option<i64>,
-    feed_id: Option<i64>,
+    /// What the page lists, before the search and snapshot narrow it.
+    scope: entry::EntryFilter,
     q: Option<String>,
     status: Option<String>,
     snapshot: Option<String>,
     base_path: &'a str,
 }
 
-async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Response {
+async fn mark_read_scoped(state: &AppState, request: MarkReadScope<'_>) -> Response {
     let MarkReadScope {
         user_id,
-        category_id,
-        feed_id,
+        scope,
         q,
         status,
         snapshot,
         base_path,
-    } = scope;
+    } = request;
     let parsed = scoped_search(q.as_deref());
 
     // Must guard here: a blank `q` would match, and mark read, the whole scope.
@@ -1552,11 +1578,9 @@ async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Respons
     };
 
     let filter = entry::EntryFilter {
-        category_id,
-        feed_id,
         query: parsed.query,
         stored_before: Some(stored_before),
-        ..Default::default()
+        ..scope
     };
     // Failure becomes an error flash, not a 500.
     let affected = match entry::mark_read_by_filter(&state.db, user_id, &filter).await {
@@ -1565,8 +1589,8 @@ async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Respons
             tracing::warn!(
                 event = "entry.mark_read_scoped_failed",
                 user_id,
-                category_id = ?category_id,
-                feed_id = ?feed_id,
+                category_id = ?filter.category_id,
+                feed_id = ?filter.feed_id,
                 error = %e,
                 "mark_read_by_filter failed"
             );

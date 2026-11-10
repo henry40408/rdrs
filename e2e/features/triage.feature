@@ -224,6 +224,18 @@ Feature: Triage entries (star, mark-read, summarize)
     When I mark matching entries as read
     Then "Superheroine Rises" is no longer in the unread list
 
+  Scenario: Marking matching entries in Today read leaves the rest of Today unread
+    Given the stored entries are older than the snapshot granularity
+    When I visit "/entries/today"
+    And I open the scoped search box
+    And I type "Entry 1" into the scoped search box
+    Then the entry list shows "Test Entry 1"
+    And the entry list does not show "Test Entry 2"
+    When I mark matching entries as read
+    Then I see a success flash "Marked 1 matching entries as read."
+    When I visit "/entries/today"
+    Then the sidebar Today item shows a count of "2"
+
   Scenario: Searching the unread inbox, then mark matching as read
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     And the stored entries are older than the snapshot granularity

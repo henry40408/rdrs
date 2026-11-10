@@ -237,6 +237,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::pages::today_mark_read_form),
         )
         .route(
+            "/entries/today/mark-matching",
+            post(handlers::pages::today_mark_matching_form),
+        )
+        .route(
             "/entries/offline",
             get(handlers::pages::offline_entries_page),
         )
