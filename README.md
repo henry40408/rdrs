@@ -247,6 +247,12 @@ Existing accounts are matched by username.
 `RDRS_AUTH_PROXY_LOGOUT_URL` (without it, SSO users are told to log out at the
 proxy, since the header would re-authenticate them).
 
+With group mapping on, roles are re-synced at every proxy login, so the admin
+group in your identity provider decides who is an admin (the exception is an
+account created through `/setup` before any proxy login). rdrs logs a startup
+warning when no active admin exists; add the first user to that group and sign
+out and in again.
+
 **Reverse-proxy requirements:**
 
 1. The proxy **must** set, and strip any client-supplied copy of, the identity

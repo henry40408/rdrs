@@ -85,6 +85,19 @@ fn warn_about_config(config: &Config) {
     }
 }
 
+async fn warn_if_no_admin_for_group_mapping(config: &Config, db: &Db) {
+    let Ok(admins) = rdrs::models::user::count_active_admins(db).await else {
+        return;
+    };
+    if let Some(warning) = config.no_admin_group_mapping_warning(admins) {
+        tracing::warn!(
+            event = "config.warning",
+            kind = "no_admin_group_mapping",
+            "{warning}"
+        );
+    }
+}
+
 /// The token is only printed while setup is open: moot once the first account exists.
 /// It goes to stderr, not tracing: log collectors retain tracing output, and a
 /// leftover token would outlive the setup it protects.
@@ -175,6 +188,8 @@ async fn main() {
         tracing::error!(event = "startup.fetcher_failed", error = %e, "failed to build the guarded HTTP client");
         std::process::exit(1);
     });
+
+    warn_if_no_admin_for_group_mapping(&config, &db).await;
 
     let setup_token = generate_setup_token(&db).await;
 
