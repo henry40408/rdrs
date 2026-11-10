@@ -217,6 +217,11 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::pages::feeds_import_page).post(handlers::feeds::import_opml_form),
         )
         .route("/entries", get(handlers::pages::entries_page))
+        .route(
+            "/entries/mark-read",
+            post(handlers::pages::all_mark_read_form),
+        )
+        .route("/mark-read", post(handlers::pages::unread_mark_read_form))
         .route("/entries/read", get(handlers::pages::read_entries_page))
         .route(
             "/entries/starred",
@@ -230,6 +235,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/entries/today/mark-read",
             post(handlers::pages::today_mark_read_form),
+        )
+        .route(
+            "/entries/today/mark-matching",
+            post(handlers::pages::today_mark_matching_form),
         )
         .route(
             "/entries/offline",

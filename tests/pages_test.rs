@@ -1701,6 +1701,19 @@ async fn test_feed_entries_page_marks_active_feed() {
     );
 }
 
+/// A render time after anything the test seeded, as a list page would post it.
+fn after_the_seed() -> String {
+    (chrono::Utc::now() + chrono::Duration::seconds(30))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
+/// Entries stored in the render's own second are left out of a snapshot, so a
+/// test that renders right after seeding backdates them first.
+async fn backdate_stored_entries(db: &Db) {
+    rdrs::db_execute!(db, "UPDATE entry SET created_at = '2000-01-01 00:00:00'").unwrap();
+}
+
 /// `POST /categories/{id}/entries/mark-read` marks only the entries matching
 /// the scoped-search `q` as read, leaving non-matching entries untouched, and
 /// redirects back to the category page preserving `?q=`.
@@ -1771,7 +1784,7 @@ async fn test_category_mark_read_scoped_search() {
     let response = app
         .server
         .post(&format!("/categories/{cat_id}/entries/mark-read"))
-        .form(&[("q", "Widget")])
+        .form(&[("q", "Widget"), ("snapshot", after_the_seed().as_str())])
         .await;
 
     response.assert_status_see_other();
@@ -1879,7 +1892,7 @@ async fn test_category_mark_read_scoped_search_syntax() {
     // Unparseable: nothing is marked.
     app.server
         .post(&url)
-        .form(&[("q", "(Widget")])
+        .form(&[("q", "(Widget"), ("snapshot", after_the_seed().as_str())])
         .await
         .assert_status_see_other();
     assert!(read_at(&app.db, widget_id).await.is_none());
@@ -1888,7 +1901,7 @@ async fn test_category_mark_read_scoped_search_syntax() {
     // An empty quoted phrase is a syntax error too, not "match everything".
     app.server
         .post(&url)
-        .form(&[("q", "\"\"")])
+        .form(&[("q", "\"\""), ("snapshot", after_the_seed().as_str())])
         .await
         .assert_status_see_other();
     assert!(read_at(&app.db, widget_id).await.is_none());
@@ -1897,7 +1910,7 @@ async fn test_category_mark_read_scoped_search_syntax() {
     // Syntax is honoured: only the entry that is not "Widget" is marked.
     app.server
         .post(&url)
-        .form(&[("q", "-Widget")])
+        .form(&[("q", "-Widget"), ("snapshot", after_the_seed().as_str())])
         .await
         .assert_status_see_other();
     assert!(read_at(&app.db, widget_id).await.is_none());
@@ -2195,7 +2208,7 @@ async fn test_feed_mark_read_scoped_search() {
     let response = app
         .server
         .post(&format!("/feeds/{feed_id}/entries/mark-read"))
-        .form(&[("q", "Widget")])
+        .form(&[("q", "Widget"), ("snapshot", after_the_seed().as_str())])
         .await;
 
     response.assert_status_see_other();
@@ -2304,6 +2317,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     let (cat_id, matching_unread_id, matching_read_id) =
         (cat.id, matching_unread.id, matching_read.id);
 
+    backdate_stored_entries(&app.db).await;
     let resp = app
         .server
         .get(&format!("/categories/{cat_id}/entries?status=all&q=Widget"))
@@ -2319,7 +2333,11 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     let response = app
         .server
         .post(&format!("/categories/{cat_id}/entries/mark-read"))
-        .form(&[("q", "Widget"), ("status", "all")])
+        .form(&[
+            ("q", "Widget"),
+            ("status", "all"),
+            ("snapshot", after_the_seed().as_str()),
+        ])
         .await;
     response.assert_status_see_other();
 
@@ -4721,4 +4739,174 @@ async fn test_today_mark_all_follows_the_scoped_search() {
     );
     assert!(!live.contains(button) && live.contains("data-mark-all-slot"));
     assert!(cleared.contains(button));
+}
+
+/// Seeds one matching and one other unread entry for the account `admin`,
+/// backdated so a snapshot taken now covers them.
+async fn app_with_search_entries() -> (TestApp, [i64; 2]) {
+    let mut app = create_test_app(default_test_config()).await;
+    let (admin_id, _) = setup_users(&app.db).await;
+    let cat = rdrs::models::category::create_category(&app.db, admin_id, "SearchMarkCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/search-mark-feed",
+            title: Some("Search Mark Feed"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut ids = [0; 2];
+    for (slot, (guid, title)) in [("sm-a", "Widget Roundup"), ("sm-b", "Something Else")]
+        .into_iter()
+        .enumerate()
+    {
+        let (entry, _) = rdrs::models::entry::upsert_entry(
+            &app.db,
+            &rdrs::models::entry::EntryUpsert {
+                feed_id: feed.id,
+                guid,
+                title: Some(title),
+                link: None,
+                content: None,
+                summary: None,
+                author: None,
+                published_at: None,
+            },
+        )
+        .await
+        .unwrap();
+        ids[slot] = entry.id;
+    }
+    backdate_stored_entries(&app.db).await;
+    login(&mut app.server, "admin").await;
+    (app, ids)
+}
+
+#[tokio::test]
+async fn test_unread_and_all_pages_offer_mark_matching_only_while_searching() {
+    let (app, _) = app_with_search_entries().await;
+
+    for (page, action) in [("/", "/mark-read"), ("/entries", "/entries/mark-read")] {
+        let plain = app.server.get(page).await.text();
+        assert!(!plain.contains("mark-matching-btn"), "{page}: no search");
+
+        let html = app.server.get(&format!("{page}?q=Widget")).await.text();
+        assert!(html.contains("Mark 1 matching as Read"), "{page}: {html}");
+        assert!(
+            html.contains(&format!(r#"action="{action}""#)),
+            "{page} must post to {action}"
+        );
+        assert!(html.contains("data-snapshot-from-list"), "{page}");
+    }
+}
+
+#[tokio::test]
+async fn test_unread_and_all_mark_read_mark_only_the_matches() {
+    for (url, back) in [("/mark-read", "/"), ("/entries/mark-read", "/entries")] {
+        let (app, [matching, other]) = app_with_search_entries().await;
+
+        let response = app
+            .server
+            .post(url)
+            .form(&[("q", "Widget"), ("snapshot", after_the_seed().as_str())])
+            .await;
+
+        response.assert_status_see_other();
+        assert_eq!(
+            response.header(header::LOCATION),
+            format!("{back}?q=Widget")
+        );
+        assert!(is_read(&app, matching).await, "{url}");
+        assert!(!is_read(&app, other).await, "{url}");
+    }
+}
+
+#[tokio::test]
+async fn test_unread_and_all_mark_read_refuse_blank_query_and_bad_snapshot() {
+    for url in ["/mark-read", "/entries/mark-read"] {
+        let (app, ids) = app_with_search_entries().await;
+        let fresh = after_the_seed();
+
+        for form in [
+            vec![("q", ""), ("snapshot", fresh.as_str())],
+            vec![("q", "Widget")],
+            vec![("q", "Widget"), ("snapshot", "yesterday")],
+            vec![("q", "Widget"), ("snapshot", "2000-01-01 00:00:00")],
+        ] {
+            app.server
+                .post(url)
+                .form(&form)
+                .await
+                .assert_status_see_other();
+            for id in ids {
+                assert!(!is_read(&app, id).await, "{url} {form:?}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_today_page_offers_mark_matching_only_while_searching() {
+    let (app, _) = app_with_today_entries().await;
+    backdate_stored_entries(&app.db).await;
+
+    let plain = app.server.get("/entries/today").await.text();
+    assert!(!plain.contains("mark-matching-btn"), "no search: {plain}");
+
+    let html = app.server.get("/entries/today?q=Alpha").await.text();
+    assert!(html.contains("Mark 1 matching as Read"), "{html}");
+    assert!(html.contains(r#"action="/entries/today/mark-matching""#));
+
+    // The old entry matches the term but is not part of today's list.
+    let html = app.server.get("/entries/today?q=Gamma").await.text();
+    assert!(!html.contains("mark-matching-btn"), "{html}");
+}
+
+#[tokio::test]
+async fn test_today_mark_matching_marks_only_todays_matches() {
+    let (app, [alpha, beta, old]) = app_with_today_entries().await;
+
+    let response = app
+        .server
+        .post("/entries/today/mark-matching")
+        .form(&[("q", "Alpha"), ("snapshot", after_the_seed().as_str())])
+        .await;
+    response.assert_status_see_other();
+    assert_eq!(response.header(header::LOCATION), "/entries/today?q=Alpha");
+    assert!(is_read(&app, alpha).await);
+    assert!(!is_read(&app, beta).await, "not a match");
+
+    app.server
+        .post("/entries/today/mark-matching")
+        .form(&[("q", "Gamma"), ("snapshot", after_the_seed().as_str())])
+        .await
+        .assert_status_see_other();
+    assert!(!is_read(&app, old).await, "published before today");
+}
+
+#[tokio::test]
+async fn test_today_mark_matching_refuses_blank_query_and_bad_snapshot() {
+    let (app, ids) = app_with_today_entries().await;
+    let fresh = after_the_seed();
+
+    for form in [
+        vec![("q", ""), ("snapshot", fresh.as_str())],
+        vec![("q", "Fresh")],
+        vec![("q", "Fresh"), ("snapshot", "yesterday")],
+        vec![("q", "Fresh"), ("snapshot", "2000-01-01 00:00:00")],
+    ] {
+        app.server
+            .post("/entries/today/mark-matching")
+            .form(&form)
+            .await
+            .assert_status_see_other();
+        for id in ids {
+            assert!(!is_read(&app, id).await, "{form:?}");
+        }
+    }
 }
