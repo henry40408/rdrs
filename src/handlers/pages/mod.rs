@@ -228,6 +228,8 @@ pub struct EntriesLayoutContext {
     pub search_action: Option<String>,
     /// Matches for the active search, for "Mark N matching as Read".
     pub matching_count: Option<i64>,
+    /// Form action of "Mark N matching as Read"; the POST carries `snapshot_at`.
+    pub mark_matching_action: Option<String>,
     /// Why the active search could not run; the list is empty while it is set.
     pub search_error: Option<String>,
 }
@@ -296,6 +298,29 @@ fn search_error_message(q: &str, e: &entry::query::ParseError) -> String {
         "Search syntax error (near character {char_pos}): {}",
         e.message
     )
+}
+
+/// Unread entries "Mark N matching as Read" would mark: `scope` narrowed by
+/// the search and by the render snapshot, like `mark_read_scoped`. `None`
+/// without a valid search.
+async fn count_matching_unread(
+    state: &AppState,
+    user_id: i64,
+    scope: entry::EntryFilter,
+    search: &ScopedSearch,
+    snapshot_at: &str,
+) -> Option<i64> {
+    let query = search.query.clone()?;
+    let stored_before = crate::handlers::greader::tag::parse_snapshot(Some(snapshot_at))
+        .ok()
+        .flatten()?;
+    let filter = entry::EntryFilter {
+        query: Some(query),
+        unread_only: true,
+        stored_before: Some(stored_before),
+        ..scope
+    };
+    entry::count_by_user(&state.db, user_id, &filter).await.ok()
 }
 
 fn scoped_search(q: Option<&str>) -> ScopedSearch {
@@ -590,6 +615,15 @@ pub async fn unread_page(
         && search.raw.is_none()
         && feed::count_by_user(&state.db, user_id).await.unwrap_or(0) == 0;
 
+    let matching_count = count_matching_unread(
+        &state,
+        user_id,
+        entry::EntryFilter::default(),
+        &search,
+        &snapshot_at,
+    )
+    .await;
+
     let entries_layout = EntriesLayoutContext {
         active: "unread",
         empty_title: "All caught up",
@@ -601,6 +635,8 @@ pub async fn unread_page(
         onboarding: no_feeds,
         snapshot_at,
         search_action: (!no_feeds).then(|| "/".to_string()),
+        mark_matching_action: Some("/mark-read".to_string()),
+        matching_count,
         search: search.raw,
         search_error: search.error,
         ..Default::default()
@@ -649,6 +685,8 @@ struct EntriesTab {
     mark_as_read_scope: Option<&'static str>,
     /// See [`EntriesLayoutContext::mark_all_action`].
     mark_all_action: Option<&'static str>,
+    /// See [`EntriesLayoutContext::mark_matching_action`].
+    mark_matching_action: Option<&'static str>,
     /// All/Read/Starred/Summarized bar; off for pages that are not one of them.
     show_tab_bar: bool,
     filter: entry::EntryFilter,
@@ -711,6 +749,20 @@ async fn entries_tab_page(
             .into_response();
     }
 
+    let matching_count = match tab.mark_matching_action {
+        Some(_) => {
+            count_matching_unread(
+                &state,
+                user_id,
+                entry::EntryFilter::default(),
+                &search,
+                &snapshot_at,
+            )
+            .await
+        }
+        None => None,
+    };
+
     let entries_layout = EntriesLayoutContext {
         active: tab.active,
         empty_title: tab.empty_title,
@@ -719,6 +771,8 @@ async fn entries_tab_page(
         show_tab_bar: tab.show_tab_bar,
         mark_as_read_scope: tab.mark_as_read_scope.map(str::to_string),
         mark_all_action: tab.mark_all_action.map(str::to_string),
+        mark_matching_action: tab.mark_matching_action.map(str::to_string),
+        matching_count,
         snapshot_at,
         search_action: Some(tab.path.to_string()),
         search: search.raw,
@@ -773,6 +827,7 @@ pub async fn entries_page(
         empty_detail: "Subscribe to a few feeds and their entries will gather here.",
         mark_as_read_scope: Some("user/-/state/com.google/reading-list"),
         mark_all_action: None,
+        mark_matching_action: Some("/entries/mark-read"),
         show_tab_bar: true,
         filter: entry::EntryFilter::default(),
         sort: entry::EntrySortOrder::PublishedAt,
@@ -841,6 +896,7 @@ pub async fn read_entries_page(
         empty_detail: "Entries stay here once you've opened and read them.",
         mark_as_read_scope: None,
         mark_all_action: None,
+        mark_matching_action: None,
         show_tab_bar: true,
         filter: entry::EntryFilter {
             read_only: true,
@@ -866,6 +922,7 @@ pub async fn starred_entries_page(
         empty_detail: "Star an entry and it'll wait for you here.",
         mark_as_read_scope: None,
         mark_all_action: None,
+        mark_matching_action: None,
         show_tab_bar: true,
         filter: entry::EntryFilter {
             starred_only: true,
@@ -949,6 +1006,7 @@ pub async fn summarized_entries_page(
         empty_detail: "Entries you summarize are collected on this page.",
         mark_as_read_scope: None,
         mark_all_action: None,
+        mark_matching_action: None,
         show_tab_bar: true,
         filter: entry::EntryFilter {
             has_summary: Some(true),
@@ -985,6 +1043,7 @@ pub async fn today_entries_page(
         empty_detail: "Unread entries published today show up here.",
         mark_as_read_scope: None,
         mark_all_action: Some("/entries/today/mark-read"),
+        mark_matching_action: None,
         show_tab_bar: false,
         filter: entry::unread_filter_on(day, tz),
         sort: entry::EntrySortOrder::PublishedAt,
@@ -1135,21 +1194,18 @@ async fn scoped_entries_page(
         return (flash, fragment).into_response();
     }
 
-    // Unread-only regardless of tab, to match what `mark_read_by_filter` touches.
-    let matching_count = if let Some(ast) = search.query.clone() {
-        let mark_filter = entry::EntryFilter {
+    let matching_count = count_matching_unread(
+        &state,
+        user_id,
+        entry::EntryFilter {
             category_id: scope.category_id,
             feed_id: scope.feed_id,
-            query: Some(ast),
-            unread_only: true,
             ..Default::default()
-        };
-        entry::count_by_user(&state.db, user_id, &mark_filter)
-            .await
-            .ok()
-    } else {
-        None
-    };
+        },
+        &search,
+        &snapshot_at,
+    )
+    .await;
 
     let entries_layout = EntriesLayoutContext {
         active: "",
@@ -1157,6 +1213,7 @@ async fn scoped_entries_page(
         empty_detail: scope.empty_detail,
         filter_tabs: Some(filter_tabs(&scope.path, status)),
         search_action: Some(scope.path.clone()),
+        mark_matching_action: Some(format!("{}/mark-read", scope.path)),
         path: scope.path,
         mark_as_read_scope: Some(scope.mark_as_read_scope),
         breadcrumb_items: scope.breadcrumb_items,
@@ -1341,6 +1398,8 @@ pub struct MarkReadForm {
     pub q: Option<String>,
     /// Current `?status=` tab, preserved on redirect.
     pub status: Option<String>,
+    /// UTC render time of the list the button was on; see `snapshot_now()`.
+    pub snapshot: Option<String>,
 }
 
 /// `POST /categories/{id}/entries/mark-read` — mark entries matching `q` read.
@@ -1358,6 +1417,7 @@ pub async fn category_mark_read_form(
             feed_id: None,
             q: form.q,
             status: form.status,
+            snapshot: form.snapshot,
             base_path: &format!("/categories/{id}/entries"),
         },
     )
@@ -1379,7 +1439,47 @@ pub async fn feed_mark_read_form(
             feed_id: Some(id),
             q: form.q,
             status: form.status,
+            snapshot: form.snapshot,
             base_path: &format!("/feeds/{id}/entries"),
+        },
+    )
+    .await
+}
+
+/// `POST /mark-read` — mark unread entries matching `q` read.
+pub async fn unread_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    mark_read_unscoped(&state, auth_user.user.id, form, "/").await
+}
+
+/// `POST /entries/mark-read` — same, from the All tab.
+pub async fn all_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    mark_read_unscoped(&state, auth_user.user.id, form, "/entries").await
+}
+
+async fn mark_read_unscoped(
+    state: &AppState,
+    user_id: i64,
+    form: MarkReadForm,
+    base_path: &str,
+) -> Response {
+    mark_read_scoped(
+        state,
+        MarkReadScope {
+            user_id,
+            category_id: None,
+            feed_id: None,
+            q: form.q,
+            status: None,
+            snapshot: form.snapshot,
+            base_path,
         },
     )
     .await
@@ -1414,6 +1514,7 @@ struct MarkReadScope<'a> {
     feed_id: Option<i64>,
     q: Option<String>,
     status: Option<String>,
+    snapshot: Option<String>,
     base_path: &'a str,
 }
 
@@ -1424,6 +1525,7 @@ async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Respons
         feed_id,
         q,
         status,
+        snapshot,
         base_path,
     } = scope;
     let parsed = scoped_search(q.as_deref());
@@ -1440,10 +1542,20 @@ async fn mark_read_scoped(state: &AppState, scope: MarkReadScope<'_>) -> Respons
         return FlashRedirect::error(&redirect, err).into_response();
     }
 
+    // Absent or malformed would mean "no limit", which the snapshot exists to prevent.
+    let Ok(Some(stored_before)) =
+        crate::handlers::greader::tag::parse_snapshot(snapshot.as_deref())
+    else {
+        let redirect = build_scoped_redirect(base_path, Some(&search), status.as_deref());
+        return FlashRedirect::error(&redirect, "The page is out of date. Reload and try again.")
+            .into_response();
+    };
+
     let filter = entry::EntryFilter {
         category_id,
         feed_id,
         query: parsed.query,
+        stored_before: Some(stored_before),
         ..Default::default()
     };
     // Failure becomes an error flash, not a 500.

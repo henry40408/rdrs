@@ -215,6 +215,7 @@ Feature: Triage entries (star, mark-read, summarize)
 
   Scenario: Scoped search within a category, then mark matching as read
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    And the stored entries are older than the snapshot granularity
     When I open the entries page for category "Anime"
     And I open the scoped search box
     And I type "Superheroine" into the scoped search box
@@ -222,6 +223,28 @@ Feature: Triage entries (star, mark-read, summarize)
     And the entry list does not show "Other News"
     When I mark matching entries as read
     Then "Superheroine Rises" is no longer in the unread list
+
+  Scenario: Searching the unread inbox, then mark matching as read
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    And the stored entries are older than the snapshot granularity
+    When I open the inbox
+    And I open the scoped search box
+    And I type "Superheroine" into the scoped search box
+    Then the entry list shows "Superheroine Rises"
+    And the entry list does not show "Other News"
+    When I mark matching entries as read
+    Then "Superheroine Rises" is no longer in the unread list
+
+  Scenario: Searching the All tab, then mark matching as read keeps the other entry unread
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    And the stored entries are older than the snapshot granularity
+    When I open the all-entries page
+    And I open the scoped search box
+    And I type "Superheroine" into the scoped search box
+    Then the entry list shows "Superheroine Rises"
+    And the entry list does not show "Other News"
+    When I mark matching entries as read
+    Then I see a success flash "Marked 1 matching entries as read."
 
   Scenario: The scoped search box starts collapsed and opens from the title row
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
