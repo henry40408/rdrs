@@ -161,7 +161,7 @@ async fn test_setup_stores_trimmed_username() {
     assert_eq!(body["username"], "admin");
 }
 
-const SETUP_TOKEN: &str = "token-from-the-server-log";
+const SETUP_TOKEN: &str = "token-printed-on-stderr";
 
 /// A server whose `/setup` demands [`SETUP_TOKEN`], as `main` configures it.
 async fn build_server_with_setup_token() -> (TestServer, Db) {

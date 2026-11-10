@@ -85,14 +85,14 @@ fn warn_about_config(config: &Config) {
     }
 }
 
-/// The token is only logged while setup is open: moot once the first account exists.
+/// The token is only printed while setup is open: moot once the first account exists.
+/// It goes to stderr, not tracing: log collectors retain tracing output, and a
+/// leftover token would outlive the setup it protects.
 async fn generate_setup_token(db: &Db) -> Arc<str> {
     let setup_token: Arc<str> = rdrs::secret::generate_setup_token().into();
     if rdrs::models::user::count(db).await.unwrap_or(0) == 0 {
-        tracing::warn!(
-            event = "setup.token",
-            setup_token = %setup_token,
-            "no accounts yet: open /setup and enter this setup token to create the admin account"
+        eprintln!(
+            "no accounts yet: open /setup and enter this setup token to create the admin account\nsetup_token={setup_token}"
         );
     }
     setup_token

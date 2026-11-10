@@ -30,7 +30,7 @@ use crate::utils::http::request_user_agent;
 pub struct SetupRequest {
     pub username: String,
     pub password: String,
-    /// The token printed in the server log at startup.
+    /// The token printed on the server's stderr at startup.
     #[serde(default)]
     pub setup_token: String,
 }
@@ -184,9 +184,9 @@ pub async fn setup_form(
             "Too many attempts. Please try again in {retry_after_secs} seconds."
         )),
         Err(AppError::UsernameExists) => render_error("Username already exists".to_string()),
-        Err(AppError::InvalidSetupToken) => {
-            render_error("Invalid setup token. Find it in the server log from startup.".to_string())
-        }
+        Err(AppError::InvalidSetupToken) => render_error(
+            "Invalid setup token. Find it on the server's stderr from startup.".to_string(),
+        ),
         Err(_) => render_error("Could not create the account".to_string()),
     }
 }

@@ -72,9 +72,11 @@ cargo build --release
 
 Open `http://localhost:8080`. An empty database serves `/setup`, which creates
 the admin account and then closes for good — **there is no public sign-up**.
-`/setup` asks for a one-time **setup token** that rdrs prints in its log at
+`/setup` asks for a one-time **setup token** that rdrs prints to stderr at
 startup (`setup_token=...`), so a bot that finds a fresh public deploy cannot
-claim the admin account first.
+claim the admin account first. The token stays out of the structured tracing
+log; if stderr is also collected (`docker logs`, journald), it appears there
+too, but is useless once setup completes.
 Others are added by an admin; see [Adding people](#adding-people).
 
 ## Configuration
