@@ -87,6 +87,80 @@ async fn test_register_first_user_becomes_admin() {
     assert_eq!(body["role"], "admin");
 }
 
+#[tokio::test]
+async fn test_setup_rejects_invalid_usernames() {
+    let long = "a".repeat(65);
+    for bad in ["", "   ", "a\tb", long.as_str()] {
+        let server = create_test_server(default_test_config()).await;
+        let response = server
+            .post("/api/setup")
+            .json(&json!({ "username": bad, "password": "vulture-mango-77-quilt" }))
+            .await;
+        response.assert_status(StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn test_login_matches_trimmed_username_stored_by_setup() {
+    let app = common::create_test_app(default_test_config()).await;
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "admin", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "admin ", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_login_still_matches_legacy_username_with_spaces() {
+    let app = common::create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, " legacy ", "vulture-mango-77-quilt").await;
+
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": " legacy ", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_login_rate_limit_is_shared_across_username_spellings() {
+    let app = common::create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "admin", "vulture-mango-77-quilt").await;
+
+    let attempt = |name: &'static str| {
+        app.server
+            .post("/api/session")
+            .json(&json!({ "username": name, "password": "wrong-password-xyz" }))
+    };
+    let mut limited = false;
+    for i in 0..20 {
+        let name = if i % 2 == 0 { "admin" } else { "admin " };
+        if attempt(name).await.status_code() == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+            break;
+        }
+    }
+    assert!(limited, "both spellings must drain one account budget");
+}
+
+#[tokio::test]
+async fn test_setup_stores_trimmed_username() {
+    let server = create_test_server(default_test_config()).await;
+    let response = server
+        .post("/api/setup")
+        .json(&json!({ "username": "  admin  ", "password": "vulture-mango-77-quilt" }))
+        .await;
+    response.assert_status(StatusCode::CREATED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["username"], "admin");
+}
+
 const SETUP_TOKEN: &str = "token-from-the-server-log";
 
 /// A server whose `/setup` demands [`SETUP_TOKEN`], as `main` configures it.

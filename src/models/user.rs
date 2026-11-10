@@ -98,6 +98,31 @@ impl User {
     }
 }
 
+/// Longest accepted username, in characters.
+pub const USERNAME_MAX_CHARS: usize = 64;
+
+/// Trims, then requires a non-empty name of at most [`USERNAME_MAX_CHARS`]
+/// characters without control characters. Any other character is allowed
+/// because SSO identities (emails, `DOMAIN\\user`, spaces, non-ASCII) must keep
+/// working. Returns the trimmed name to store.
+pub fn validate_username(raw: &str) -> AppResult<String> {
+    let username = raw.trim();
+    if username.is_empty() {
+        return Err(AppError::Validation("Username is required".to_string()));
+    }
+    if username.chars().count() > USERNAME_MAX_CHARS {
+        return Err(AppError::Validation(format!(
+            "Username must be at most {USERNAME_MAX_CHARS} characters"
+        )));
+    }
+    if username.chars().any(char::is_control) {
+        return Err(AppError::Validation(
+            "Username must not contain control characters".to_string(),
+        ));
+    }
+    Ok(username.to_string())
+}
+
 pub async fn create_user(
     db: &Db,
     username: &str,
@@ -156,6 +181,23 @@ pub async fn find_by_username(db: &Db, username: &str) -> AppResult<Option<User>
         username
     )
     .map_err(AppError::Database)
+}
+
+/// Login lookup: the raw value first, so accounts stored before validation
+/// trimmed names (possibly with surrounding spaces) still sign in, then the
+/// trimmed value, since setup now stores trimmed names. Also returns the key
+/// for the per-account rate limit: the stored name on a hit, else the trimmed
+/// input.
+pub async fn find_for_login(db: &Db, raw: &str) -> AppResult<(String, Option<User>)> {
+    if let Some(user) = find_by_username(db, raw).await? {
+        return Ok((user.username.clone(), Some(user)));
+    }
+    let trimmed = raw.trim();
+    if trimmed == raw {
+        return Ok((trimmed.to_string(), None));
+    }
+    let user = find_by_username(db, trimmed).await?;
+    Ok((trimmed.to_string(), user))
 }
 
 pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<User>> {
@@ -286,6 +328,53 @@ pub async fn count_tx(tx: &mut Tx<'_>) -> AppResult<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_username_accepts_allowed_characters() {
+        for ok in [
+            "admin",
+            "a_b-c.d@e.com",
+            "CORP\\alice",
+            "Alice Smith",
+            "名字",
+            &"名".repeat(64),
+        ] {
+            assert_eq!(validate_username(ok).unwrap(), ok);
+        }
+    }
+
+    #[test]
+    fn validate_username_trims_surrounding_whitespace() {
+        assert_eq!(validate_username("  alice\t\n").unwrap(), "alice");
+    }
+
+    #[test]
+    fn validate_username_rejects_empty_and_blank() {
+        for bad in ["", "   ", "\t\n"] {
+            assert!(matches!(
+                validate_username(bad),
+                Err(AppError::Validation(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn validate_username_rejects_over_64_characters() {
+        assert!(matches!(
+            validate_username(&"a".repeat(65)),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn validate_username_rejects_control_characters() {
+        for bad in ["a\tb", "a\u{0}b", "a\u{7f}b", "a\nb", "a\u{85}b"] {
+            assert!(
+                matches!(validate_username(bad), Err(AppError::Validation(_))),
+                "{bad:?}"
+            );
+        }
+    }
 
     async fn setup_db() -> Db {
         Db::connect_in_memory().await.unwrap()
