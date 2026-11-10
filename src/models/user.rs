@@ -321,6 +321,15 @@ pub async fn count(db: &Db) -> AppResult<i64> {
     query_scalar!(db, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)
 }
 
+pub async fn count_active_admins(db: &Db) -> AppResult<i64> {
+    query_scalar!(
+        db,
+        i64,
+        "SELECT COUNT(*) FROM \"user\" WHERE role = 'admin' AND disabled_at IS NULL"
+    )
+    .map_err(AppError::Database)
+}
+
 pub async fn count_tx(tx: &mut Tx<'_>) -> AppResult<i64> {
     query_scalar_tx!(tx, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)
 }
@@ -551,6 +560,18 @@ mod tests {
         assert_eq!(users.len(), 2);
         assert_eq!(users[0].username, "user1");
         assert_eq!(users[1].username, "user2");
+    }
+
+    #[tokio::test]
+    async fn test_count_active_admins_ignores_users_and_disabled() {
+        let db = setup_db().await;
+        assert_eq!(count_active_admins(&db).await.unwrap(), 0);
+        create_user(&db, "plain", "h", Role::User).await.unwrap();
+        assert_eq!(count_active_admins(&db).await.unwrap(), 0);
+        let admin = create_user(&db, "boss", "h", Role::Admin).await.unwrap();
+        assert_eq!(count_active_admins(&db).await.unwrap(), 1);
+        disable_user(&db, admin.id).await.unwrap();
+        assert_eq!(count_active_admins(&db).await.unwrap(), 0);
     }
 
     #[tokio::test]

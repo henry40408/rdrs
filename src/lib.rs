@@ -64,8 +64,8 @@ pub struct AppState {
     /// Per-client-IP throttle shared by every credential-accepting endpoint.
     /// See [`middleware::RateLimiter`].
     pub login_rate_limiter: Arc<crate::middleware::RateLimiter>,
-    /// One-time token `/setup` demands, printed to the server log at startup so
-    /// only whoever can read the log can claim the first (admin) account.
+    /// One-time token `/setup` demands, printed to the server's stderr at startup so
+    /// only whoever can read stderr can claim the first (admin) account.
     /// `main` always sets it; `None` skips the check and exists for tests.
     pub setup_token: Option<Arc<str>>,
 }

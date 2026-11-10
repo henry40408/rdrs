@@ -72,9 +72,11 @@ cargo build --release
 
 Open `http://localhost:8080`. An empty database serves `/setup`, which creates
 the admin account and then closes for good — **there is no public sign-up**.
-`/setup` asks for a one-time **setup token** that rdrs prints in its log at
+`/setup` asks for a one-time **setup token** that rdrs prints to stderr at
 startup (`setup_token=...`), so a bot that finds a fresh public deploy cannot
-claim the admin account first.
+claim the admin account first. The token stays out of the structured tracing
+log; if stderr is also collected (`docker logs`, journald), it appears there
+too, but is useless once setup completes.
 Others are added by an admin; see [Adding people](#adding-people).
 
 ## Configuration
@@ -244,6 +246,12 @@ Existing accounts are matched by username.
 `RDRS_AUTH_PROXY_ADMIN_GROUP`, `RDRS_DISABLE_LOCAL_AUTH`,
 `RDRS_AUTH_PROXY_LOGOUT_URL` (without it, SSO users are told to log out at the
 proxy, since the header would re-authenticate them).
+
+With group mapping on, roles are re-synced at every proxy login, so the admin
+group in your identity provider decides who is an admin (the exception is an
+account created through `/setup` before any proxy login). rdrs logs a startup
+warning when no active admin exists; add the first user to that group and sign
+out and in again.
 
 **Reverse-proxy requirements:**
 

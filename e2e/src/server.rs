@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -43,7 +43,7 @@ pub struct Endpoints {
     pub db_path: PathBuf,
     /// A URL that always answers with a valid RSS document.
     pub feed_url: String,
-    /// The first-run setup token the server printed to its log at startup.
+    /// The first-run setup token the server printed to its stderr at startup.
     pub setup_token: String,
 }
 
@@ -79,7 +79,7 @@ impl Harness {
             .env("RDRS_SERVER_BIND", format!("127.0.0.1:{port}"))
             .env("RDRS_MULTI_USER_ENABLED", "true")
             .env("RUST_LOG", "warn")
-            // No ANSI codes, so the setup token parses cleanly out of the log.
+            // No ANSI codes, so the setup token parses cleanly out of stderr.
             .env("NO_COLOR", "1")
             // Minimal Argon2 cost for per-scenario logins. Never in production.
             .env("RDRS_FAST_HASH", "1")
@@ -94,13 +94,15 @@ impl Harness {
             // The mock feed binds loopback, which the SSRF guard refuses by
             // default; this is the self-hoster LAN opt-in, not a test bypass.
             .env("RDRS_FETCH_ALLOW_PRIVATE_HOSTS", "127.0.0.1")
-            // Piped so the setup token can be read; every line is echoed so
-            // startup failures still show in the test output.
+            // Both piped: stderr carries the setup token, stdout the tracing
+            // log that must never contain it. Every line is echoed so startup
+            // failures still show in the test output.
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("spawning the rdrs server at {}", binary.display()))?;
-        let setup_token_rx = forward_log_and_find_setup_token(&mut child);
+        let tracing_log = forward_tracing_log(&mut child);
+        let setup_token_rx = forward_stderr_and_find_setup_token(&mut child);
 
         // Bound before the wait so a server that never answers is still killed.
         let mut harness = Self {
@@ -115,10 +117,19 @@ impl Harness {
             _temp: temp,
         };
         wait_until_healthy(&base_url).await?;
-        // Logged before the listener binds, so it has arrived once `/health` answers.
+        // Printed before the listener binds, so it has arrived once `/health` answers.
         harness.endpoints.setup_token = setup_token_rx
             .recv_timeout(Duration::from_secs(5))
-            .context("the server did not log a setup token")?;
+            .context("the server did not print a setup token")?;
+        // The tracing log is what operators ship to collectors; the token must stay
+        // out of it. The reader thread may lag the server, so this is best effort.
+        let leaked = tracing_log
+            .lock()
+            .expect("tracing log mutex poisoned")
+            .contains(&harness.endpoints.setup_token);
+        if leaked {
+            bail!("the setup token leaked into the tracing log on stdout");
+        }
         Ok(harness)
     }
 
@@ -138,14 +149,32 @@ impl Drop for Harness {
     }
 }
 
-/// Echoes the server's stdout to ours and delivers the setup token it logs
-/// (`setup_token=<token>`, no ANSI thanks to `NO_COLOR`).
-fn forward_log_and_find_setup_token(child: &mut Child) -> mpsc::Receiver<String> {
+/// Echoes the server's stdout (the tracing log) to ours and keeps a copy so
+/// startup can assert the setup token never appears in it.
+fn forward_tracing_log(child: &mut Child) -> Arc<Mutex<String>> {
     let stdout = child.stdout.take().expect("stdout is piped");
-    let (tx, rx) = mpsc::channel();
+    let log = Arc::new(Mutex::new(String::new()));
+    let collected = Arc::clone(&log);
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             println!("{line}");
+            if let Ok(mut log) = collected.lock() {
+                log.push_str(&line);
+                log.push('\n');
+            }
+        }
+    });
+    log
+}
+
+/// Echoes the server's stderr to ours and delivers the setup token it prints
+/// (`setup_token=<token>`).
+fn forward_stderr_and_find_setup_token(child: &mut Child) -> mpsc::Receiver<String> {
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            eprintln!("{line}");
             let token = line
                 .split_whitespace()
                 .find_map(|word| word.strip_prefix("setup_token="));

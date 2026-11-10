@@ -534,6 +534,23 @@ impl Config {
         }
         None
     }
+
+    /// Warn when group mapping is on but no active admin exists. Mapping is
+    /// recomputed on every forward-auth login, so an admin appears only when the
+    /// identity provider puts someone in the admin group (or `/setup` created one
+    /// before any proxy login). Silent without forward-auth: mapping is inert then.
+    pub fn no_admin_group_mapping_warning(&self, active_admin_count: i64) -> Option<String> {
+        if !self.auth_proxy_enabled() || !self.group_mapping_enabled() || active_admin_count > 0 {
+            return None;
+        }
+        Some(format!(
+            "Forward-auth group mapping is enabled but no active admin account exists. Roles \
+             are synced from the proxy on every login, so add the first user to the \
+             '{}' group in your identity provider (it must arrive in the {} header) and have \
+             them sign out and sign in again.",
+            self.auth_proxy_admin_group, self.auth_proxy_groups_header
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -1161,6 +1178,31 @@ mod tests {
             ..test_config()
         };
         assert!(on.group_mapping_enabled());
+    }
+
+    #[test]
+    fn test_no_admin_group_mapping_warning() {
+        let mapping = Config {
+            auth_proxy_header: "Remote-User".to_string(),
+            auth_proxy_groups_header: "Remote-Groups".to_string(),
+            auth_proxy_admin_group: "admins".to_string(),
+            ..test_config()
+        };
+        let warning = mapping
+            .no_admin_group_mapping_warning(0)
+            .expect("mapping without an admin must warn");
+        assert!(warning.contains("'admins'") && warning.contains("Remote-Groups"));
+        assert!(mapping.no_admin_group_mapping_warning(1).is_none());
+        assert!(test_config().no_admin_group_mapping_warning(0).is_none());
+        let without_forward_auth = Config {
+            auth_proxy_header: String::new(),
+            ..mapping
+        };
+        assert!(
+            without_forward_auth
+                .no_admin_group_mapping_warning(0)
+                .is_none()
+        );
     }
 
     #[test]
