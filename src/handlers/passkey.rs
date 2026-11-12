@@ -56,7 +56,7 @@ pub async fn start_registration(
 
     let state_json =
         serde_json::to_string(&reg_state).map_err(|e| AppError::Internal(e.to_string()))?;
-    let challenge_bytes: Vec<u8> = ccr.public_key.challenge.as_ref().to_vec();
+    let challenge_bytes: Vec<u8> = ccr.public_key.challenge.clone();
 
     webauthn_challenge::create_challenge(
         &state.db,
@@ -114,7 +114,7 @@ pub async fn finish_registration(
         .finish_passkey_registration(&req.credential, &reg_state)
         .map_err(|e| AppError::PasskeyRegistrationFailed(e.to_string()))?;
 
-    let credential_id: Vec<u8> = passkey_data.cred_id().as_ref().to_vec();
+    let credential_id: Vec<u8> = passkey_data.cred_id().clone();
     let public_key_json =
         serde_json::to_vec(&passkey_data).map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -200,7 +200,7 @@ pub async fn start_authentication(
 
     let state_json =
         serde_json::to_string(&auth_state).map_err(|e| AppError::Internal(e.to_string()))?;
-    let challenge_bytes: Vec<u8> = rcr.public_key.challenge.as_ref().to_vec();
+    let challenge_bytes: Vec<u8> = rcr.public_key.challenge.clone();
 
     webauthn_challenge::create_challenge(
         &state.db,
@@ -258,7 +258,7 @@ pub async fn finish_authentication(
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Client-supplied ID only selects which public key to verify against.
-    let credential_id: Vec<u8> = req.credential.raw_id.as_ref().to_vec();
+    let credential_id: Vec<u8> = req.credential.raw_id.clone();
     let stored_passkey = passkey::find_by_credential_id(&state.db, &credential_id)
         .await?
         .ok_or(AppError::PasskeyNotFound)?;
@@ -276,11 +276,7 @@ pub async fn finish_authentication(
     // `finish_discoverable_*` uses this single credential as the allow-list.
     let auth_result = state
         .webauthn
-        .finish_discoverable_authentication(
-            &req.credential,
-            auth_state,
-            std::slice::from_ref(&DiscoverableKey::from(&passkey_data)),
-        )
+        .finish_discoverable_authentication_v2(&req.credential, auth_state, &passkey_data)
         .map_err(|e| AppError::PasskeyAuthenticationFailed(e.to_string()))?;
 
     // Release the reservation so successful sign-ins never lock a user out.
