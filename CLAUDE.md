@@ -49,7 +49,7 @@ it — run fmt and clippy inside `e2e/` too (CI does, in the `lint-e2e` job). It
   `cargo clippy --all-targets -- -D warnings`.
 - README screenshots: `cargo run --bin screenshots` (writes `../screenshots/`).
 - CSP audit (CI gate): `cargo run --bin csp-audit` — fails on any browser CSP
-  violation. Run after touching `templates/`, `static/css/` or `static/js/`
+  violation. Run after touching `src/handlers/views/`, `static/css/` or `static/js/`
   (the source scan in `src/middleware/security_headers.rs` can't see runtime
   markup or shadow DOM).
 - No-JS walkthrough (CI gate): `cargo run --bin nojs` — scripts disabled and
@@ -62,16 +62,16 @@ it — run fmt and clippy inside `e2e/` too (CI does, in the `lint-e2e` job). It
 **A browser must be installed** (`WebDriver::managed` fetches only the driver).
 macOS: `brew install --cask ungoogled-chromium`; CI's `ubuntu-latest` has Chrome.
 
-**Rebuild before E2E/screenshots.** Assets and templates are embedded at compile
-time and the suite skips building if a binary exists. After editing `static/`,
-`templates/`, or Rust source, run `cargo build` first.
+**Rebuild before E2E/screenshots.** Assets are embedded at compile
+time and the suite skips building if a binary exists. After editing `static/` or
+Rust source, run `cargo build` first.
 
 **`.feature` files are the contract**, read as-is. New scenarios need steps in
 `e2e/tests/e2e/steps/`; unmatched steps fail the suite.
 
 ## UI changes require screenshot updates
 
-Any change to rendered UI (`static/css/`, `templates/`, `static/js/`):
+Any change to rendered UI (`static/css/`, `src/handlers/views/`, `static/js/`):
 `cargo build`, then `cd e2e && cargo run --bin screenshots`, and include the
 four updated images under `screenshots/` (referenced by `README.md`) in the same
 change. The generator (`e2e/src/bin/screenshots.rs`) captures the unread list
@@ -79,14 +79,14 @@ with reading pane and the keyboard-help overlay, light and dark.
 
 ## Architecture
 
-**Askama templates → Axum handlers → services → models → SQLite/PostgreSQL.**
+**maud views (`src/handlers/views/`) → Axum handlers → services → models → SQLite/PostgreSQL.**
 `ARCHITECTURE.md` is the full map. Rules most easily violated:
 
 - **SSR-first, no frontend build tooling.** Logged-in pages are server-rendered;
   mutations are form POSTs answered with flash + redirect (`FlashRedirect`).
   `static/js/` is progressive enhancement only — vanilla ES modules via
   `include_str!`; no bundlers or transpilers.
-- **Everything compiles into the single binary** (templates, CSS, JS,
+- **Everything compiles into the single binary** (CSS, JS,
   favicons) — hence the mandatory rebuild.
 - **Every query uses the `query_*!` / `db_execute!` macros** (SQL and binds
   written once for both backends). Dialect forks go in `entry::filters::Dialect`
