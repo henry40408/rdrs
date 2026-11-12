@@ -1,0 +1,102 @@
+//! Icon call sites into [`sprite`]; keep ids in sync with its `<symbol>`s.
+
+use maud::{Markup, html};
+
+fn use_icon(href: &str) -> Markup {
+    html! { svg.ico aria-hidden="true" { use href=(href) {} } }
+}
+
+pub(crate) fn unread() -> Markup {
+    html! { svg.ico.is-filled aria-hidden="true" { use href="#i-unread" {} } }
+}
+
+pub(crate) fn star(filled: bool) -> Markup {
+    html! { svg.ico.is-filled[filled] aria-hidden="true" { use href="#i-star" {} } }
+}
+
+pub(crate) fn summary(filled: bool) -> Markup {
+    let href = if filled {
+        "#i-summary-filled"
+    } else {
+        "#i-summary"
+    };
+    html! { svg.ico.is-filled[filled] aria-hidden="true" { use href=(href) {} } }
+}
+
+pub(crate) fn external() -> Markup {
+    use_icon("#i-external")
+}
+
+pub(crate) fn document() -> Markup {
+    use_icon("#i-document")
+}
+
+pub(crate) fn revert() -> Markup {
+    use_icon("#i-revert")
+}
+
+pub(crate) fn refresh() -> Markup {
+    use_icon("#i-refresh")
+}
+
+pub(crate) fn sparkle() -> Markup {
+    use_icon("#i-sparkle")
+}
+
+pub(crate) fn bookmark() -> Markup {
+    use_icon("#i-bookmark")
+}
+
+pub(crate) fn copy() -> Markup {
+    use_icon("#i-copy")
+}
+
+pub(crate) fn close() -> Markup {
+    use_icon("#i-close")
+}
+
+pub(crate) fn search() -> Markup {
+    use_icon("#i-search")
+}
+
+pub(crate) fn help() -> Markup {
+    use_icon("#i-help")
+}
+
+pub(crate) fn chevron_left() -> Markup {
+    use_icon("#i-chevron-left")
+}
+
+pub(crate) fn chevron_right() -> Markup {
+    use_icon("#i-chevron-right")
+}
+
+/// The `<symbol>` sheet, emitted once per document by `layout::document`.
+///
+/// No presentation attributes: `.ico` in app.css sets them and they inherit
+/// into `<use>`. `hidden` does not work on SVG-namespace elements, and an
+/// unsized sprite renders at 300x150, so it is sized with attributes rather
+/// than inline `style` (forbidden by CSP).
+pub(crate) fn sprite() -> Markup {
+    html! {
+        svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" data-icon-sprite class="icon-sprite" width="0" height="0" overflow="hidden" {
+            symbol id="i-check" viewBox="0 0 24 24" { path d="M5 13l4 4L19 7" {} }
+            symbol id="i-unread" viewBox="0 0 24 24" { circle cx="12" cy="12" r="6" {} }
+            symbol id="i-star" viewBox="0 0 24 24" { path d="M12 3.5l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.3 6.6 20l1-6L3.3 9.9l6-.9z" {} }
+            symbol id="i-external" viewBox="0 0 24 24" { path d="M14 4h6v6" {} path d="M20 4l-8.5 8.5" {} path d="M19 14v5H5V5h5" {} }
+            symbol id="i-document" viewBox="0 0 24 24" { path d="M7 3h7l4 4v14H7z" {} path d="M14 3v4h4" {} path d="M9.5 12h6M9.5 16h6" {} }
+            symbol id="i-revert" viewBox="0 0 24 24" { path d="M9 14L4 9l5-5" {} path d="M4 9h11a5 5 0 0 1 0 10h-4" {} }
+            symbol id="i-refresh" viewBox="0 0 24 24" { path d="M21 12a9 9 0 1 1-2.6-6.4" {} path d="M21 3v5h-5" {} }
+            symbol id="i-sparkle" viewBox="0 0 24 24" { path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-4.9L6 9.3l4.3-1.7z" {} path d="M18 15l.7 1.8L20.5 17.5l-1.8.7L18 20l-.7-1.8L15.5 17.5l1.8-.7z" {} }
+            symbol id="i-bookmark" viewBox="0 0 24 24" { path d="M6 4h12v17l-6-4-6 4z" {} }
+            symbol id="i-copy" viewBox="0 0 24 24" { rect x="9" y="9" width="11" height="11" rx="2" {} path d="M5 15V6a2 2 0 0 1 2-2h8" {} }
+            symbol id="i-close" viewBox="0 0 24 24" { path d="M6 6l12 12M18 6L6 18" {} }
+            symbol id="i-search" viewBox="0 0 24 24" { circle cx="11" cy="11" r="7" {} path d="M21 21l-4.3-4.3" {} }
+            symbol id="i-help" viewBox="0 0 24 24" { circle cx="12" cy="12" r="9" {} path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7" {} path d="M12 17h.01" {} }
+            symbol id="i-chevron-left" viewBox="0 0 24 24" { path d="M15 6l-6 6 6 6" {} }
+            symbol id="i-chevron-right" viewBox="0 0 24 24" { path d="M9 6l6 6-6 6" {} }
+            symbol id="i-summary-filled" viewBox="0 0 24 24" { path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z" {} }
+            symbol id="i-summary" viewBox="0 0 24 24" { g transform="translate(1.2 1.2) scale(0.9)" { path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z" {} } }
+        }
+    }
+}

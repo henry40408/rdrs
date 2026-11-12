@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::{
     extract::{Query, State},
     response::{IntoResponse, Response},
@@ -10,6 +9,7 @@ use super::{
     search_error_message,
 };
 use crate::AppState;
+use crate::handlers::views;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::entry;
@@ -48,23 +48,28 @@ pub async fn search_page(
 
     if query.fragment == Some(1) && !crate::handlers::is_document_navigation(&headers) {
         return if query.after.is_some() {
-            (flash, SearchFragmentTemplate { search }).into_response()
+            (
+                flash,
+                views::search::fragment(&SearchFragmentTemplate { search }),
+            )
+                .into_response()
         } else {
-            (flash, SearchRefreshFragmentTemplate { search }).into_response()
+            (
+                flash,
+                views::search::refresh_fragment(&SearchRefreshFragmentTemplate { search }),
+            )
+                .into_response()
         };
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
-    (
-        flash,
-        SearchTemplate {
-            title: "Search",
-            git_version: crate::GIT_VERSION,
-            layout,
-            search,
-        },
-    )
-        .into_response()
+    let page = SearchTemplate {
+        title: "Search",
+        git_version: crate::GIT_VERSION,
+        layout,
+        search,
+    };
+    (flash, views::search::page(&page)).into_response()
 }
 
 /// One page of `/search` results for `q`, highlighted.
@@ -136,7 +141,7 @@ async fn search_results(
 }
 
 /// `/search` result row. `title_html`/`snippet_html` are pre-escaped with
-/// `<mark>` highlights; render with `|safe`.
+/// `<mark>` highlights; rendered raw.
 pub struct SearchResultView {
     pub entry_id: i64,
     pub title_html: String,
@@ -147,7 +152,7 @@ pub struct SearchResultView {
     pub snippet_html: String,
 }
 
-/// What `_search_results.html` renders, shared by the page and its fragments.
+/// What `views::search` renders, shared by the page and its fragments.
 pub struct SearchResultsView {
     pub q: String,
     pub error: Option<String>,
@@ -156,9 +161,7 @@ pub struct SearchResultsView {
     pub next_cursor: Option<String>,
 }
 
-/// Per-route template for `/search`.
-#[derive(Template)]
-#[template(path = "search.html")]
+/// Page data for `/search`.
 pub struct SearchTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -167,15 +170,11 @@ pub struct SearchTemplate {
 }
 
 /// Live-search response: the whole results region.
-#[derive(Template)]
-#[template(path = "_search_refresh_fragment.html")]
 pub struct SearchRefreshFragmentTemplate {
     pub search: SearchResultsView,
 }
 
 /// Search Load More response: the next page's items.
-#[derive(Template)]
-#[template(path = "_search_fragment.html")]
 pub struct SearchFragmentTemplate {
     pub search: SearchResultsView,
 }

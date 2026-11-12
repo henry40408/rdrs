@@ -1,11 +1,12 @@
-use askama::Template;
 use axum::extract::{RawQuery, State};
 use chrono::Utc;
+use maud::Markup;
 use url::form_urlencoded;
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
 use crate::db::Db;
+use crate::handlers::views;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::api_token;
@@ -100,7 +101,7 @@ pub async fn user_settings_page(
     State(state): State<AppState>,
     RawQuery(raw_query): RawQuery,
     flash: Flash,
-) -> (Flash, UserSettingsTemplate) {
+) -> (Flash, Markup) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
@@ -131,48 +132,47 @@ pub async fn user_settings_page(
         )
     };
 
-    (
-        flash,
-        UserSettingsTemplate {
-            title: "Settings",
-            git_version: crate::GIT_VERSION,
-            layout,
-            csrf_token: auth_user.csrf_token.clone(),
-            username: auth_user.user.username.clone(),
-            role: auth_user.user.role.as_str().to_string(),
-            created_at: format_display(auth_user.user.created_at),
-            created_at_iso: auth_user.user.created_at.to_rfc3339(),
-            session_created_at: format_display(auth_user.session.created_at),
-            session_created_at_iso: auth_user.session.created_at.to_rfc3339(),
-            sessions,
-            show_sessions: !is_masquerading,
-            api_tokens,
-            public_base_url,
-            timezone: suggested_timezone
-                .unwrap_or_else(|| settings.tz())
-                .name()
-                .to_string(),
-            timezone_is_suggestion: suggested_timezone.is_some(),
-            timezone_suggestions: timezone::TIMEZONE_SUGGESTIONS,
-            theme: settings.theme,
-            entries_per_page: settings.entries_per_page,
-            retention_read_days: settings.retention_read_days,
-            entries_per_page_suggestions: user_settings::ENTRIES_PER_PAGE_SUGGESTIONS,
-            retention_read_days_suggestions: user_settings::RETENTION_READ_DAYS_SUGGESTIONS,
-            offline_keep_suggestions: user_settings::OFFLINE_KEEP_SUGGESTIONS,
-            offline_keep: settings.offline_keep,
-            sidebar_sort: sidebar_prefs.sort,
-            sidebar_hide_read: sidebar_prefs.hide_read,
-            pixel_tracking_enabled: settings.pixel_tracking_enabled_at.is_some(),
-            password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
-            password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
-            linkding_configured: services.linkding_configured,
-            linkding_api_url: services.linkding_api_url,
-            kagi_configured: services.kagi_configured,
-            kagi_language: services.kagi_language,
-            credentials_unreadable: services.credentials_unreadable,
-        },
-    )
+    let page = UserSettingsTemplate {
+        title: "Settings",
+        git_version: crate::GIT_VERSION,
+        layout,
+        csrf_token: auth_user.csrf_token.clone(),
+        username: auth_user.user.username.clone(),
+        role: auth_user.user.role.as_str().to_string(),
+        created_at: format_display(auth_user.user.created_at),
+        created_at_iso: auth_user.user.created_at.to_rfc3339(),
+        session_created_at: format_display(auth_user.session.created_at),
+        session_created_at_iso: auth_user.session.created_at.to_rfc3339(),
+        sessions,
+        show_sessions: !is_masquerading,
+        api_tokens,
+        public_base_url,
+        timezone: suggested_timezone
+            .unwrap_or_else(|| settings.tz())
+            .name()
+            .to_string(),
+        timezone_is_suggestion: suggested_timezone.is_some(),
+        timezone_suggestions: timezone::TIMEZONE_SUGGESTIONS,
+        theme: settings.theme,
+        entries_per_page: settings.entries_per_page,
+        retention_read_days: settings.retention_read_days,
+        entries_per_page_suggestions: user_settings::ENTRIES_PER_PAGE_SUGGESTIONS,
+        retention_read_days_suggestions: user_settings::RETENTION_READ_DAYS_SUGGESTIONS,
+        offline_keep_suggestions: user_settings::OFFLINE_KEEP_SUGGESTIONS,
+        offline_keep: settings.offline_keep,
+        sidebar_sort: sidebar_prefs.sort,
+        sidebar_hide_read: sidebar_prefs.hide_read,
+        pixel_tracking_enabled: settings.pixel_tracking_enabled_at.is_some(),
+        password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
+        password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
+        linkding_configured: services.linkding_configured,
+        linkding_api_url: services.linkding_api_url,
+        kagi_configured: services.kagi_configured,
+        kagi_language: services.kagi_language,
+        credentials_unreadable: services.credentials_unreadable,
+    };
+
+    (flash, views::account::page(&page))
 }
 
 /// "Active Sessions" card. `id` is safe to expose (revoke re-checks ownership);
@@ -205,8 +205,6 @@ pub struct ApiTokenRow {
 }
 
 /// Per-route template for `/user-settings`.
-#[derive(Template)]
-#[template(path = "user_settings.html")]
 pub struct UserSettingsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,

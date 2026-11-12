@@ -6,7 +6,7 @@ RDRS is a self-hosted RSS reader built with Rust.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              Templates (Askama HTML)                │
+│              Views (maud Markup)                    │
 ├─────────────────────────────────────────────────────┤
 │           HTTP Layer (Axum Handlers)                │
 ├─────────────────────────────────────────────────────┤
@@ -70,6 +70,7 @@ src/
 │   ├── pixel.rs         # Open-tracking pixel endpoint
 │   ├── summarizer.rs    # Batch URL summarizer
 │   ├── events.rs        # SSE live-update stream
+│   ├── views/           # maud views (layout, macros, one module per area)
 │   └── greader/         # Google Reader API compatibility
 │       ├── auth.rs      # ClientLogin authentication
 │       ├── subscription.rs # Subscription list/edit, OPML import
@@ -131,7 +132,6 @@ src/
     ├── password.rs      # Password hashing (Argon2)
     └── webauthn.rs      # WebAuthn/Passkey authentication
 
-templates/               # Askama HTML templates
 tests/                   # Integration tests
 ```
 

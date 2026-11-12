@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
@@ -9,6 +8,7 @@ use std::collections::HashMap;
 
 use crate::AppState;
 use crate::error::AppError;
+use crate::handlers::views;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::{Flash, FlashMessage, FlashRedirect};
 use crate::models::SummaryStatus;
@@ -76,7 +76,7 @@ pub(crate) fn feed_color_index(feed_id: i64) -> u8 {
     feed_id.rem_euclid(6) as u8
 }
 
-/// View-model for one row in the entries list (`_entry_row.html`).
+/// View-model for one row in the entries list.
 #[derive(Debug, Clone)]
 pub struct EntryRowView {
     pub id: i64,
@@ -117,7 +117,7 @@ impl EntryRowView {
     }
 }
 
-/// View-model for the reading pane (`_reading_pane.html`).
+/// View-model for the reading pane.
 #[derive(Debug, Clone)]
 pub struct ReadingPaneView {
     pub id: i64,
@@ -189,7 +189,7 @@ pub(crate) fn snapshot_now() -> String {
     chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// Layout context shared by entries-family pages (`_entries_layout.html`).
+/// Layout context shared by entries-family pages.
 /// `Default` means no breadcrumbs, filter tabs, search box or sidebar highlight.
 #[derive(Debug, Clone, Default)]
 pub struct EntriesLayoutContext {
@@ -482,8 +482,6 @@ async fn maybe_build_reading_pane(
 }
 
 /// Load-More response fragment.
-#[derive(Template)]
-#[template(path = "_entries_fragment.html")]
 pub(crate) struct EntriesFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<String>,
@@ -498,31 +496,31 @@ pub(crate) struct EntriesFragmentTemplate {
     pub csrf_token: String,
 }
 
-crate::handlers::impl_html_response!(
-    EntriesFragmentTemplate,
-    EntriesRefreshFragmentTemplate,
-    EntriesPaneFragmentTemplate,
-    OfflineTemplate,
-    LoginTemplate,
-    SetupTemplate,
-    InviteTemplate,
-    SettingsTemplate,
-    UserSettingsTemplate,
-    AdminTemplate,
-    StatisticsTemplate,
-    CategoriesTemplate,
-    FeedsTemplate,
-    FeedEditTemplate,
-    FeedsImportTemplate,
-    EntriesPageTemplate,
-    SearchTemplate,
-    SearchRefreshFragmentTemplate,
-    SearchFragmentTemplate,
-);
+impl IntoResponse for EntriesFragmentTemplate {
+    fn into_response(self) -> Response {
+        views::entries::load_more_fragment(&self).into_response()
+    }
+}
+
+impl IntoResponse for EntriesRefreshFragmentTemplate {
+    fn into_response(self) -> Response {
+        views::entries::refresh_fragment(&self).into_response()
+    }
+}
+
+impl IntoResponse for EntriesPaneFragmentTemplate {
+    fn into_response(self) -> Response {
+        views::entries::pane_fragment(&self).into_response()
+    }
+}
+
+impl IntoResponse for EntriesPageTemplate {
+    fn into_response(self) -> Response {
+        views::entries::page(&self).into_response()
+    }
+}
 
 /// Scoped-search refresh: replaces the list and the mark-matching button.
-#[derive(Template)]
-#[template(path = "_entries_refresh_fragment.html")]
 pub(crate) struct EntriesRefreshFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<String>,
@@ -531,10 +529,8 @@ pub(crate) struct EntriesRefreshFragmentTemplate {
     pub csrf_token: String,
 }
 
-/// Category-switch fragment (`?pane=1`); shares `_list_pane.html` with the full
-/// page so the header can't drift.
-#[derive(Template)]
-#[template(path = "_entries_pane_fragment.html")]
+/// Category-switch fragment (`?pane=1`); shares `views::entries::list_pane` with the
+/// full page so the header can't drift.
 pub(crate) struct EntriesPaneFragmentTemplate {
     pub title: String,
     pub entries: Vec<EntryRowView>,
@@ -1690,10 +1686,7 @@ pub async fn build_app_layout(
     }
 }
 
-/// Every entry-list page renders `entries.html`. `git_version` duplicates
-/// `layout`'s because `base.html` references it outside the layout's blocks.
-#[derive(Template)]
-#[template(path = "entries.html")]
+/// Every entry-list page renders `views::entries::page`.
 pub struct EntriesPageTemplate {
     pub title: Cow<'static, str>,
     pub git_version: &'static str,

@@ -258,6 +258,40 @@ mod tests {
         !tag.contains("src=") && !tag.contains("application/json")
     }
 
+    /// The text after each whole-word `word` in `source`, leading whitespace
+    /// trimmed. `lifestyle`, `stylesheet` and `foo.style` do not match.
+    fn tails_after_word<'a>(source: &'a str, word: &str) -> Vec<&'a str> {
+        let is_word_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | ':' | '.');
+        source
+            .match_indices(word)
+            .filter(|(i, _)| !source[..*i].ends_with(is_word_char))
+            .map(|(i, _)| &source[i + word.len()..])
+            .filter(|rest| {
+                !rest.starts_with(|c: char| c.is_alphanumeric() || matches!(c, '_' | '-'))
+            })
+            .map(str::trim_start)
+            .collect()
+    }
+
+    /// Tails of maud elements named `name`: the name is followed by a body,
+    /// class, id or attribute. A variable (`name =`, `(name)`) does not match.
+    fn maud_element_tails<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
+        tails_after_word(source, name)
+            .into_iter()
+            .filter(|tail| {
+                tail.starts_with(|c: char| matches!(c, '{' | '.' | '#') || c.is_ascii_lowercase())
+            })
+            .collect()
+    }
+
+    /// True when `source` writes a `style` attribute in any maud form
+    /// (`style="x"`, `style=(x)`, `style=[x]`, `style = …`).
+    fn writes_style_attribute(source: &str) -> bool {
+        tails_after_word(source, "style")
+            .iter()
+            .any(|tail| tail.starts_with('='))
+    }
+
     /// Every file under `dir`, recursively, whose extension is in `extensions`.
     fn source_files(dir: &str, extensions: &[&str]) -> Vec<std::path::PathBuf> {
         let mut stack = vec![std::path::PathBuf::from(dir)];
@@ -279,12 +313,15 @@ mod tests {
         files
     }
 
-    /// Keeps templates and JS-built markup in line with the strict CSP, whose
+    /// Keeps views and JS-built markup in line with the strict CSP, whose
     /// violations fail silently. `element.style` (CSSOM) stays allowed, hence
     /// matching `style="`.
     #[test]
     fn no_markup_ships_inline_script_handler_or_style() {
-        let templates = source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"), &["html"]);
+        let templates = source_files(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src/handlers/views"),
+            &["rs"],
+        );
         let scripts = source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/static/js"), &["js"]);
         let scanned = templates.len() + scripts.len();
 
@@ -308,9 +345,27 @@ mod tests {
             );
 
             // The rest only applies to markup; .js files are external modules.
-            if path.extension().and_then(|e| e.to_str()) != Some("html") {
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                 continue;
             }
+
+            // Doc comments quote markup such as `<script src=…>`.
+            let source = source
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(
+                !writes_style_attribute(&source),
+                "{}: inline style attribute — `style-src 'self'` blocks these.",
+                path.display()
+            );
+            assert!(
+                maud_element_tails(&source, "style").is_empty(),
+                "{}: inline style element — `style-src 'self'` blocks these.",
+                path.display()
+            );
 
             let handlers = inline_handler_attributes(&source);
             assert!(
@@ -321,11 +376,11 @@ mod tests {
                 path.display()
             );
 
-            for (i, _) in source.match_indices("<script") {
-                let tag = &source[i..];
-                let end = tag.find('>').unwrap_or(tag.len());
+            // maud writes `script type="module" src=… {}`; its tag ends at `{`.
+            for tail in maud_element_tails(&source, "script") {
+                let tag = &tail[..tail.find('{').unwrap_or(tail.len())];
                 assert!(
-                    !is_inline_script_tag(&tag[..end]),
+                    !is_inline_script_tag(tag),
                     "{}: inline <script> block — CSP blocks these. Move it to a \
                      module under static/js/ and reference it with `src`.",
                     path.display()
@@ -334,6 +389,41 @@ mod tests {
         }
 
         assert!(scanned > 10, "sanity: expected to scan the source tree");
+    }
+
+    /// Guards the scanner itself against the maud spellings it must catch and
+    /// the identifiers it must ignore.
+    #[test]
+    fn maud_csp_scanner_recognises_its_targets() {
+        for attribute in [
+            r#"div style="x" {}"#,
+            "div style=(css) {}",
+            "div style={ \"a\" (b) } {}",
+            "div style=[opt] {}",
+            r#"div style = "x" {}"#,
+        ] {
+            assert!(writes_style_attribute(attribute), "{attribute}");
+        }
+        for harmless in ["el.style = x;", r#"link rel="stylesheet" {}"#] {
+            assert!(!writes_style_attribute(harmless), "{harmless}");
+        }
+
+        for element in [
+            "script { \"x\" }",
+            "script{ \"x\" }",
+            "(nav) script { \"x\" }",
+            "script.cls { \"x\" }",
+            "script #id { \"x\" }",
+            "script defer { \"x\" }",
+        ] {
+            assert_eq!(maud_element_tails(element, "script").len(), 1, "{element}");
+        }
+        for harmless in ["let script = layout::x();", "Some(script)", "(script)"] {
+            assert!(
+                maud_element_tails(harmless, "script").is_empty(),
+                "{harmless}"
+            );
+        }
     }
 
     #[test]

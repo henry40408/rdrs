@@ -1,8 +1,7 @@
-use askama::Template;
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
 };
 
 use super::{AppLayoutContext, build_app_layout};
@@ -11,8 +10,6 @@ use crate::middleware::auth::{LoginRedirect, PageAuthUser};
 use crate::middleware::flash::Flash;
 
 /// Chrome-wrapped 404 page for logged-in routes.
-#[derive(Template)]
-#[template(path = "error.html")]
 pub struct ErrorTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -23,10 +20,11 @@ pub struct ErrorTemplate {
 
 impl IntoResponse for ErrorTemplate {
     fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => (StatusCode::NOT_FOUND, Html(html)).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
+        (
+            StatusCode::NOT_FOUND,
+            crate::handlers::views::status::error(&self),
+        )
+            .into_response()
     }
 }
 

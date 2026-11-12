@@ -433,8 +433,8 @@ const SUMMARY_TAGS: &[&str] = &[
 
 /// Reduce a model-written summary to inline prose markup.
 ///
-/// The summary is attacker-influenced like feed content and rendered via
-/// `|safe`. `a` is excluded: a link in a box the UI presents as trustworthy is
+/// The summary is attacker-influenced like feed content and rendered
+/// unescaped. `a` is excluded: a link in a box the UI presents as trustworthy is
 /// a phishing primitive. Stray `<` is escaped rather than opening a tag.
 pub fn sanitize_summary(summary: &str) -> String {
     Builder::default()

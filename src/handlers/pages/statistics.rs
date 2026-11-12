@@ -1,5 +1,7 @@
-use askama::Template;
-use axum::extract::{Query, State};
+use axum::{
+    extract::{Query, State},
+    response::{IntoResponse, Response},
+};
 use chrono_tz::Tz;
 
 use super::{AppLayoutContext, build_app_layout};
@@ -139,8 +141,6 @@ pub struct AdminDatabaseStatsView {
 }
 
 /// Per-route template for `/statistics`.
-#[derive(Template)]
-#[template(path = "statistics.html")]
 pub struct StatisticsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -165,6 +165,12 @@ pub struct StatisticsTemplate {
     pub min_tracked_for_rate: i64,
     pub admin: Option<AdminStatsView>,
     pub admin_db: Option<AdminDatabaseStatsView>,
+}
+
+impl IntoResponse for StatisticsTemplate {
+    fn into_response(self) -> Response {
+        crate::handlers::views::statistics::statistics(&self).into_response()
+    }
 }
 
 /// Cap bar count so long ranges stay tappable on mobile.

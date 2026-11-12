@@ -143,7 +143,7 @@ async fn login_with_next(server: &TestServer, login_url: &str) -> axum_test::Tes
         .split(r#"name="next" value=""#)
         .nth(1)
         .and_then(|rest| rest.split('"').next())
-        .map(|v| v.replace("&#38;", "&"));
+        .map(|v| v.replace("&amp;", "&"));
     let mut fields = vec![
         ("_csrf", csrf_field(&html)),
         ("username", "testuser".to_string()),

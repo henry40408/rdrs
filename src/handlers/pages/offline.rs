@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::{
     http::header,
     response::{IntoResponse, Response},
@@ -6,10 +5,14 @@ use axum::{
 
 /// Service-worker offline page. Must stay user-agnostic: the Cache API ignores
 /// `Cache-Control`, so anything personal would leak to the next user.
-#[derive(Template)]
-#[template(path = "offline.html")]
 pub struct OfflineTemplate {
     pub git_version: &'static str,
+}
+
+impl IntoResponse for OfflineTemplate {
+    fn into_response(self) -> Response {
+        crate::handlers::views::status::offline(&self).into_response()
+    }
 }
 
 /// Short, not `immutable`: the URL has no build stamp.

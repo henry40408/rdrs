@@ -418,7 +418,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 - **Web Framework**: Axum 0.8
 - **Async Runtime**: Tokio
 - **Database**: SQLite / PostgreSQL (sqlx)
-- **Templates**: Askama
+- **Templates**: maud
 - **Feed Parsing**: feed-rs
 - **HTML Sanitization**: Ammonia
 - **Content Extraction**: Readability

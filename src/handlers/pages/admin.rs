@@ -1,5 +1,7 @@
-use askama::Template;
-use axum::extract::State;
+use axum::{
+    extract::State,
+    response::{IntoResponse, Response},
+};
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
@@ -108,8 +110,6 @@ pub struct AdminUserView {
 }
 
 /// Per-route template for `/admin`.
-#[derive(Template)]
-#[template(path = "admin.html")]
 pub struct AdminTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -122,6 +122,12 @@ pub struct AdminTemplate {
     pub can_create_account: bool,
     /// Show the re-auth form up front, before any destructive action.
     pub needs_reauth: bool,
+}
+
+impl IntoResponse for AdminTemplate {
+    fn into_response(self) -> Response {
+        crate::handlers::views::admin::admin(&self).into_response()
+    }
 }
 
 #[cfg(test)]

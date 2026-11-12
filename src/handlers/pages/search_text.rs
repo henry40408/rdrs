@@ -46,7 +46,7 @@ pub fn build_snippet(html: Option<&str>, terms: &[&str], max_chars: usize) -> St
 }
 
 /// Escape `text` and wrap ASCII-case-insensitive matches (like `SQLite` LIKE) in
-/// `<mark>`, merging overlaps. Output is safe for `|safe`.
+/// `<mark>`, merging overlaps. Output is safe to render unescaped.
 pub fn highlight_html(text: &str, terms: &[&str]) -> String {
     // `to_ascii_lowercase` preserves byte length, so offsets into `t_lower`
     // index `text` identically.

@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::{
     extract::{Path as AxumPath, State},
     http::{HeaderMap, header},
@@ -11,6 +10,7 @@ use crate::{
     handlers::is_document_navigation,
     handlers::pages::{EntryRowView, ReadingPaneView, format_relative_time, row_view_from},
     handlers::return_to::path_and_query,
+    handlers::views,
     middleware::auth::PageAuthUser,
     middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
@@ -24,8 +24,6 @@ use crate::{
 };
 
 /// Reading-pane fragment template.
-#[derive(Template)]
-#[template(path = "_reading_pane.html")]
 pub struct ReadingPaneFragment {
     pub pane: ReadingPaneView,
     /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]; forms can't
@@ -33,14 +31,26 @@ pub struct ReadingPaneFragment {
     pub csrf_token: String,
 }
 
-crate::handlers::impl_html_response!(
-    ReadingPaneFragment,
-    ReadingPaneWithFlash,
-    SummarizePending,
-    SummarizeCleared,
-    SummaryFragment,
-    EntryActionMulti,
-    OpenEntryMulti,
+/// Each fragment answers as the rendered HTML of its `views::reading` function.
+macro_rules! respond_with_view {
+    ($($ty:ty => $view:expr),+ $(,)?) => {$(
+        impl IntoResponse for $ty {
+            fn into_response(self) -> Response {
+                let view: fn(&$ty) -> maud::Markup = $view;
+                view(&self).into_response()
+            }
+        }
+    )+};
+}
+
+respond_with_view!(
+    ReadingPaneFragment => views::reading::pane_fragment,
+    ReadingPaneWithFlash => views::reading::pane_with_flash,
+    SummarizePending => views::reading::summarize_pending,
+    SummarizeCleared => |_| views::reading::summary_cleared(),
+    SummaryFragment => views::reading::summary_fragment,
+    EntryActionMulti => views::reading::entry_actions_multi,
+    OpenEntryMulti => views::reading::open_entry_multi,
 );
 
 /// Flash for the swap-helper `<template data-flash>` block; `level` is one of
@@ -64,8 +74,6 @@ impl FlashPayload {
 }
 
 /// Reading pane plus optional toast; returned by Save / Fetch Full Content.
-#[derive(Template)]
-#[template(path = "_reading_pane_with_flash.html")]
 pub struct ReadingPaneWithFlash {
     pub pane: ReadingPaneView,
     pub flash: Option<FlashPayload>,
@@ -75,8 +83,6 @@ pub struct ReadingPaneWithFlash {
 
 /// `POST /entries/{id}/summarize` response; swaps only `#rp-summary-container`
 /// so the article body stays put.
-#[derive(Template)]
-#[template(path = "_summarize_pending.html")]
 pub struct SummarizePending {
     pub id: i64,
     /// See [`ReadingPaneFragment::csrf_token`].
@@ -84,13 +90,9 @@ pub struct SummarizePending {
 }
 
 /// `POST /entries/{id}/summarize/cancel` response: empty summary container.
-#[derive(Template)]
-#[template(path = "_summary_cleared.html")]
 pub struct SummarizeCleared;
 
 /// `GET /entries/{id}/summary/fragment`; refreshed by the SSE `summary` event.
-#[derive(Template)]
-#[template(path = "_summary_fragment.html")]
 pub struct SummaryFragment {
     pub pane: ReadingPaneView,
     /// See [`ReadingPaneFragment::csrf_token`].
@@ -553,8 +555,6 @@ pub struct PaneStarFormView {
 }
 
 /// Entry-action response: updated row, optional toast, optional pane Star form.
-#[derive(Template)]
-#[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
     pub row: EntryRowView,
     pub flash: Option<FlashPayload>,
@@ -564,8 +564,6 @@ pub struct EntryActionMulti {
 }
 
 /// Open-entry response: the reading pane plus the now-read row.
-#[derive(Template)]
-#[template(path = "_open_entry_multi.html")]
 pub struct OpenEntryMulti {
     pub pane: ReadingPaneView,
     pub row: EntryRowView,

@@ -13,13 +13,6 @@ version = 2
 # records why it is safe here and what would let us drop it.
 yanked = "deny"
 ignore = [
-    # basic-toml 0.1.10 is unmaintained (repo archived). Reached only through
-    # askama_derive, a compile-time proc-macro; it is not linked into the binary.
-    # No patched version exists, so there is no cooldown date. Drop once an
-    # askama_derive release stops depending on basic-toml (upstream:
-    # https://github.com/askama-rs/askama/issues/594).
-    # Tracked in https://github.com/henry40408/rdrs/issues/625
-    "RUSTSEC-2026-0374",
     # libsqlite3-sys 0.37.0 bundles SQLite < 3.54.0, which can return
     # uninitialized memory when a database is opened with a sibling -wal file
     # of a different page size. Local attack only: the database path is

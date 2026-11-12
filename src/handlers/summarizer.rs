@@ -1,15 +1,15 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use askama::Template;
 use axum::Form;
 use axum::extract::State;
-use axum::response::{Html, IntoResponse};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use url::Url;
 
 use crate::AppState;
 use crate::handlers::pages::{AppLayoutContext, build_app_layout};
+use crate::handlers::views;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::user_settings;
@@ -90,7 +90,7 @@ pub(crate) fn url_host(url: &str) -> String {
         .unwrap_or_else(|| url.to_string())
 }
 
-/// One URL's card. `summary` is rendered with `|safe`, so it must have passed
+/// One URL's card. `summary` is rendered unescaped, so it must have passed
 /// through [`crate::services::sanitize_summary`] — Kagi output is untrusted.
 #[derive(Debug, Clone)]
 pub struct SummarizerCard {
@@ -102,15 +102,7 @@ pub struct SummarizerCard {
     pub error: String,
 }
 
-#[derive(Template)]
-#[template(path = "_summarizer_card_fragment.html")]
-pub(crate) struct SummarizerCardTemplate {
-    pub card: SummarizerCard,
-}
-
 /// The `/summarizer` page.
-#[derive(Template)]
-#[template(path = "summarizer.html")]
 pub struct SummarizerTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -124,13 +116,8 @@ pub struct SummarizerTemplate {
 }
 
 impl IntoResponse for SummarizerTemplate {
-    fn into_response(self) -> axum::response::Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => {
-                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-            }
-        }
+    fn into_response(self) -> Response {
+        views::summarizer::page(&self).into_response()
     }
 }
 
@@ -232,10 +219,7 @@ pub async fn item(
         error: msg,
     };
 
-    let render = |card: SummarizerCard| match (SummarizerCardTemplate { card }).render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
+    let render = |card: SummarizerCard| views::macros::summarizer_card(&card).into_response();
 
     // Re-validate: the browser could POST anything.
     let parsed = match url::Url::parse(&form.url) {
