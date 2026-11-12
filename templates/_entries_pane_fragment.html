@@ -1,8 +1,0 @@
-{# Category-switch response (`?pane=1`): replaces the left column and resets the
-   reading pane, leaving the sidebar and its scroll position untouched. #}
-<template data-swap-target="[data-list-pane]">
-{% include "_list_pane.html" %}
-</template>
-<template data-swap-target="#reading-pane">
-{% include "_reading_pane_empty.html" %}
-</template>

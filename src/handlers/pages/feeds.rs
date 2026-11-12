@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use askama::Template;
 use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Response},
@@ -13,11 +12,13 @@ use super::{
 use crate::AppState;
 use crate::db::Db;
 use crate::error::AppError;
+use crate::handlers::views;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::entry_open::{self, FeedOpenRate};
 use crate::models::user_settings;
 use crate::models::{category, feed, image};
+use maud::Markup;
 
 /// `/feeds` filter/sort query; the URL is the source of truth.
 #[derive(serde::Deserialize)]
@@ -194,7 +195,7 @@ pub async fn feeds_page(
     State(state): State<AppState>,
     flash: Flash,
     Query(query): Query<FeedsQuery>,
-) -> (Flash, FeedsTemplate) {
+) -> (Flash, Markup) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
@@ -219,28 +220,26 @@ pub async fn feeds_page(
     let return_to = feeds_url(active_category, active_sort, active_filter);
     let edit_query = crate::handlers::return_to::return_to_query(&return_to);
 
-    (
-        flash,
-        FeedsTemplate {
-            title: "Feeds",
-            git_version: crate::GIT_VERSION,
-            layout,
-            csrf_token: auth_user.csrf_token.clone(),
-            feeds: rows,
-            categories,
-            total_feed_count,
-            active_filter,
-            active_sort,
-            active_category_id: active_category,
-            filter_links: filter_links(active_category, active_sort, active_filter),
-            return_to,
-            edit_query,
-            fresh_max_days: FRESH_MAX_DAYS,
-            warning_max_days: WARNING_MAX_DAYS,
-            open_rate_shown,
-            min_tracked_for_rate: entry_open::MIN_TRACKED_FOR_RATE,
-        },
-    )
+    let page = FeedsTemplate {
+        title: "Feeds",
+        git_version: crate::GIT_VERSION,
+        layout,
+        csrf_token: auth_user.csrf_token.clone(),
+        feeds: rows,
+        categories,
+        total_feed_count,
+        active_filter,
+        active_sort,
+        active_category_id: active_category,
+        filter_links: filter_links(active_category, active_sort, active_filter),
+        return_to,
+        edit_query,
+        fresh_max_days: FRESH_MAX_DAYS,
+        warning_max_days: WARNING_MAX_DAYS,
+        open_rate_shown,
+        min_tracked_for_rate: entry_open::MIN_TRACKED_FOR_RATE,
+    };
+    (flash, views::feeds::page(&page))
 }
 
 /// Unknown values fall back to the default so a crafted `sort` never reaches
@@ -340,20 +339,17 @@ pub async fn feed_edit_page(
     };
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
-    Ok((
-        flash,
-        FeedEditTemplate {
-            title: "Edit Feed",
-            git_version: crate::GIT_VERSION,
-            layout,
-            csrf_token: auth_user.csrf_token.clone(),
-            feed: feed_view,
-            categories: cats,
-            return_to,
-            user_agent_suggestions: crate::config::CUSTOM_USER_AGENT_SUGGESTIONS,
-        },
-    )
-        .into_response())
+    let page = FeedEditTemplate {
+        title: "Edit Feed",
+        git_version: crate::GIT_VERSION,
+        layout,
+        csrf_token: auth_user.csrf_token.clone(),
+        feed: feed_view,
+        categories: cats,
+        return_to,
+        user_agent_suggestions: crate::config::CUSTOM_USER_AGENT_SUGGESTIONS,
+    };
+    Ok((flash, views::feeds::edit_page(&page)).into_response())
 }
 
 /// `GET /feeds/import`.
@@ -361,17 +357,15 @@ pub async fn feeds_import_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, FeedsImportTemplate) {
+) -> (Flash, Markup) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
-    (
-        flash,
-        FeedsImportTemplate {
-            title: "Import OPML",
-            git_version: crate::GIT_VERSION,
-            layout,
-            csrf_token: auth_user.csrf_token.clone(),
-        },
-    )
+    let page = FeedsImportTemplate {
+        title: "Import OPML",
+        git_version: crate::GIT_VERSION,
+        layout,
+        csrf_token: auth_user.csrf_token.clone(),
+    };
+    (flash, views::feeds::import_page(&page))
 }
 
 /// One row of the SSR `/feeds` table.
@@ -410,9 +404,7 @@ pub struct FeedFilterLink {
     pub active: bool,
 }
 
-/// Per-route template for `/feeds`.
-#[derive(Template)]
-#[template(path = "feeds.html")]
+/// Page data for `/feeds`.
 pub struct FeedsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -478,9 +470,7 @@ fn referrer_suggestions(site_url: Option<&str>, feed_url: &str) -> Vec<String> {
     out
 }
 
-/// Per-route template for `/feeds/{id}/edit`.
-#[derive(Template)]
-#[template(path = "feed_edit.html")]
+/// Page data for `/feeds/{id}/edit`.
 pub struct FeedEditTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -495,9 +485,7 @@ pub struct FeedEditTemplate {
     pub user_agent_suggestions: &'static [&'static str],
 }
 
-/// Per-route template for `/feeds/import`.
-#[derive(Template)]
-#[template(path = "feeds_import.html")]
+/// Page data for `/feeds/import`.
 pub struct FeedsImportTemplate {
     pub title: &'static str,
     pub git_version: &'static str,

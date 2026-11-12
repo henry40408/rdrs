@@ -289,45 +289,35 @@ mod tests {
         );
     }
 
-    /// Every `/static/js/*.js` a template references must be in `FILES`, or it
-    /// 404s (e.g. a missing `csrf.js` breaks every token-bearing POST).
+    /// Every script a view references (`module_script(v, "x.js")` and friends,
+    /// relative to `/static/js/`) must be in `FILES`, or it 404s (e.g. a
+    /// missing `csrf.js` breaks every token-bearing POST).
     #[tokio::test]
-    async fn every_template_referenced_script_is_served() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
-        let mut stack = vec![std::path::PathBuf::from(root)];
+    async fn every_view_referenced_script_is_served() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src/handlers/views");
         let mut refs: Vec<String> = Vec::new();
-        while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    stack.push(path);
+        for entry in std::fs::read_dir(root).unwrap() {
+            let source = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            for (end, _) in source.match_indices(".js\"") {
+                let head = &source[..end + ".js".len()];
+                let Some(start) = head.rfind('"') else {
+                    continue;
+                };
+                let literal = &head[start + 1..];
+                if literal.contains(char::is_whitespace) {
                     continue;
                 }
-                let html = std::fs::read_to_string(&path).unwrap();
-                for (i, _) in html.match_indices("/static/js/") {
-                    let tail = &html[i + "/static/".len()..];
-                    let name: String = tail
-                        .chars()
-                        .take_while(|c| !matches!(c, '"' | '\'' | '?' | ' ' | '>' | '\n'))
-                        .collect();
-                    if std::path::Path::new(&name)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        == Some("js")
-                    {
-                        refs.push(name);
-                    }
-                }
+                refs.push(format!("js/{literal}"));
             }
         }
         assert!(
             refs.iter().any(|r| r == "js/csrf.js"),
-            "sanity: expected to find at least the csrf.js reference while scanning templates"
+            "sanity: expected to find at least the csrf.js reference while scanning views"
         );
         for name in &refs {
             assert!(
                 FILES.iter().any(|(n, _)| n == name),
-                "template references /static/{name} but it is not registered in FILES (404)"
+                "a view references /static/{name} but it is not registered in FILES (404)"
             );
         }
     }

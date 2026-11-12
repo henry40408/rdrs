@@ -3231,7 +3231,7 @@ async fn test_feeds_page_unknown_sort_cannot_inject_link_parameters() {
     let body = common::get_ok(&app.server, "/feeds?sort=title%26category=5").await;
 
     assert!(
-        body.contains("/feeds?sort=title&#38;filter=errors"),
+        body.contains("/feeds?sort=title&amp;filter=errors"),
         "{body}"
     );
     assert!(!body.contains("category=5"), "{body}");

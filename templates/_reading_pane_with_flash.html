@@ -1,8 +1,0 @@
-{# Reading pane + optional flash toast for Save / Fetch-Full-Content. The toast
-   is the only feedback, since these actions change no row state. #}
-<template data-swap-target="#reading-pane">
-{% include "_reading_pane.html" %}
-</template>
-{% if let Some(f) = flash.as_ref() %}
-<template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
-{% endif %}

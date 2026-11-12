@@ -1,9 +1,10 @@
-use askama::Template;
 use axum::extract::State;
+use maud::Markup;
 
 use super::{AppLayoutContext, build_app_layout};
 use crate::AppState;
 use crate::error::AppError;
+use crate::handlers::views;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 
@@ -14,9 +15,7 @@ pub struct CategoryRowView {
     pub feed_count: i64,
 }
 
-/// Per-route template for `/categories`.
-#[derive(Template)]
-#[template(path = "categories.html")]
+/// Page data for `/categories`.
 pub struct CategoriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
@@ -31,7 +30,7 @@ pub async fn categories_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, CategoriesTemplate) {
+) -> (Flash, Markup) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
@@ -56,14 +55,12 @@ pub async fn categories_page(
     .ok()
     .unwrap_or_default();
 
-    (
-        flash,
-        CategoriesTemplate {
-            title: "Categories",
-            git_version: crate::GIT_VERSION,
-            layout,
-            csrf_token: auth_user.csrf_token.clone(),
-            categories,
-        },
-    )
+    let page = CategoriesTemplate {
+        title: "Categories",
+        git_version: crate::GIT_VERSION,
+        layout,
+        csrf_token: auth_user.csrf_token.clone(),
+        categories,
+    };
+    (flash, views::categories::page(&page))
 }

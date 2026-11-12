@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::{
     extract::{Query, State},
     response::{IntoResponse, Redirect, Response},
@@ -8,8 +7,6 @@ use crate::AppState;
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::{Flash, FlashMessage};
 
-#[derive(Template)]
-#[template(path = "login.html")]
 pub struct LoginTemplate {
     /// First-run setup link; only when no accounts exist.
     pub setup_available: bool,
@@ -22,6 +19,12 @@ pub struct LoginTemplate {
     pub error: Option<String>,
     /// Validated page to land on after sign-in; see [`login_next`].
     pub next: Option<String>,
+}
+
+impl IntoResponse for LoginTemplate {
+    fn into_response(self) -> Response {
+        crate::handlers::views::auth::login(&self).into_response()
+    }
 }
 
 /// `/login?next=` (and the form's `next` field) when it is a safe, same-origin
@@ -68,8 +71,6 @@ pub async fn login_page(
         .into_response()
 }
 
-#[derive(Template)]
-#[template(path = "setup.html")]
 pub struct SetupTemplate {
     pub error: Option<String>,
     pub flash_messages: Vec<FlashMessage>,
@@ -79,6 +80,12 @@ pub struct SetupTemplate {
     pub password_max_length: usize,
     /// CSRF token for the no-JS `POST /setup`.
     pub csrf_token: String,
+}
+
+impl IntoResponse for SetupTemplate {
+    fn into_response(self) -> Response {
+        crate::handlers::views::auth::setup(&self).into_response()
+    }
 }
 
 /// `GET /setup` — first-run only; redirects to `/login` once any account exists.
@@ -111,8 +118,6 @@ pub async fn setup_page(
 
 /// Invite "set your password" page: form, dead end, or throttled notice. The
 /// dead end must not reveal why (unknown / expired / used) or whose link it is.
-#[derive(Template)]
-#[template(path = "invite.html")]
 pub struct InviteTemplate {
     pub git_version: &'static str,
     /// Anonymous-session CSRF token; empty when no form renders.
@@ -124,6 +129,12 @@ pub struct InviteTemplate {
     pub error: Option<String>,
     pub password_min_length: usize,
     pub password_max_length: usize,
+}
+
+impl IntoResponse for InviteTemplate {
+    fn into_response(self) -> Response {
+        crate::handlers::views::auth::invite(&self).into_response()
+    }
 }
 
 impl InviteTemplate {

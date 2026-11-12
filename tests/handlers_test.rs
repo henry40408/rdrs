@@ -3563,7 +3563,7 @@ async fn feed_row_forms_return_to_the_filtered_list() {
         .get(&format!("/feeds?category={cat_id}&sort=unread&filter=all"))
         .await
         .text();
-    let back = format!("/feeds?category={cat_id}&#38;sort=unread&#38;filter=all");
+    let back = format!("/feeds?category={cat_id}&amp;sort=unread&amp;filter=all");
     assert!(
         page.contains(&format!(r#"name="return_to" value="{back}""#)),
         "row forms carry the filtered view"

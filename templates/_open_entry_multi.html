@@ -1,7 +1,0 @@
-{%- import "macros.html" as macros -%}
-{# `GET /entries/{id}/fragment`: the templates override the link's data-swap to
-   update the reading pane and mark the row read in one round trip. Sidebar
-   counts arrive over SSE; the star form is absent because opening never touches it. #}
-<template data-swap-target="#reading-pane">{% include "_reading_pane.html" %}</template>
-<template data-swap-target="#entry-row-{{ row.id }} .entry-marker">{% call macros::row_marker_form(row.id, row.is_read, csrf_token) %}{% endcall %}</template>
-<template data-class-target="#entry-row-{{ row.id }}" data-class-{% if row.is_read %}add{% else %}remove{% endif %}="entry-read"></template>
