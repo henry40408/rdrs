@@ -21,6 +21,13 @@ ignore = [
     # requires <0.38.0. Drop once a sqlx release allows 0.39 and we upgrade.
     # Tracked in https://github.com/henry40408/rdrs/issues/688
     "RUSTSEC-2026-0459",
+    # ammonia 4.2.4: mutation XSS needs the allowlist to include math/svg
+    # integration-point tags (mi, mo, mn, ms, mtext, foreignObject). Both
+    # Builders in src/services/sanitize.rs use a plain-HTML allowlist, so this
+    # is unreachable. Fixed in ammonia 4.2.5 (2026-11-13), cooldown ends
+    # 2026-11-20 05:25 UTC. Drop once we upgrade.
+    # Tracked in https://github.com/henry40408/rdrs/issues/695
+    "RUSTSEC-2026-0533",
 ]
 
 [licenses]
