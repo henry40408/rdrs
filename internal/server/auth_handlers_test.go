@@ -21,6 +21,7 @@ import (
 const testPassword = "correct horse battery staple"
 
 type authFixture struct {
+	app      *App
 	handler  http.Handler
 	database *db.DB
 	secret   []byte
@@ -36,7 +37,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 		Audit:   audit.New(slog.New(slog.DiscardHandler), key),
 		Limiter: auth.NewRateLimiter(0, 60), SkipSetupToken: true,
 	})
-	return &authFixture{handler: app.Handler(), database: database, secret: key}
+	return &authFixture{app: app, handler: app.Handler(), database: database, secret: key}
 }
 
 func (f *authFixture) do(r *http.Request) *httptest.ResponseRecorder {
