@@ -315,3 +315,82 @@ func TestSidebarPrefs(t *testing.T) {
 		}
 	})
 }
+
+func TestTimezoneDefaultsToUTC(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		userID := settingsUser(t, database)
+		// No row yet, then a row created by an unrelated write.
+		if zone, err := GetTimezone(ctx, database, userID); err != nil || zone.String() != "UTC" {
+			t.Fatalf("got %v, %v", zone, err)
+		}
+		if _, err := UpsertUserSettings(ctx, database, userID, 50); err != nil {
+			t.Fatal(err)
+		}
+		settings := mustLoadSettings(t, database, userID)
+		if settings.Timezone != "UTC" || settings.Tz().String() != "UTC" {
+			t.Errorf("got %q", settings.Timezone)
+		}
+	})
+}
+
+func TestUpdateTimezoneStoresTheCanonicalName(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		userID := settingsUser(t, database)
+		if err := UpdateTimezone(ctx, database, userID, "  Asia/Taipei "); err != nil {
+			t.Fatal(err)
+		}
+		if got := mustLoadSettings(t, database, userID).Timezone; got != "Asia/Taipei" {
+			t.Errorf("stored %q", got)
+		}
+		// Preserved by an unrelated write.
+		if _, err := UpsertUserSettings(ctx, database, userID, 50); err != nil {
+			t.Fatal(err)
+		}
+		if zone, _ := GetTimezone(ctx, database, userID); zone.String() != "Asia/Taipei" {
+			t.Errorf("got %v", zone)
+		}
+	})
+}
+
+func TestUpdateTimezoneRejectsAnUnknownNameAndKeepsTheOldOne(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		userID := settingsUser(t, database)
+		if err := UpdateTimezone(ctx, database, userID, "Asia/Tokyo"); err != nil {
+			t.Fatal(err)
+		}
+		for _, bad := range []string{"", "Mars/Olympus_Mons", "CST-8", "+08:00"} {
+			err := UpdateTimezone(ctx, database, userID, bad)
+			var v *ValidationError
+			if !errors.As(err, &v) {
+				t.Fatalf("%q: got %v", bad, err)
+			}
+			want := `"` + bad + `" is not a timezone name; use one such as Asia/Taipei or America/New_York`
+			if v.Message != want {
+				t.Errorf("message %q", v.Message)
+			}
+		}
+		if zone, _ := GetTimezone(ctx, database, userID); zone.String() != "Asia/Tokyo" {
+			t.Errorf("got %v", zone)
+		}
+	})
+}
+
+func TestAStoredTimezoneThatNoLongerParsesReadsAsUTC(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		userID := settingsUser(t, database)
+		if err := ensureSettingsRow(ctx, database, userID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx,
+			`UPDATE user_settings SET timezone = $1 WHERE user_id = $2`, "Retired/Zone", userID); err != nil {
+			t.Fatal(err)
+		}
+		if zone, _ := GetTimezone(ctx, database, userID); zone.String() != "UTC" {
+			t.Errorf("got %v", zone)
+		}
+	})
+}

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/secret"
+	"github.com/henry40408/rdrs/internal/timezone"
 )
 
 var errSettingsMissing = errors.New("failed to retrieve user settings after write")
@@ -102,6 +104,11 @@ func DefaultUserSettings(userID int64) UserSettings {
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+}
+
+// Tz is the stored timezone; UTC if the value no longer parses.
+func (s *UserSettings) Tz() *time.Location {
+	return timezone.ParseOrUTC(s.Timezone)
 }
 
 // SidebarPrefs reads the sidebar preferences from an already-loaded row.
@@ -273,6 +280,26 @@ func UpdateRetentionReadDays(ctx context.Context, e db.Executor, userID, days in
 func UpdateSidebarPrefs(ctx context.Context, e db.Executor, userID int64, prefs SidebarPrefs) error {
 	return updateSettings(ctx, e, userID, "sidebar_sort = $2, sidebar_hide_read = $3",
 		ParseSidebarSort(prefs.Sort), prefs.HideRead)
+}
+
+// GetTimezone is the user's timezone; no row means UTC.
+func GetTimezone(ctx context.Context, e db.Executor, userID int64) (*time.Location, error) {
+	settings, err := LoadUserSettings(ctx, e, userID)
+	if err != nil {
+		return nil, err
+	}
+	return settings.Tz(), nil
+}
+
+// UpdateTimezone sets the timezone. A name that is not an IANA zone is
+// rejected, since the statistics would silently be cut at the wrong hour.
+func UpdateTimezone(ctx context.Context, e db.Executor, userID int64, name string) error {
+	name = strings.TrimSpace(name)
+	zone, ok := timezone.Parse(name)
+	if !ok {
+		return validationf(`"%s" is not a timezone name; use one such as Asia/Taipei or America/New_York`, name)
+	}
+	return updateSettings(ctx, e, userID, "timezone = $2", zone.String())
 }
 
 // OfflineKeep is the offline entry budget; no row means OfflineKeepOff.
