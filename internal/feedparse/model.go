@@ -30,6 +30,8 @@ const (
 type Link struct {
 	Href   string
 	Target Target
+	// Rel is the Atom rel attribute; nil when absent and for non-Atom links.
+	Rel *string
 }
 
 // Person is an author; Name is nil when the feed gave only an address.

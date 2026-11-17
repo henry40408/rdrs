@@ -102,7 +102,11 @@ func atomLink(e *element) (Link, bool) {
 	if !ok {
 		return Link{}, false
 	}
-	return newLink(href, e.base), true
+	link := newLink(href, e.base)
+	if rel, ok := e.attr("rel"); ok {
+		link.Rel = &rel
+	}
+	return link, true
 }
 
 // atomImage is <icon> or <logo>; the address is kept as written when it
