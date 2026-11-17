@@ -1,0 +1,70 @@
+package feedsync
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/henry40408/rdrs/internal/feedparse"
+	"github.com/henry40408/rdrs/internal/models"
+)
+
+// iconMaxAgeDays is how long a stored feed icon is kept before a refetch.
+const iconMaxAgeDays = 7
+
+// IconCandidates are where a feed's icon may be found.
+type IconCandidates struct {
+	IconURL   *string
+	LogoURL   *string
+	SiteURL   *string
+	UserAgent string
+}
+
+// FetchedIcon is an icon ready to store.
+type FetchedIcon struct {
+	Data        []byte
+	ContentType string
+	SourceURL   string
+}
+
+// IconFetcher finds a feed's icon. A nil icon with a nil error means none exists.
+type IconFetcher func(ctx context.Context, candidates IconCandidates) (*FetchedIcon, error)
+
+// refreshIcon stores the feed icon when it is older than a week. Only the
+// freshness check can fail the sync; fetch and save failures are logged.
+func (s *Syncer) refreshIcon(ctx context.Context, feed *models.Feed, parsed *feedparse.Feed) error {
+	if s.FetchIcon == nil {
+		return nil
+	}
+	stale, err := models.ImageNeedsRefresh(ctx, s.DB, models.ImageRefreshParams{
+		EntityType: models.EntityFeed, EntityID: feed.ID, MaxAgeDays: iconMaxAgeDays,
+	})
+	if err != nil || !stale {
+		return err
+	}
+	icon, err := s.FetchIcon(ctx, IconCandidates{
+		IconURL: parsed.Icon, LogoURL: parsed.Logo, SiteURL: feed.SiteURL,
+		UserAgent: userAgentOf(feed, s.DefaultUserAgent),
+	})
+	if err != nil {
+		slog.Warn("failed to fetch feed icon", "event", "feed.icon_fetch_failed", "feed_id", feed.ID, "error", err)
+		return nil
+	}
+	if icon == nil {
+		slog.Debug("no icon found for feed", "event", "feed.icon_missing", "feed_id", feed.ID)
+		return nil
+	}
+	s.saveIcon(ctx, feed.ID, icon)
+	return nil
+}
+
+func (s *Syncer) saveIcon(ctx context.Context, feedID int64, icon *FetchedIcon) {
+	err := models.UpsertImage(ctx, s.DB, models.ImageUpsert{
+		EntityType: models.EntityFeed, EntityID: feedID, Data: icon.Data,
+		ContentType: icon.ContentType, SourceURL: &icon.SourceURL,
+	})
+	if err != nil {
+		slog.Warn("failed to save feed icon", "event", "feed.icon_save_failed", "feed_id", feedID, "error", err)
+		return
+	}
+	slog.Debug("saved feed icon", "event", "feed.icon_saved", "feed_id", feedID, "url", icon.SourceURL)
+}
