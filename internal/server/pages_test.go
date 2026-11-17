@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -1185,4 +1186,1042 @@ func TestCategoryMatchingCountReflectsUnreadOnlyOnAllTab(t *testing.T) {
 
 	expect(t, "the previously-unread match must now be marked read", readAt(t, owner.app, matchingUnread).Valid)
 	expect(t, "the already-read match must stay read", readAt(t, owner.app, matchingRead).Valid)
+}
+
+func TestFeedEntriesPage(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_fe")
+	catID := owner.category(t, "Tech")
+	feedID := owner.feed(t, catID, "https://x/fe-feed", "FE Feed")
+	entryA := owner.entry(t, feedID, "guid-fe-a", "First Entry", "https://x/a")
+	entryB := owner.entry(t, feedID, "guid-fe-b", "Second Entry", "https://x/b")
+
+	response := owner.app.Get(fmt.Sprintf("/feeds/%d/entries", feedID))
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+
+	wantContains(t, html, "FE Feed",
+		fmt.Sprintf(`id="entry-row-%d"`, entryA), fmt.Sprintf(`id="entry-row-%d"`, entryB),
+		"Select an entry from the list to start reading.",
+		`data-testid="breadcrumb"`, `<a href="/feeds">Feeds</a>`,
+		fmt.Sprintf(`<a href="/categories/%d/entries">Tech</a>`, catID),
+		fmt.Sprintf(`active-category-id="%d"`, catID),
+		`id="mark-read-age"`, `data-mark-read-scope="feed/https://x/fe-feed"`,
+		`id="mark-above-read"`)
+	wantAbsent(t, html, "rdrs-entries-page", "/static/js/pages/entries.js",
+		fmt.Sprintf(`src="/api/feeds/%d/icon" alt="" width="20"`, feedID))
+	if strings.Contains(html, `id="load-more"`) {
+		wantContains(t, html, fmt.Sprintf(`action="/feeds/%d/entries"`, feedID))
+	}
+}
+
+func TestFeedEntriesPageStatusFilter(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_fst")
+	ctx := context.Background()
+	catID := owner.category(t, "FST")
+	feedID := owner.feed(t, catID, "https://x/fst-feed", "FST")
+	unreadID := owner.entry(t, feedID, "guid-fst-u", "Unread Entry", "https://x/fst/u")
+	readID := owner.entry(t, feedID, "guid-fst-r", "Read Entry", "https://x/fst/r")
+	starredID := owner.entry(t, feedID, "guid-fst-s", "Starred Entry", "https://x/fst/s")
+	if _, err := entry.MarkAsRead(ctx, owner.app.DB, readID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.StarEntry(ctx, owner.app.DB, starredID); err != nil {
+		t.Fatal(err)
+	}
+	row := func(id int64) string { return fmt.Sprintf(`id="entry-row-%d"`, id) }
+	feedPath := fmt.Sprintf("/feeds/%d/entries", feedID)
+
+	// The default is the unread filter: a starred entry that is still unread shows.
+	html := owner.app.Get(feedPath).Text()
+	wantContains(t, html, row(unreadID), row(starredID))
+	wantAbsent(t, html, row(readID))
+
+	html = owner.app.Get(feedPath + "?status=all").Text()
+	wantContains(t, html, row(unreadID), row(readID), row(starredID))
+
+	html = owner.app.Get(feedPath + "?status=read").Text()
+	wantContains(t, html, row(readID))
+	wantAbsent(t, html, row(unreadID))
+
+	html = owner.app.Get(feedPath + "?status=starred").Text()
+	wantContains(t, html, row(starredID), "data-status-filter", `id="status-filter"`,
+		fmt.Sprintf(`<option value="%s?status=starred" selected>Starred</option>`, feedPath))
+	wantAbsent(t, html, row(readID), row(unreadID))
+
+	// Option order: All, Unread (the base URL), Read, Starred.
+	positions := make([]int, 0, 4)
+	for _, option := range []string{
+		fmt.Sprintf(`<option value="%s?status=all"`, feedPath),
+		fmt.Sprintf(`<option value="%s"`, feedPath),
+		fmt.Sprintf(`<option value="%s?status=read"`, feedPath),
+		fmt.Sprintf(`<option value="%s?status=starred"`, feedPath),
+	} {
+		at := strings.Index(html, option)
+		if at < 0 {
+			t.Fatalf("option %q missing", option)
+		}
+		positions = append(positions, at)
+	}
+	if !slices.IsSorted(positions) {
+		t.Errorf("options must be All, Unread, Read, Starred, got offsets %v", positions)
+	}
+	if strings.Contains(html, `id="load-more"`) {
+		wantContains(t, html, `<input type="hidden" name="status" value="starred">`)
+	}
+}
+
+func TestFeedEntriesPageOtherUser(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.PostJSON("/api/setup", map[string]string{"username": "alice_fou", "password": fixturePassword}), http.StatusCreated)
+	app.SeedAccount("bob_fou", fixturePassword, models.RoleUser)
+	alice, err := models.FindUserByUsername(context.Background(), app.DB, "alice_fou")
+	if err != nil || alice == nil {
+		t.Fatalf("alice = %v, err = %v", alice, err)
+	}
+	category, err := models.CreateCategory(context.Background(), app.DB, alice.ID, "Alice Cat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Alice Feed"
+	feed, err := models.CreateFeed(context.Background(), app.DB, models.CreateFeedParams{
+		CategoryID: category.ID, URL: "https://x/alice-feed", Title: &title,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.Login("bob_fou")
+
+	if got := app.Get(fmt.Sprintf("/feeds/%d/entries", feed.ID)).Code; got != http.StatusNotFound {
+		t.Errorf("cross-user feed entries = %d, want 404", got)
+	}
+}
+
+func TestFeedEntriesPageLoadMoreFragment(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_fl")
+	catID := owner.category(t, "T")
+	feedID := owner.feed(t, catID, "https://x/lm-feed", "LM Feed")
+	for i := 0; i < 3; i++ {
+		owner.entry(t, feedID, fmt.Sprintf("guid-lm-%d", i), fmt.Sprintf("Entry %d", i), fmt.Sprintf("https://x/lm/%d", i))
+	}
+
+	response := owner.app.Get(fmt.Sprintf("/feeds/%d/entries?fragment=1", feedID))
+	wantStatus(t, response, http.StatusOK)
+
+	wantContains(t, response.Text(), "data-entry-row")
+	wantAbsent(t, response.Text(), "<rdrs-sidebar", "<h1>LM Feed</h1>")
+}
+
+func TestFeedsPageRendersSsrRows(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Feeds SSR Cat")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+		1, "https://example.com/feeds-ssr.xml", "Feeds SSR Title")
+
+	body := app.GetOK("/feeds")
+
+	wantContains(t, body, "<h1>Feeds</h1>", `data-testid="feeds-table"`, "Feeds SSR Title", "Feeds SSR Cat",
+		"/refresh", "/edit", "/delete")
+	wantAbsent(t, body, "<rdrs-feeds-page>", "/static/js/pages/feeds.js")
+}
+
+// The page must state the numbers the freshness computation applies, so the
+// thresholds come from the constants.
+func TestFeedsPageExplainsFreshnessRules(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/feeds")
+
+	wantContains(t, body, `data-testid="feed-freshness-help"`,
+		"Last-Modified", "304 Not Modified", "No date info",
+		// The three Updated signals are maxed, not ranked.
+		"They are not ranked: a missing signal is skipped, not treated as old.",
+		fmt.Sprintf("up to %d days is normal", freshMaxDays),
+		fmt.Sprintf("over %d days", warningMaxDays))
+}
+
+func TestFeedEditPageRenders(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Edit Cat")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title, description) VALUES ($1, $2, $3, $4)",
+		1, "https://example.com/edit.xml", "Editable Feed", "Some desc")
+
+	body := app.GetOK("/feeds/1/edit")
+
+	wantContains(t, body, "<h1>Edit Feed</h1>", `<form method="post" action="/feeds/1/edit">`,
+		"https://example.com/edit.xml", "Editable Feed", "Some desc",
+		// Re-fetching metadata is its own form.
+		"/feeds/1/fetch-metadata", "Edit Cat")
+}
+
+func TestFeedEditPageOffersHttpSettingSuggestions(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Edit Cat")
+	// Feed XML and site live on different hosts, so both origins are offered.
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title, site_url) VALUES ($1, $2, $3, $4)",
+		1, "https://cdn.example.net/edit.xml", "Editable Feed", "https://example.com/blog")
+
+	body := app.GetOK("/feeds/1/edit")
+
+	for _, pair := range [][2]string{
+		{"custom_user_agent", "user-agent-list"},
+		{"custom_referrer", "referrer-list"},
+	} {
+		inputID, listID := pair[0], pair[1]
+		wantContains(t, body, fmt.Sprintf(`id="%s"`, inputID), fmt.Sprintf(`list="%s"`, listID),
+			fmt.Sprintf(`<datalist id="%s">`, listID))
+	}
+	for _, userAgent := range config.CustomUserAgentSuggestions {
+		wantContains(t, body, fmt.Sprintf(`<option value="%s">`, userAgent))
+	}
+	// The site the feed describes leads, its own host follows.
+	siteAt := strings.Index(body, `<option value="https://example.com/">`)
+	feedAt := strings.Index(body, `<option value="https://cdn.example.net/">`)
+	if siteAt < 0 || feedAt < 0 {
+		t.Fatalf("origins not offered: site %d, feed %d", siteAt, feedAt)
+	}
+	if siteAt > feedAt {
+		t.Error("the site origin should be offered first")
+	}
+}
+
+// An empty referrer datalist would open a dropdown with nothing in it.
+func TestFeedEditPageOmitsTheReferrerListWhenThereIsNothingToSuggest(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Edit Cat")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+		1, "not a url", "Broken Feed")
+
+	body := app.GetOK("/feeds/1/edit")
+
+	wantAbsent(t, body, `<datalist id="referrer-list">`, `list="referrer-list"`)
+	wantContains(t, body, `<datalist id="user-agent-list">`)
+}
+
+// A logged-out unknown route is remembered like any page: after sign-in the
+// reader sees the real 404.
+func TestUnknownRouteLoggedOutRedirectsToLogin(t *testing.T) {
+	app := defaultITestApp(t)
+	app.SetupUsers()
+
+	response := app.Get("/this-page-does-not-exist")
+
+	wantStatus(t, response, http.StatusSeeOther)
+	if got := response.Header().Get("Location"); got != "/login?next=%2Fthis-page-does-not-exist" {
+		t.Errorf("Location = %q", got)
+	}
+}
+
+func TestFeedsImportPageRenders(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	wantContains(t, app.GetOK("/feeds/import"), "<h1>Import OPML</h1>",
+		`enctype="multipart/form-data"`, `name="file"`, `name="content"`)
+}
+
+func TestCategoriesPageRendersSsrContent(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Cats SSR")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+		1, "https://example.com/cats-ssr.xml", "A Feed")
+
+	body := app.GetOK("/categories")
+
+	wantAbsent(t, body, "<rdrs-categories-page>", "/static/js/pages/categories.js")
+	wantContains(t, body, "<h1>Categories</h1>", `<form method="post" action="/categories">`,
+		`data-testid="categories-table"`, "Cats SSR", "/rename", "/delete",
+		// The per-user sidebar bootstrap is still embedded.
+		`id="rdrs-sidebar-bootstrap"`)
+}
+
+func TestCategoriesPageRendersEmptyState(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/categories")
+
+	wantAbsent(t, body, "<rdrs-categories-page>")
+	wantContains(t, body, "No categories yet", `class="empty-state-compact"`)
+}
+
+func TestAdminPageRendersSsrContent(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/admin")
+
+	wantAbsent(t, body, "<rdrs-admin-page>", "/static/js/pages/admin.js",
+		`data-testid="admin-create-user-unavailable"`)
+	wantContains(t, body, "<h1>Admin Panel</h1>", "<th>Username</th>", "(you)",
+		`data-testid="admin-create-user-form"`)
+}
+
+// Single-user instances used to hide the section, which left an admin looking
+// for a button that was never rendered.
+func TestAdminPageExplainsWhyAccountCreationIsUnavailable(t *testing.T) {
+	cfg := itestConfig()
+	cfg.MultiUser = false
+	app, _, _ := usersApp(t, cfg)
+	app.Login("admin")
+
+	body := app.GetOK("/admin")
+
+	wantContains(t, body, "<h2>Add an account</h2>", `data-testid="admin-create-user-unavailable"`,
+		"RDRS_MULTI_USER_ENABLED=true")
+	wantAbsent(t, body, `data-testid="admin-create-user-form"`)
+}
+
+func TestFeedsPageFilterErrorsOnlyRendersErrorRows(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Filter Test")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title, fetch_error) VALUES ($1, $2, $3, $4)",
+		1, "https://bad.com/feed.xml", "Bad Feed", "Connection refused")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+		1, "https://good.com/feed.xml", "Good Feed")
+
+	body := app.GetOK("/feeds?filter=errors")
+
+	wantContains(t, body, "Bad Feed", "feed-filter-link active")
+	wantAbsent(t, body, "Good Feed")
+}
+
+func TestFeedsPageUnknownSortCannotInjectLinkParameters(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/feeds?sort=title%26category=5")
+
+	wantContains(t, body, "/feeds?sort=title&amp;filter=errors")
+	wantAbsent(t, body, "category=5")
+}
+
+func TestFeedsPageFilterByCategoryExcludesOtherRows(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Cat A")
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Cat B")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+		1, "https://a.com/feed.xml", "Feed In A")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+		2, "https://b.com/feed.xml", "Feed In B")
+
+	body := app.GetOK("/feeds?category=1")
+
+	wantContains(t, body, "Feed In A", `value="1" selected>Cat A`)
+	wantAbsent(t, body, "Feed In B", `value="2" selected`)
+	// With no ?category= the dropdown defaults to "All Categories".
+	wantAbsent(t, app.GetOK("/feeds"), `value="1" selected`, `value="2" selected`)
+}
+
+// base.html is the slim pre-login shell: all logged-in chrome ships only on
+// the templates that extend app_layout.html.
+func TestLoginAndSetupPagesDoNotLoadLoggedInChrome(t *testing.T) {
+	app := defaultITestApp(t)
+
+	for _, path := range []string{"/login", "/setup"} {
+		body := app.GetOK(path)
+		wantAbsent(t, body, "rdrs-kb-help.js", "rdrs-sidebar.js", "/static/js/app.js", "<rdrs-kb-help")
+		// Flash machinery is still needed: login and register redirect with a flash.
+		if !strings.Contains(body, "rdrs-flash.js") {
+			t.Errorf("%s lacks rdrs-flash.js", path)
+		}
+	}
+}
+
+func TestLoggedInPageLoadsFullChrome(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/settings")
+
+	wantContains(t, body, "rdrs-kb-help.js", "rdrs-sidebar.js", "/static/js/app.js", "<rdrs-kb-help")
+	// The kb-pending indicator was a CSR-era artifact.
+	wantAbsent(t, body, "<rdrs-kb-pending>", "rdrs-kb-pending.js")
+}
+
+// --- Entry list pages ---
+
+// entryWithContent is entry() with a body, for the pages that render one.
+func (o libraryOwner) entryWithContent(t *testing.T, feedID int64, guid, title, link, content string) int64 {
+	t.Helper()
+	result, err := entry.UpsertEntry(context.Background(), o.app.DB, &entry.Upsert{
+		FeedID: feedID, GUID: guid, Title: &title, Link: &link, Content: &content,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.ID
+}
+
+// seedPagedEntries stores count entries published one second apart.
+func (o libraryOwner) seedPagedEntries(t *testing.T, feedID int64, prefix string, count int) {
+	t.Helper()
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < count; i++ {
+		title := fmt.Sprintf("%s %d", strings.ToUpper(prefix[:1]), i)
+		published := start.Add(time.Duration(i) * time.Second)
+		if _, err := entry.UpsertEntry(context.Background(), o.app.DB, &entry.Upsert{
+			FeedID: feedID, GUID: fmt.Sprintf("%s-%d", prefix, i), Title: &title, PublishedAt: &published,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (o libraryOwner) setEntriesPerPage(t *testing.T, perPage int64) {
+	t.Helper()
+	if _, err := models.UpsertUserSettings(context.Background(), o.app.DB, o.userID, perPage); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func listedEntryIDs(html string) map[string]bool {
+	ids := map[string]bool{}
+	const needle = `data-entry-id="`
+	for rest := html; ; {
+		at := strings.Index(rest, needle)
+		if at < 0 {
+			return ids
+		}
+		rest = rest[at+len(needle):]
+		end := strings.Index(rest, `"`)
+		if end < 0 {
+			return ids
+		}
+		ids[rest[:end]] = true
+		rest = rest[end:]
+	}
+}
+
+// hiddenInputValue is the value of the Load-More form's hidden input.
+func hiddenInputValue(html, name string) (string, bool) {
+	needle := `name="` + name + `" value="`
+	at := strings.Index(html, needle)
+	if at < 0 {
+		return "", false
+	}
+	rest := html[at+len(needle):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// encodeToken escapes the characters the cursor and snapshot tokens contain.
+func encodeToken(value string) string {
+	return strings.NewReplacer(" ", "%20", "|", "%7C", ":", "%3A").Replace(value)
+}
+
+func TestUnreadPageRendersEntryRows(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_unread")
+	catID := owner.category(t, "Tech")
+	feedID := owner.feed(t, catID, "https://blog.example/feed", "Example Blog")
+	owner.entryWithContent(t, feedID, "guid-entry-one", "Entry One", "https://blog.example/one", "<p>Content one</p>")
+	owner.entryWithContent(t, feedID, "guid-entry-two", "Entry Two", "https://blog.example/two", "<p>Content two</p>")
+	readID := owner.entryWithContent(t, feedID, "guid-entry-three", "Read Already", "https://blog.example/three", "<p>Content three</p>")
+	if _, err := entry.MarkAsRead(context.Background(), owner.app.DB, readID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := owner.app.Get("/")
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+
+	wantAbsent(t, html, "<rdrs-entries-page", "Read Already")
+	wantContains(t, html, "data-entry-row", "Entry One", "Entry Two", `id="reading-pane"`, "Select an entry",
+		// The "o" shortcut marks the loaded unread rows as read through this button.
+		`id="mark-above-read"`)
+
+	// ?fragment=1 without a cursor is the list-refresh the mark-above swap
+	// fetches: the whole list again, not the Load-More append fragment.
+	fragment := owner.app.Get("/?fragment=1")
+	wantStatus(t, fragment, http.StatusOK)
+	wantContains(t, fragment.Text(), `data-swap-target="[data-entries-list]"`, "Entry One")
+	wantAbsent(t, fragment.Text(), `data-swap-target="#load-more"`, "<rdrs-sidebar")
+}
+
+// listPageCase seeds three entries titled "<label> Alpha", "<label> Beta" and
+// hidden, makes the first two qualify for the list at path, and checks that the
+// third is left out (when hidden is set) or shown too (when it is empty).
+type listPageCase struct {
+	username, path, label, hidden string
+	qualify                       func(t *testing.T, owner libraryOwner, entryID int64, title string)
+}
+
+func (c listPageCase) run(t *testing.T) {
+	t.Helper()
+	owner := newLibraryOwner(t, c.username)
+	feedID := owner.feed(t, owner.category(t, "Tech"), "https://"+c.username+".example/feed", c.label+" Blog")
+	qualifying := []string{c.label + " Alpha", c.label + " Beta"}
+	for i, title := range qualifying {
+		entryID := owner.entry(t, feedID, fmt.Sprintf("guid-%d", i), title, fmt.Sprintf("https://%s.example/%d", c.username, i))
+		if c.qualify != nil {
+			c.qualify(t, owner, entryID, title)
+		}
+	}
+	third := c.hidden
+	if third == "" {
+		third = c.label + " Gamma"
+	}
+	owner.entry(t, feedID, "guid-2", third, "https://"+c.username+".example/2")
+
+	response := owner.app.Get(c.path)
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+
+	wantAbsent(t, html, "<rdrs-entries-page")
+	wantContains(t, html, "data-entry-row", qualifying[0], qualifying[1], `id="reading-pane"`, "Select an entry")
+	if c.hidden == "" {
+		wantContains(t, html, third)
+		return
+	}
+	wantAbsent(t, html, c.hidden)
+}
+
+func TestEntriesPageRendersSsrRows(t *testing.T) {
+	listPageCase{username: "alice_entries", path: "/entries", label: "Entries"}.run(t)
+}
+
+func TestReadEntriesPageRendersSsrRows(t *testing.T) {
+	listPageCase{username: "alice_read", path: "/entries/read", label: "Read", hidden: "Unread One",
+		qualify: func(t *testing.T, owner libraryOwner, entryID int64, _ string) {
+			if _, err := entry.MarkAsRead(context.Background(), owner.app.DB, entryID); err != nil {
+				t.Fatal(err)
+			}
+		}}.run(t)
+}
+
+func TestStarredEntriesPageRendersSsrRows(t *testing.T) {
+	listPageCase{username: "alice_starred", path: "/entries/starred", label: "Starred", hidden: "Unstarred One",
+		qualify: func(t *testing.T, owner libraryOwner, entryID int64, _ string) {
+			if _, err := entry.StarEntry(context.Background(), owner.app.DB, entryID); err != nil {
+				t.Fatal(err)
+			}
+		}}.run(t)
+}
+
+func TestSummarizedEntriesPageRendersSsrRows(t *testing.T) {
+	listPageCase{username: "alice_summarized", path: "/entries/summarized", label: "Summarized", hidden: "No Summary One",
+		qualify: func(t *testing.T, owner libraryOwner, entryID int64, title string) {
+			execStatistics(t, owner.app, "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) VALUES ($1, $2, 'completed', $3)",
+				owner.userID, entryID, "Summary text "+title)
+		}}.run(t)
+}
+
+// --- Keyset paging ---
+
+func TestUnreadLoadMoreUsesKeysetCursor(t *testing.T) {
+	owner := newLibraryOwner(t, "kuser")
+	// Pinned so the row counts do not move when the default page size does.
+	owner.setEntriesPerPage(t, 50)
+	feedID := owner.feed(t, owner.category(t, "K"), "https://x/keyset-feed", "K Feed")
+	owner.seedPagedEntries(t, feedID, "kg", 60)
+
+	// Page 1 is the first 50 rows and a Load-More form carrying a cursor.
+	html := owner.app.Get("/").Text()
+	page1 := listedEntryIDs(html)
+	if len(page1) != 50 {
+		t.Fatalf("page 1 shows %d entries, want 50", len(page1))
+	}
+	cursor, ok := hiddenInputValue(html, "after")
+	if !ok {
+		t.Fatal("Load-More form must carry an after cursor")
+	}
+	if !strings.Contains(cursor, "|") {
+		t.Errorf("cursor is a composite token, got %q", cursor)
+	}
+
+	page2 := listedEntryIDs(owner.app.Get("/?fragment=1&after=" + encodeToken(cursor)).Text())
+	if len(page2) != 10 {
+		t.Errorf("page 2 shows %d entries, want the remaining 10", len(page2))
+	}
+	for id := range page2 {
+		if page1[id] {
+			t.Errorf("keyset pages overlap on entry %s", id)
+		}
+	}
+}
+
+// seedPagingAccount is a fresh account holding count entries.
+func seedPagingAccount(t *testing.T, username string, count int) libraryOwner {
+	t.Helper()
+	owner := newLibraryOwner(t, username)
+	feedID := owner.feed(t, owner.category(t, "P"), "https://x/paging-feed", "P Feed")
+	owner.seedPagedEntries(t, feedID, "pg", count)
+	return owner
+}
+
+// The page size used to be hardcoded in every list handler, and again inside
+// the fragment arm of each, so a fix that reached only the full render would
+// leave the second page a different size from the first.
+func TestEntriesPerPageDecidesWhatAListRenders(t *testing.T) {
+	owner := seedPagingAccount(t, "pageuser", 25)
+	owner.setEntriesPerPage(t, 10)
+
+	for _, path := range []string{"/", "/entries"} {
+		html := owner.app.Get(path).Text()
+		if got := len(listedEntryIDs(html)); got != 10 {
+			t.Errorf("%s renders %d entries, want the reader's page size 10", path, got)
+		}
+		if !strings.Contains(html, `id="load-more"`) {
+			t.Errorf("%s holds 25 entries at 10 a page, so a second page is owed", path)
+		}
+	}
+
+	cursor, ok := hiddenInputValue(owner.app.Get("/").Text(), "after")
+	if !ok {
+		t.Fatal("Load More must carry a cursor")
+	}
+	fragment := owner.app.Get("/?fragment=1&after=" + encodeToken(cursor)).Text()
+	if got := len(listedEntryIDs(fragment)); got != 10 {
+		t.Errorf("the appended page has %d entries, want the same size as the first", got)
+	}
+
+	// Raised past the total: one page, and nothing left to ask for.
+	owner.setEntriesPerPage(t, 25)
+	html := owner.app.Get("/").Text()
+	if got := len(listedEntryIDs(html)); got != 25 {
+		t.Errorf("renders %d entries, want 25", got)
+	}
+	wantAbsent(t, html, `id="load-more"`)
+}
+
+// The setter refuses anything outside 10..=100, but it is not the only writer
+// of that column, and a negative LIMIT is no limit at all: the reader's whole
+// backlog in one response.
+func TestANonsenseStoredPageSizeIsClamped(t *testing.T) {
+	owner := seedPagingAccount(t, "clampuser", 25)
+	owner.setEntriesPerPage(t, 10)
+	execStatistics(t, owner.app, "UPDATE user_settings SET entries_per_page = $1 WHERE user_id = $2", -5, owner.userID)
+
+	html := owner.app.Get("/").Text()
+
+	if got := len(listedEntryIDs(html)); got != 10 {
+		t.Errorf("a negative page size rendered %d entries, want the floor of 10", got)
+	}
+}
+
+// Reading past the end of the loaded page used to lose the reader's place: the
+// entry they opened became read, Load More re-queried the unread list without
+// it, and the row the page was waiting for never arrived (issue #482). The page
+// now paginates against its own render instant.
+func TestUnreadLoadMoreKeepsAnEntryReadDuringThisPageView(t *testing.T) {
+	owner := newLibraryOwner(t, "snapuser")
+	owner.setEntriesPerPage(t, 50)
+	catID := owner.category(t, "S")
+	feedID := owner.feed(t, catID, "https://x/snapshot-feed", "S Feed")
+	// Three pages' worth, so page 2 still renders a Load-More form of its own.
+	owner.seedPagedEntries(t, feedID, "sn", 160)
+	ctx := context.Background()
+
+	// Every unread-capable list view: a category or feed page defaults to
+	// Unread and strands the selection the same way.
+	for _, base := range []string{"/", fmt.Sprintf("/categories/%d/entries", catID), fmt.Sprintf("/feeds/%d/entries", feedID)} {
+		html := owner.app.Get(base).Text()
+		if got := len(listedEntryIDs(html)); got != 50 {
+			t.Fatalf("%s: page 1 has %d entries, want 50", base, got)
+		}
+		cursor, ok := hiddenInputValue(html, "after")
+		if !ok {
+			t.Fatalf("%s: needs an after cursor", base)
+		}
+		snapshot, ok := hiddenInputValue(html, "snapshot")
+		if !ok {
+			t.Fatalf("%s: needs the page's snapshot", base)
+		}
+		separator := "?"
+		if strings.Contains(base, "?") {
+			separator = "&"
+		}
+		more := fmt.Sprintf("%s%sfragment=1&after=%s&snapshot=%s", base, separator, encodeToken(cursor), encodeToken(snapshot))
+
+		// The reader opens the first entry of the next page, the one with no row
+		// yet; reading it marks it read.
+		nextID := int64(-1)
+		for id := range listedEntryIDs(owner.app.Get(more).Text()) {
+			parsed, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if nextID < 0 || parsed < nextID {
+				nextID = parsed
+			}
+		}
+		if nextID < 0 {
+			t.Fatalf("%s: page 2 has rows", base)
+		}
+		if _, err := entry.MarkAsRead(ctx, owner.app.DB, nextID); err != nil {
+			t.Fatal(err)
+		}
+
+		fragment := owner.app.Get(more).Text()
+		if !listedEntryIDs(fragment)[strconv.FormatInt(nextID, 10)] {
+			t.Errorf("%s: the entry read during this page view must still be listed (#482)", base)
+		}
+		// The next form carries the same snapshot forward: re-stamping would move
+		// the boundary and drop whatever was read since.
+		if echoed, _ := hiddenInputValue(fragment, "snapshot"); echoed != snapshot {
+			t.Errorf("%s: snapshot = %q, want it echoed as %q", base, echoed, snapshot)
+		}
+		// Without the snapshot (a stale form) the strict unread filter applies, so
+		// the widening must be opt-in.
+		strict := owner.app.Get(fmt.Sprintf("%s%sfragment=1&after=%s", base, separator, encodeToken(cursor))).Text()
+		if listedEntryIDs(strict)[strconv.FormatInt(nextID, 10)] {
+			t.Errorf("%s: no snapshot means strict unread", base)
+		}
+		// Put it back so the next view starts from the same 160 unread entries.
+		if _, err := entry.SetReadForUser(ctx, owner.app.DB, owner.userID, nextID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The next Load-More form must aim back at its own list; that path is built
+// per request.
+func TestScopedLoadMoreFormTargetsItsOwnList(t *testing.T) {
+	app, adminID, _ := signedInAs(t, "admin")
+	owner := libraryOwner{app: app, userID: adminID}
+	owner.setEntriesPerPage(t, 50)
+	catID := owner.category(t, "L")
+	feedID := owner.feed(t, catID, "https://x/load-more-feed", "L Feed")
+	// Three pages, so the page-2 fragment renders a Load-More form of its own.
+	owner.seedPagedEntries(t, feedID, "lm", 160)
+
+	for _, base := range []string{fmt.Sprintf("/categories/%d/entries", catID), fmt.Sprintf("/feeds/%d/entries", feedID)} {
+		cursor, ok := hiddenInputValue(app.GetOK(base), "after")
+		if !ok {
+			t.Fatalf("%s: page 1 has a Load-More form", base)
+		}
+		fragment := app.GetOK(base + "?fragment=1&after=" + encodeToken(cursor))
+		want := fmt.Sprintf(`id="load-more" method="get" action="%s"`, base)
+		if !strings.Contains(fragment, want) {
+			t.Errorf("%s: the next Load-More form must post back to this list:\n%s", base, fragment)
+		}
+	}
+}
+
+// The widening is scoped to unread views. Read, starred and summarized
+// paginate on a different predicate, so a snapshot on their Load-More form
+// must change nothing.
+func TestLoadMoreSnapshotIsInertOnNonUnreadViews(t *testing.T) {
+	owner := newLibraryOwner(t, "inertuser")
+	feedID := owner.feed(t, owner.category(t, "I"), "https://x/inert-feed", "I Feed")
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		id := owner.entry(t, feedID, fmt.Sprintf("in-%d", i), fmt.Sprintf("I %d", i), "")
+		if _, err := entry.MarkAsRead(ctx, owner.app.DB, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.SetStarredForUser(ctx, owner.app.DB, owner.userID, id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := encodeToken("2000-01-01 00:00:00")
+
+	for _, base := range []string{"/entries/read", "/entries/starred", "/entries/summarized"} {
+		plain := owner.app.Get(base + "?fragment=1")
+		wantStatus(t, plain, http.StatusOK)
+		withSnapshot := owner.app.Get(base + "?fragment=1&snapshot=" + snapshot)
+		wantStatus(t, withSnapshot, http.StatusOK)
+		if !maps.Equal(listedEntryIDs(plain.Text()), listedEntryIDs(withSnapshot.Text())) {
+			t.Errorf("%s: a snapshot must not change what this view lists", base)
+		}
+	}
+}
+
+func TestSettingsPageGroupsAndForwardAuth(t *testing.T) {
+	cfg := itestConfig()
+	cfg.AuthProxyHeader = "Remote-User"
+	cfg.TrustedProxyNetworks = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	cfg.AuthProxyAdminGroup = "admins"
+	app := newITestApp(t, cfg)
+	wantStatus(t, app.PostJSON("/api/setup", map[string]string{"username": "admin", "password": fixturePassword}), http.StatusCreated)
+	app.Login("admin")
+
+	body := app.GetOK("/settings")
+
+	wantContains(t, body, "Authentication", "Forward-Auth", "Accounts",
+		"RDRS_AUTH_PROXY_HEADER", "Remote-User", "RDRS_AUTH_PROXY_LOGOUT_URL")
+}
+
+// /feeds takes its unread counts from the sidebar cache, so a mark-read must
+// bust that cache.
+func TestFeedsPageUnreadCountFollowsMarkRead(t *testing.T) {
+	app := appWithWombats(t, 3)
+	before := app.GetOK("/feeds")
+	if !strings.Contains(before, "<strong>3</strong>") {
+		t.Fatalf("before: %s", before)
+	}
+	wantStatus(t, app.PostForm("/entries/1/read", nil), http.StatusOK)
+
+	// The write is detached; the cache is busted again once it lands.
+	var after string
+	for i := 0; i < 100; i++ {
+		after = app.GetOK("/feeds")
+		if strings.Contains(after, "<strong>2</strong>") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("/feeds kept the old unread count: %s", after)
+}
+
+// --- Today ---
+
+// todayEntries is an admin signed in on a feed holding two entries published
+// just now (alpha the newer) and one published three days ago.
+type todayEntries struct {
+	app              *itestApp
+	alpha, beta, old int64
+}
+
+func appWithTodayEntries(t *testing.T) todayEntries {
+	t.Helper()
+	app, adminID, _ := usersApp(t, itestConfig())
+	catID, err := models.CreateCategory(context.Background(), app.DB, adminID, "TodayCat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	feedTitle := "Today Feed"
+	feed, err := models.CreateFeed(context.Background(), app.DB, models.CreateFeedParams{
+		CategoryID: catID.ID, URL: "https://x/today-feed", Title: &feedTitle,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	seed := func(guid, title string, age time.Duration) int64 {
+		published := now.Add(-age)
+		result, err := entry.UpsertEntry(context.Background(), app.DB, &entry.Upsert{
+			FeedID: feed.ID, GUID: guid, Title: &title, PublishedAt: &published,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.ID
+	}
+	today := todayEntries{
+		app:   app,
+		alpha: seed("today-a", "Fresh Alpha", 0),
+		beta:  seed("today-b", "Fresh Beta", 5*time.Second),
+		old:   seed("old", "Stale Gamma", 72*time.Hour),
+	}
+	app.Login("admin")
+	return today
+}
+
+func isRead(t *testing.T, app *itestApp, entryID int64) bool {
+	t.Helper()
+	return readAt(t, app, entryID).Valid
+}
+
+func TestTodayPageListsOnlyEntriesPublishedToday(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	body := today.app.GetOK("/entries/today")
+
+	wantContains(t, body, "Fresh Alpha", "Fresh Beta", `data-testid="mark-all-form"`)
+	// Today is not one of the All/Read/Starred/Summarized tabs.
+	wantAbsent(t, body, "Stale Gamma", `data-testid="tab-all"`)
+}
+
+func TestTodaySidebarBadgeCountsWhatThePageLists(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	wantContains(t, today.app.GetOK("/entries/today"), `"total_today":2`)
+}
+
+func TestTodayMarkReadMarksOnlyTodaysEntries(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	response := postMarkRead(t, today.app, "/entries/today/mark-read", nil)
+
+	if got := response.Header().Get("Location"); got != "/entries/today" {
+		t.Errorf("Location = %q", got)
+	}
+	if !isRead(t, today.app, today.alpha) || !isRead(t, today.app, today.beta) {
+		t.Error("today's entries should be read")
+	}
+	if isRead(t, today.app, today.old) {
+		t.Error("an older unread entry stays unread")
+	}
+}
+
+func TestTodayMarkReadLeavesEntriesStoredAfterTheSnapshot(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	postMarkRead(t, today.app, "/entries/today/mark-read", map[string]string{"snapshot": "2000-01-01 00:00:00"})
+
+	if isRead(t, today.app, today.alpha) || isRead(t, today.app, today.beta) {
+		t.Error("entries stored after the snapshot must stay unread")
+	}
+}
+
+// Dropping a malformed snapshot would mark everything, which is what the
+// snapshot exists to prevent.
+func TestTodayMarkReadRefusesAMalformedSnapshot(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	response := postMarkRead(t, today.app, "/entries/today/mark-read", map[string]string{"snapshot": "yesterday"})
+
+	if got := response.Header().Get("Location"); got != "/entries/today" {
+		t.Errorf("Location = %q", got)
+	}
+	if isRead(t, today.app, today.alpha) || isRead(t, today.app, today.beta) {
+		t.Error("a malformed snapshot must mark nothing")
+	}
+}
+
+func TestTodayNeighborsStayInsideToday(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	// Beta is the older of today's two; the entry older still is not in Today.
+	response := today.app.Get(fmt.Sprintf("/api/entries/%d/neighbors?unread_only=true&today=true", today.beta))
+
+	wantStatus(t, response, http.StatusOK)
+	if got := jsonField(t, response, "prev_id"); got != float64(today.alpha) {
+		t.Errorf("prev_id = %v, want %d", got, today.alpha)
+	}
+	if got := jsonField(t, response, "next_id"); got != nil {
+		t.Errorf("next_id = %v, want null", got)
+	}
+}
+
+func TestTodayMarkReadRequiresASnapshot(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	response := today.app.PostForm("/entries/today/mark-read", url.Values{"unrelated": {"x"}})
+
+	wantStatus(t, response, http.StatusSeeOther)
+	if isRead(t, today.app, today.alpha) || isRead(t, today.app, today.beta) {
+		t.Error("no snapshot must mark nothing")
+	}
+}
+
+func TestTodayMarkAllFollowsTheScopedSearch(t *testing.T) {
+	today := appWithTodayEntries(t)
+	const button = `data-testid="mark-all-btn"`
+
+	page := today.app.GetOK("/entries/today")
+	searched := today.app.GetOK("/entries/today?q=Alpha")
+	live := today.app.GetOK("/entries/today?fragment=1&q=Alpha")
+	cleared := today.app.GetOK("/entries/today?fragment=1&q=")
+
+	wantContains(t, page, button)
+	// The button would mark rows the search hides; the slot stays so a later
+	// refresh can bring it back.
+	wantAbsent(t, searched, button)
+	wantContains(t, searched, "data-mark-all-slot")
+	wantAbsent(t, live, button)
+	wantContains(t, live, "data-mark-all-slot")
+	wantContains(t, cleared, button)
+}
+
+// appWithSearchEntries is an admin with one matching and one other unread
+// entry, backdated so a snapshot taken now covers them.
+func appWithSearchEntries(t *testing.T) (app *itestApp, matching, other int64) {
+	t.Helper()
+	app, adminID, _ := usersApp(t, itestConfig())
+	owner := libraryOwner{app: app, userID: adminID}
+	feedID := owner.feed(t, owner.category(t, "SearchMarkCat"), "https://x/search-mark-feed", "Search Mark Feed")
+	matching = owner.entry(t, feedID, "sm-a", "Widget Roundup", "")
+	other = owner.entry(t, feedID, "sm-b", "Something Else", "")
+	backdateStoredEntries(t, app)
+	app.Login("admin")
+	return app, matching, other
+}
+
+func TestUnreadAndAllPagesOfferMarkMatchingOnlyWhileSearching(t *testing.T) {
+	app, _, _ := appWithSearchEntries(t)
+
+	for _, c := range []struct{ page, action string }{{"/", "/mark-read"}, {"/entries", "/entries/mark-read"}} {
+		wantAbsent(t, app.Get(c.page).Text(), "mark-matching-btn")
+		html := app.Get(c.page + "?q=Widget").Text()
+		wantContains(t, html, "Mark 1 matching as Read", fmt.Sprintf(`action="%s"`, c.action), "data-snapshot-from-list")
+	}
+}
+
+func TestUnreadAndAllMarkReadMarkOnlyTheMatches(t *testing.T) {
+	for _, c := range []struct{ path, back string }{{"/mark-read", "/"}, {"/entries/mark-read", "/entries"}} {
+		app, matching, other := appWithSearchEntries(t)
+
+		response := postMarkRead(t, app, c.path, map[string]string{"q": "Widget"})
+
+		if got := response.Header().Get("Location"); got != c.back+"?q=Widget" {
+			t.Errorf("%s: Location = %q", c.path, got)
+		}
+		if !isRead(t, app, matching) {
+			t.Errorf("%s: the match should be read", c.path)
+		}
+		if isRead(t, app, other) {
+			t.Errorf("%s: the other entry must stay unread", c.path)
+		}
+	}
+}
+
+// postMarkReadForm posts exactly the given fields, with no snapshot added.
+func postMarkReadForm(t *testing.T, app *itestApp, path string, fields url.Values) {
+	t.Helper()
+	wantStatus(t, app.PostForm(path, fields), http.StatusSeeOther)
+}
+
+// refusedForms are the forms a mark-matching endpoint must treat as a no-op:
+// a blank query, a missing snapshot, a malformed one and one that predates the
+// entries.
+func refusedForms(query string) []url.Values {
+	return []url.Values{
+		{"q": {""}, "snapshot": {afterTheSeed()}},
+		{"q": {query}},
+		{"q": {query}, "snapshot": {"yesterday"}},
+		{"q": {query}, "snapshot": {"2000-01-01 00:00:00"}},
+	}
+}
+
+func TestUnreadAndAllMarkReadRefuseBlankQueryAndBadSnapshot(t *testing.T) {
+	for _, path := range []string{"/mark-read", "/entries/mark-read"} {
+		app, matching, other := appWithSearchEntries(t)
+		for _, form := range refusedForms("Widget") {
+			postMarkReadForm(t, app, path, form)
+			if isRead(t, app, matching) || isRead(t, app, other) {
+				t.Errorf("%s %v must mark nothing", path, form)
+			}
+		}
+	}
+}
+
+func TestTodayPageOffersMarkMatchingOnlyWhileSearching(t *testing.T) {
+	today := appWithTodayEntries(t)
+	backdateStoredEntries(t, today.app)
+
+	wantAbsent(t, today.app.Get("/entries/today").Text(), "mark-matching-btn")
+	html := today.app.Get("/entries/today?q=Alpha").Text()
+	wantContains(t, html, "Mark 1 matching as Read", `action="/entries/today/mark-matching"`)
+	// The old entry matches the term but is not part of today's list.
+	wantAbsent(t, today.app.Get("/entries/today?q=Gamma").Text(), "mark-matching-btn")
+}
+
+func TestTodayMarkMatchingMarksOnlyTodaysMatches(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	response := postMarkRead(t, today.app, "/entries/today/mark-matching", map[string]string{"q": "Alpha"})
+
+	if got := response.Header().Get("Location"); got != "/entries/today?q=Alpha" {
+		t.Errorf("Location = %q", got)
+	}
+	if !isRead(t, today.app, today.alpha) {
+		t.Error("the match should be read")
+	}
+	if isRead(t, today.app, today.beta) {
+		t.Error("beta is not a match")
+	}
+	postMarkRead(t, today.app, "/entries/today/mark-matching", map[string]string{"q": "Gamma"})
+	if isRead(t, today.app, today.old) {
+		t.Error("published before today")
+	}
+}
+
+func TestTodayMarkMatchingRefusesBlankQueryAndBadSnapshot(t *testing.T) {
+	today := appWithTodayEntries(t)
+
+	for _, form := range refusedForms("Fresh") {
+		postMarkReadForm(t, today.app, "/entries/today/mark-matching", form)
+		if isRead(t, today.app, today.alpha) || isRead(t, today.app, today.beta) {
+			t.Errorf("%v must mark nothing", form)
+		}
+	}
 }
