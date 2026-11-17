@@ -89,6 +89,12 @@ var goldenPaths = map[string]bool{
 	"/offline":                         true,
 	"/no/such/page":                    true,
 	"/api/offline/manifest":            true,
+	"/search":                          true,
+	"/search?q=alpha":                  true,
+	"/search?q=zzzznothing":            true,
+	"/search?q=%22unterminated":        true,
+	"/search?q=alpha&fragment=1":       true,
+	"/search?q=is%3Astarred+feed%3A1":  true,
 }
 
 var (

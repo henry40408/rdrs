@@ -78,7 +78,7 @@ type EntriesPage struct {
 
 // Entries renders a full entry-list page.
 func Entries(page EntriesPage) string {
-	var pane node = emptyPane()
+	pane := emptyPane()
 	if page.ReadingPane != nil {
 		pane = readingPane(page.ReadingPane, page.List.CSRF)
 	}
