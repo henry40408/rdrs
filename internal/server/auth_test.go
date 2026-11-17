@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/henry40408/rdrs/internal/auth"
+	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/models"
+	"github.com/henry40408/rdrs/internal/secret"
 )
 
 // Port of tests/auth_test.rs.
@@ -598,4 +600,561 @@ func TestMasqueradeAlreadyMasquerading(t *testing.T) {
 func TestUnmasqueradeNotMasquerading(t *testing.T) {
 	app := signedInApp(t, "admin")
 	wantStatus(t, app.Do(itestRequest{Method: http.MethodPost, Path: "/api/admin/unmasquerade"}), http.StatusBadRequest)
+}
+
+func TestLoginPage(t *testing.T) {
+	if body := defaultITestApp(t).GetOK("/login"); !strings.Contains(body, "Login") {
+		t.Error("the login page must say Login")
+	}
+}
+
+func TestSetupPageIsServedOnlyWhileTheInstanceIsEmpty(t *testing.T) {
+	app := defaultITestApp(t)
+	page := app.Get("/setup")
+	wantStatus(t, page, http.StatusOK)
+	if !strings.Contains(page.Text(), "setup-form") {
+		t.Error("the setup page must carry the setup form")
+	}
+	app.createUserDirectly("admin", fixturePassword)
+	closed := app.Get("/setup")
+	wantStatus(t, closed, http.StatusSeeOther)
+	if closed.Header().Get("Location") != "/login" {
+		t.Errorf("location = %q", closed.Header().Get("Location"))
+	}
+}
+
+func TestSetupRejectsAShortPasswordOrAnEmptyUsername(t *testing.T) {
+	app := defaultITestApp(t)
+	for _, attempt := range [][2]string{{"admin", "short"}, {"", fixturePassword}} {
+		response := app.PostJSON("/api/setup", map[string]string{"username": attempt[0], "password": attempt[1]})
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%q / %q: status = %d", attempt[0], attempt[1], response.Code)
+		}
+	}
+}
+
+func (a *itestApp) setupWithPassword(username, password string) itestResponse {
+	return a.PostJSON("/api/setup", map[string]string{"username": username, "password": password})
+}
+
+func TestSetupEnforcesThePasswordPolicy(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupWithPassword("shorty", strings.Repeat("a", auth.PasswordMinLength-1)), http.StatusBadRequest)
+	wantStatus(t, app.setupWithPassword("longy", strings.Repeat("a", auth.PasswordMaxLength+1)), http.StatusBadRequest)
+	// Clears the length gate and is refused by the estimator instead.
+	wantStatus(t, app.setupWithPassword("repeater", strings.Repeat("a", auth.PasswordMinLength)), http.StatusBadRequest)
+	atMin := "vT7q!mLp2zXc9Rw"
+	if len([]rune(atMin)) != auth.PasswordMinLength {
+		t.Fatalf("fixture is %d characters", len([]rune(atMin)))
+	}
+	wantStatus(t, app.setupWithPassword("atmin", atMin), http.StatusCreated)
+}
+
+func TestRegistrationRefusesAPasswordBuiltFromTheUsername(t *testing.T) {
+	response := defaultITestApp(t).setupWithPassword("marigoldbadger", "marigoldbadger1")
+	wantStatus(t, response, http.StatusBadRequest)
+	message, _ := jsonField(t, response, "error").(string)
+	if message == "" || strings.Contains(message, "at least") || strings.Contains(message, "at most") {
+		t.Errorf("want a guessability message, got %q", message)
+	}
+}
+
+func TestAnOverLongPasswordIsRefusedBeforeItIsHashed(t *testing.T) {
+	response := defaultITestApp(t).setupWithPassword("verbose", strings.Repeat("a", 100_000))
+	wantStatus(t, response, http.StatusBadRequest)
+	if message, _ := jsonField(t, response, "error").(string); !strings.Contains(message, "at most") {
+		t.Errorf("want the length policy to reject it, got %s", response.Text())
+	}
+}
+
+func TestARefusedSetupDoesNotHashThePassword(t *testing.T) {
+	app := defaultITestApp(t)
+	app.createUserDirectly("owner", fixturePassword)
+	wantStatus(t, app.setupWithPassword("intruder", fixturePassword), http.StatusForbidden)
+	user, err := models.FindUserByUsername(context.Background(), app.DB, "intruder")
+	if err != nil || user != nil {
+		t.Errorf("intruder = %v, err = %v", user, err)
+	}
+}
+
+func TestUnreadPage(t *testing.T) {
+	body := signedInApp(t, "admin").GetOK("/")
+	for _, want := range []string{`id="rdrs-sidebar-bootstrap"`, `"username":"admin"`, "data-entries-list"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+	if strings.Contains(body, "<rdrs-entries-page>") {
+		t.Error("the page must be server rendered, not a CSR shell")
+	}
+}
+
+func TestPagesRedirectToLoginWhenSignedOut(t *testing.T) {
+	app := defaultITestApp(t)
+	for _, path := range []string{"/", "/admin"} {
+		if got := app.Get(path).Code; got != http.StatusSeeOther {
+			t.Errorf("%s: status = %d", path, got)
+		}
+	}
+}
+
+func TestAdminSeesTheAdminPanelAndLink(t *testing.T) {
+	app := signedInApp(t, "admin")
+	if !strings.Contains(app.GetOK("/admin"), "Admin Panel") {
+		t.Error("the admin page must say Admin Panel")
+	}
+	if !strings.Contains(app.GetOK("/"), `"is_admin":true`) {
+		t.Error("the sidebar bootstrap must carry is_admin true")
+	}
+}
+
+// regularUserApp is signed in as a non-admin "user1" on an instance whose
+// admin was set up first.
+func regularUserApp(t *testing.T) *itestApp {
+	t.Helper()
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("admin", nil), http.StatusCreated)
+	app.SeedAccount("user1", fixturePassword, models.RoleUser)
+	app.Login("user1")
+	return app
+}
+
+func TestAdminPageForbiddenForRegularUser(t *testing.T) {
+	wantStatus(t, regularUserApp(t).Get("/admin"), http.StatusSeeOther)
+}
+
+func TestUnreadPageHidesAdminLinkForRegularUser(t *testing.T) {
+	body := regularUserApp(t).GetOK("/")
+	if strings.Contains(body, `data-testid="nav-admin"`) || strings.Contains(body, `href="/admin"`) {
+		t.Error("a regular user must not see the admin link")
+	}
+}
+
+// signedFlashValue is a flash cookie value as the server would sign it. The
+// Go server signs the percent-encoded cookie value (net/http drops raw JSON
+// quotes from a Cookie header), so the JSON is escaped first.
+func signedFlashValue(rootSecret []byte, payload string) string {
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(url.PathEscape(payload)))
+	tag := secret.Tag(rootSecret, secret.DomainFlash, []byte(encoded))
+	return encoded + "." + base64.RawURLEncoding.EncodeToString(tag[:])
+}
+
+func (a *itestApp) signedFlash(payload string) string {
+	return signedFlashValue(a.App.Config.Secret, payload)
+}
+
+func TestFlashMessageDisplayedOnLoginPage(t *testing.T) {
+	app := defaultITestApp(t)
+	app.cookies["flash"] = app.signedFlash(`[{"level":"success","message":"Test flash message"}]`)
+	body := app.GetOK("/login")
+	for _, want := range []string{"Test flash message", "banner--success", `role="status"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+}
+
+func TestAForgedFlashCookieIsNotRendered(t *testing.T) {
+	forged := `[{"level":"error","message":"Your account has been suspended."}]`
+	wrongKey := []byte(signedFlashValue(itestConfig().Secret, forged))
+	last := len(wrongKey) - 1
+	wrongKey[last] = 'A'
+	if wrongKey[last] == signedFlashValue(itestConfig().Secret, forged)[last] {
+		wrongKey[last] = 'B'
+	}
+	for name, value := range map[string]string{"unsigned": forged, "wrong signature": string(wrongKey)} {
+		app := defaultITestApp(t)
+		app.cookies["flash"] = value
+		if body := app.GetOK("/login"); strings.Contains(body, "Your account has been suspended.") {
+			t.Errorf("%s: a forged flash cookie became a banner", name)
+		}
+	}
+}
+
+func TestTheScriptedEndpointsSetTheirOwnFlash(t *testing.T) {
+	app := defaultITestApp(t)
+	created := app.setupJSON("flashy", nil)
+	wantStatus(t, created, http.StatusCreated)
+	if !strings.Contains(flashText(t, created), "Account created") {
+		t.Error("setup must flash for the client that only navigates")
+	}
+	signedIn := app.loginAttempt("flashy", fixturePassword)
+	wantStatus(t, signedIn, http.StatusOK)
+	loggedOut := app.Do(itestRequest{Method: http.MethodDelete, Path: "/api/session",
+		Headers: map[string]string{"X-CSRF-Token": signedIn.Cookie("csrf_token").Value}})
+	wantStatus(t, loggedOut, http.StatusOK)
+	if !strings.Contains(flashText(t, loggedOut), "You have been logged out.") {
+		t.Error("logout must flash")
+	}
+}
+
+func TestFlashMessageClearedAfterDisplay(t *testing.T) {
+	app := defaultITestApp(t)
+	app.cookies["flash"] = app.signedFlash(`[{"level":"info","message":"First message"}]`)
+	if !strings.Contains(app.GetOK("/login"), "First message") {
+		t.Fatal("the flash must show once")
+	}
+	if strings.Contains(app.GetOK("/login"), "First message") {
+		t.Error("the flash must be cleared after display")
+	}
+}
+
+func TestFlashMessageOnUnreadPage(t *testing.T) {
+	app := signedInApp(t, "admin")
+	app.cookies["flash"] = app.signedFlash(`[{"level":"warning","message":"Warning test"}]`)
+	body := app.GetOK("/")
+	for _, want := range []string{"<rdrs-flash", `data-testid="flash-message"`, "Warning test", "banner--warning", `role="alert"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+}
+
+// ageSession puts the only session in the refresh window: created five days
+// ago and expiring in two hours. It returns the aged expiry.
+func ageSession(t *testing.T, app *itestApp) time.Time {
+	t.Helper()
+	now := time.Now()
+	expiry := now.Add(2 * time.Hour)
+	if _, err := app.DB.ExecContext(context.Background(), "UPDATE session SET created_at = $1, expires_at = $2",
+		db.FormatRustRFC3339(now.Add(-5*24*time.Hour)), db.FormatRustRFC3339(expiry)); err != nil {
+		t.Fatal(err)
+	}
+	return expiry
+}
+
+func readExpiry(t *testing.T, app *itestApp) time.Time {
+	t.Helper()
+	var token string
+	if err := app.DB.QueryRowContext(context.Background(), "SELECT session_token FROM session LIMIT 1").Scan(&token); err != nil {
+		t.Fatal(err)
+	}
+	session, err := models.FindSessionByToken(context.Background(), app.DB, token)
+	if err != nil || session == nil {
+		t.Fatalf("session = %v, err = %v", session, err)
+	}
+	return session.ExpiresAt
+}
+
+func TestAPIRequestSlidesSessionExpiryForward(t *testing.T) {
+	app := signedInApp(t, "admin")
+	aged := ageSession(t, app)
+	wantStatus(t, app.Get("/api/user"), http.StatusOK)
+	refreshed := readExpiry(t, app)
+	if !refreshed.After(aged) {
+		t.Errorf("expiry should slide forward: aged=%v refreshed=%v", aged, refreshed)
+	}
+	if min := time.Now().Add(6 * 24 * time.Hour); refreshed.Before(min) {
+		t.Errorf("refreshed expiry too small: %v < %v", refreshed, min)
+	}
+}
+
+func TestPageRequestSlidesSessionExpiryForward(t *testing.T) {
+	app := signedInApp(t, "admin")
+	aged := ageSession(t, app)
+	wantStatus(t, app.Get("/"), http.StatusOK)
+	if refreshed := readExpiry(t, app); !refreshed.After(aged) {
+		t.Errorf("page request should slide expiry forward: aged=%v refreshed=%v", aged, refreshed)
+	}
+}
+
+func TestDisableLocalAuthBlocksPasswordLogin(t *testing.T) {
+	cfg := itestConfig()
+	cfg.DisableLocalAuth = true
+	cfg.AuthProxyHeader = "Remote-User"
+	networks, err := config.ParseTrustedNetworks("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TrustedProxyNetworks = networks
+	app := newITestApp(t, cfg)
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	wantStatus(t, app.loginAttempt("u", fixturePassword), http.StatusForbidden)
+}
+
+// loginSessionCookie sets a fresh user up, signs it in and returns the raw
+// session Set-Cookie value under whichever name cookie_secure selects.
+func loginSessionCookie(t *testing.T, app *itestApp) string {
+	t.Helper()
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	login := app.loginAttempt("u", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	for _, header := range setCookieHeaders(login) {
+		if strings.HasPrefix(header, "session_token=") || strings.HasPrefix(header, "__Host-session_token=") {
+			return header
+		}
+	}
+	t.Fatal("login must emit a session_token or __Host-session_token Set-Cookie")
+	return ""
+}
+
+func secureConfig() config.Config {
+	cfg := itestConfig()
+	cfg.CookieSecure = true
+	return cfg
+}
+
+func TestSessionCookieSecureWhenEnabled(t *testing.T) {
+	cookie := loginSessionCookie(t, newITestApp(t, secureConfig()))
+	if !strings.HasPrefix(cookie, "__Host-session_token=") {
+		t.Errorf("cookie_secure must select the __Host- prefixed name: %s", cookie)
+	}
+	for _, want := range []string{"Secure", "HttpOnly", "SameSite=Lax", "Path=/"} {
+		if !strings.Contains(cookie, want) {
+			t.Errorf("cookie lacks %s: %s", want, cookie)
+		}
+	}
+	if strings.Contains(strings.ToLower(cookie), "domain=") {
+		t.Errorf("a __Host- cookie must not carry a Domain attribute: %s", cookie)
+	}
+}
+
+func TestSessionCookieNotSecureByDefault(t *testing.T) {
+	cookie := loginSessionCookie(t, defaultITestApp(t))
+	if !strings.HasPrefix(cookie, "session_token=") {
+		t.Errorf("default config must stay on the unprefixed name: %s", cookie)
+	}
+	if strings.Contains(cookie, "Secure") {
+		t.Errorf("session cookie must not be Secure without cookie_secure: %s", cookie)
+	}
+}
+
+func TestUnprefixedCookieStillAuthenticatesWhenSecureEnabled(t *testing.T) {
+	cfg := secureConfig()
+	app := newITestApp(t, cfg)
+	ctx := context.Background()
+	user, err := models.CreateUser(ctx, app.DB, "u", "!", models.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := models.CreateSession(ctx, app.DB, models.NewSession{UserID: user.ID, UserAgent: "test-agent", IPAddress: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStyle := secret.SignSession(cfg.Secret, session.SessionToken)
+	response := app.Do(itestRequest{Path: "/api/user", NoCookies: true, Headers: map[string]string{"Cookie": "session_token=" + oldStyle}})
+	wantStatus(t, response, http.StatusOK)
+}
+
+func TestPrefixedCookieIsNeverEmittedWithoutSecure(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	login := app.loginAttempt("u", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	for _, header := range setCookieHeaders(login) {
+		if strings.HasPrefix(header, "__Host-") {
+			t.Errorf("no __Host- cookie may be emitted when cookie_secure is false: %s", header)
+		}
+	}
+}
+
+func TestSessionCookieMaxAgeMatchesSlidingTTL(t *testing.T) {
+	cookie := loginSessionCookie(t, defaultITestApp(t))
+	if !strings.Contains(cookie, "Max-Age=604800") || strings.Contains(cookie, "Max-Age=7776000") {
+		t.Errorf("Max-Age must be the 7-day sliding TTL: %s", cookie)
+	}
+}
+
+func TestCSRFCookieMaxAgeMatchesSessionCookie(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	login := app.loginAttempt("u", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	for _, header := range setCookieHeaders(login) {
+		if !strings.HasPrefix(header, "csrf_token=") {
+			continue
+		}
+		if !strings.Contains(header, "Max-Age=604800") || strings.Contains(header, "Max-Age=7776000") {
+			t.Errorf("csrf cookie Max-Age must mirror the session cookie: %s", header)
+		}
+		return
+	}
+	t.Error("login must emit a csrf_token Set-Cookie")
+}
+
+// cookiesNamed returns the Set-Cookie headers whose name starts with prefix
+// (including the "=").
+func cookiesNamed(response itestResponse, prefix string) []string {
+	var found []string
+	for _, header := range setCookieHeaders(response) {
+		if strings.HasPrefix(header, prefix) {
+			found = append(found, header)
+		}
+	}
+	return found
+}
+
+func TestLogoutClearsCookieWithPath(t *testing.T) {
+	app := signedInApp(t, "u")
+	response := app.deleteSession()
+	wantStatus(t, response, http.StatusOK)
+	removal := cookiesNamed(response, "session_token=")
+	if len(removal) == 0 || !strings.Contains(removal[0], "Path=/") {
+		t.Fatalf("the removal cookie must carry Path=/: %v", setCookieHeaders(response))
+	}
+	// Both names for both purposes, so a leftover from before a config flip
+	// is always cleared.
+	for _, name := range []string{"session_token=", "csrf_token=", "__Host-session_token=", "__Host-csrf_token="} {
+		found := cookiesNamed(response, name)
+		if len(found) == 0 {
+			t.Fatalf("logout must emit a %s removal: %v", name, setCookieHeaders(response))
+		}
+		if strings.HasPrefix(name, "__Host-") && (!strings.Contains(found[0], "Secure") || !strings.Contains(found[0], "Path=/")) {
+			t.Errorf("a __Host- removal must carry Secure and Path=/: %s", found[0])
+		}
+	}
+}
+
+func cookieValueOf(setCookie, name string) string {
+	value, _, _ := strings.Cut(strings.TrimPrefix(setCookie, name), ";")
+	return value
+}
+
+func TestLogoutRemovalCookieIsNotOverwrittenBySlide(t *testing.T) {
+	response := signedInApp(t, "u").deleteSession()
+	wantStatus(t, response, http.StatusOK)
+	for _, name := range []string{"session_token=", "csrf_token="} {
+		found := cookiesNamed(response, name)
+		if len(found) != 1 {
+			t.Fatalf("logout must emit exactly one %s Set-Cookie: %v", name, setCookieHeaders(response))
+		}
+		if cookieValueOf(found[0], name) != "" {
+			t.Errorf("the slide must not overwrite the removal: %s", found[0])
+		}
+	}
+}
+
+func TestLogoutClearsPrefixedCookiesWhenSecureEnabled(t *testing.T) {
+	app := newITestApp(t, secureConfig())
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	login := app.loginAttempt("u", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	app.headers = http.Header{"X-Csrf-Token": {login.Cookie("__Host-csrf_token").Value}}
+	response := app.deleteSession()
+	wantStatus(t, response, http.StatusOK)
+	for _, name := range []string{"__Host-session_token=", "__Host-csrf_token="} {
+		found := cookiesNamed(response, name)
+		if len(found) != 1 {
+			t.Fatalf("expected exactly one %s Set-Cookie (the removal): %v", name, setCookieHeaders(response))
+		}
+		if cookieValueOf(found[0], name) != "" || !strings.Contains(found[0], "Secure") {
+			t.Errorf("want an empty Secure removal: %s", found[0])
+		}
+	}
+}
+
+func TestTamperedSessionCookieIsRejected(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	login := app.loginAttempt("u", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	value := login.Cookie("session_token").Value
+	cut := strings.LastIndex(value, ".")
+	token, signature := value[:cut], value[cut+1:]
+	withCookie := func(cookie string) itestResponse {
+		return app.Do(itestRequest{Path: "/api/user", NoCookies: true, Headers: map[string]string{"Cookie": "session_token=" + cookie}})
+	}
+	wantStatus(t, withCookie(value), http.StatusOK)
+	// Token changed, signature kept: rejected before any database lookup.
+	wantStatus(t, withCookie(token+"x."+signature), http.StatusUnauthorized)
+	// Signature stripped (a raw database token): also rejected.
+	wantStatus(t, withCookie(token), http.StatusUnauthorized)
+}
+
+func TestLogoutRedirectDefaultIsLogin(t *testing.T) {
+	response := signedInApp(t, "u").deleteSession()
+	if jsonField(t, response, "redirect_to") != "/login" || jsonField(t, response, "logout_url_configured") != false {
+		t.Errorf("body = %s", response.Text())
+	}
+}
+
+func logoutWithConfiguredURL(t *testing.T, logoutURL string) itestResponse {
+	t.Helper()
+	cfg := itestConfig()
+	cfg.AuthProxyLogoutURL = logoutURL
+	app := newITestApp(t, cfg)
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	app.Login("u")
+	return app.deleteSession()
+}
+
+func TestLogoutRedirectUsesConfiguredURL(t *testing.T) {
+	response := logoutWithConfiguredURL(t, "https://auth.example.com/logout")
+	if jsonField(t, response, "redirect_to") != "https://auth.example.com/logout" || jsonField(t, response, "logout_url_configured") != true {
+		t.Errorf("body = %s", response.Text())
+	}
+}
+
+func TestLogoutRedirectUsesRelativeConfiguredURL(t *testing.T) {
+	response := logoutWithConfiguredURL(t, "/logout")
+	if jsonField(t, response, "redirect_to") != "/logout" || jsonField(t, response, "logout_url_configured") != true {
+		t.Errorf("body = %s", response.Text())
+	}
+}
+
+func TestLogoutSendsClearSiteData(t *testing.T) {
+	response := signedInApp(t, "u").deleteSession()
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Clear-Site-Data"); got != `"cache", "storage"` {
+		t.Errorf("Clear-Site-Data = %q", got)
+	}
+}
+
+// "cookies" would race the flash cookie written right after the response and
+// "executionContexts" would fight the client's own redirect.
+func TestLogoutClearSiteDataOmitsCookies(t *testing.T) {
+	header := signedInApp(t, "u").deleteSession().Header().Get("Clear-Site-Data")
+	if header == "" || strings.Contains(header, "cookies") || strings.Contains(header, "executionContexts") {
+		t.Errorf("Clear-Site-Data = %q", header)
+	}
+}
+
+func TestLoginPageRedirectsAuthenticatedToRoot(t *testing.T) {
+	response := signedInApp(t, "u").Get("/login")
+	if response.Code < 300 || response.Code >= 400 || response.Header().Get("Location") != "/" {
+		t.Errorf("status = %d, location = %q", response.Code, response.Header().Get("Location"))
+	}
+}
+
+func TestLoginPageRendersWhenAnonymous(t *testing.T) {
+	body := defaultITestApp(t).GetOK("/login")
+	if !strings.Contains(body, "login-form") && !strings.Contains(body, "rdrs") {
+		t.Error("the anonymous login page must render the form")
+	}
+}
+
+func TestFreshSessionIsNotRefreshed(t *testing.T) {
+	app := signedInApp(t, "admin")
+	before := readExpiry(t, app)
+	wantStatus(t, app.Get("/api/user"), http.StatusOK)
+	if after := readExpiry(t, app); !before.Equal(after) {
+		t.Errorf("a fresh session must not be refreshed: %v -> %v", before, after)
+	}
+}
+
+func TestAuthenticatedRequestReissuesSessionCookie(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("u", nil), http.StatusCreated)
+	login := app.loginAttempt("u", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	app.ApplyCSRF(login)
+	response := app.Get("/api/user")
+	wantStatus(t, response, http.StatusOK)
+	reissued := cookiesNamed(response, "session_token=")
+	if len(reissued) == 0 {
+		t.Fatal("an ordinary authenticated request must reissue the session cookie")
+	}
+	if cookieValueOf(reissued[0], "session_token=") != login.Cookie("session_token").Value {
+		t.Error("the session token must not be rotated when its cookie is slid")
+	}
+	if !strings.Contains(reissued[0], "Max-Age=604800") {
+		t.Errorf("the reissued cookie must carry the refreshed Max-Age: %s", reissued[0])
+	}
+}
+
+func TestStaticAssetResponseHasNoSetCookie(t *testing.T) {
+	app := signedInApp(t, "u")
+	if cookies := setCookieHeaders(app.Get("/static/nonexistent.css")); len(cookies) != 0 {
+		t.Errorf("a static asset response must never carry Set-Cookie: %v", cookies)
+	}
 }
