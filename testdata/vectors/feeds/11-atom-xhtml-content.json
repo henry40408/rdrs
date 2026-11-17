@@ -1,0 +1,34 @@
+{
+  "description": null,
+  "entries": [
+    {
+      "author": null,
+      "content": "<p>Para <em>one</em></p>",
+      "guid": "x1",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "XHTML <b>title</b>",
+      "updated": "2024-01-01T00:00:00Z"
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "x2",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "Src content",
+      "updated": "2024-01-02T00:00:00Z"
+    }
+  ],
+  "feed_type": "Atom",
+  "icon": null,
+  "id": "x",
+  "links": [],
+  "logo": null,
+  "title": "<b>Html</b> title",
+  "updated": "2024-01-01T00:00:00Z"
+}

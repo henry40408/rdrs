@@ -1,0 +1,101 @@
+{
+  "description": "d",
+  "entries": [
+    {
+      "author": null,
+      "content": "a",
+      "guid": "31636a81bad6e82630109f60b949cea7",
+      "link": "https://noguid.example/a",
+      "links": [
+        "https://noguid.example/a"
+      ],
+      "published": null,
+      "summary": "a",
+      "title": "Has link and title",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": "b",
+      "guid": "1189deec9f38ead2afa105da89a19dd5",
+      "link": "https://noguid.example/b",
+      "links": [
+        "https://noguid.example/b"
+      ],
+      "published": null,
+      "summary": "b",
+      "title": "Same title other link",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": "only link",
+      "guid": "6f9dc5106c34ff0c4f23fa2800762b56",
+      "link": "https://noguid.example/c",
+      "links": [
+        "https://noguid.example/c"
+      ],
+      "published": null,
+      "summary": "only link",
+      "title": null,
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": "only title",
+      "guid": "d31d3b3e-eeae-41a4-9cbd-cceb672881a1",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": "only title",
+      "title": "Only title",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": "nothing but a description",
+      "guid": "b87c4fd1-52ea-4c41-b7ce-de6257d368b3",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": "nothing but a description",
+      "title": null,
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "45115ed896411f9de954f30ad9d7718c",
+      "link": "https://noguid.example/%E6%97%A5%E6%9C%AC%E8%AA%9E",
+      "links": [
+        "https://noguid.example/%E6%97%A5%E6%9C%AC%E8%AA%9E"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "日本語のタイトル",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "e57ea37d53f5ea5a207900e444f93edd",
+      "link": "https://noguid.example/pad",
+      "links": [
+        "https://noguid.example/pad"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "padded",
+      "updated": null
+    }
+  ],
+  "feed_type": "RSS2",
+  "icon": null,
+  "id": "a9aec41c17411439333e6f879126796",
+  "links": [
+    "https://noguid.example/"
+  ],
+  "logo": null,
+  "title": "No Guid",
+  "updated": null
+}

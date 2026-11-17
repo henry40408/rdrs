@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Authors</title><link>https://au.example/</link><description>d</description>
+<item><title>1</title><guid>a1</guid><author>a@b.com (Name One)</author></item>
+<item><title>2</title><guid>a2</guid><author>Plain Name</author></item>
+<item><title>3</title><guid>a3</guid><dc:creator>Creator Name</dc:creator><author>other@b.com (Other)</author></item>
+<item><title>4</title><guid>a4</guid><itunes:author>Itunes Name</itunes:author></item>
+<item><title>5</title><guid>a5</guid><author></author></item>
+</channel></rss>

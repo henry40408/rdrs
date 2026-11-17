@@ -1,0 +1,73 @@
+{
+  "description": null,
+  "entries": [
+    {
+      "author": null,
+      "content": null,
+      "guid": "ae17340a9b80582b773071bfa569537b",
+      "link": "https://noid.example/1",
+      "links": [
+        "https://noid.example/1"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "With link",
+      "updated": "2024-01-01T00:00:00Z"
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "378b9bc8e34ec69cc551c85de116e105",
+      "link": "https://noid.example/2",
+      "links": [
+        "https://noid.example/2"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "With link again",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "3f1813e0-d121-407c-aa8e-9bc5c200d2c6",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "No link",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "41f6e83826822230e060e035f3ab2c4",
+      "link": "https://noid.example/4",
+      "links": [
+        "https://noid.example/4"
+      ],
+      "published": null,
+      "summary": null,
+      "title": null,
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "471b7f7c-2437-413f-af07-3036b42c57cf",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": null,
+      "updated": null
+    }
+  ],
+  "feed_type": "Atom",
+  "icon": null,
+  "id": "e3155fa5-1cd8-426e-a290-421d4e377434",
+  "links": [],
+  "logo": null,
+  "title": "No ids",
+  "updated": "2024-01-01T00:00:00Z"
+}

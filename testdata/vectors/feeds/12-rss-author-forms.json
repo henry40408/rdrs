@@ -1,0 +1,69 @@
+{
+  "description": "d",
+  "entries": [
+    {
+      "author": "(Name One)",
+      "content": null,
+      "guid": "a1",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "1",
+      "updated": null
+    },
+    {
+      "author": "Plain Name",
+      "content": null,
+      "guid": "a2",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "2",
+      "updated": null
+    },
+    {
+      "author": "Creator Name",
+      "content": null,
+      "guid": "a3",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "3",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "a4",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "4",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "a5",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "5",
+      "updated": null
+    }
+  ],
+  "feed_type": "RSS2",
+  "icon": null,
+  "id": "77ca862e040bf2f99b7c5c5edea59460",
+  "links": [
+    "https://au.example/"
+  ],
+  "logo": null,
+  "title": "Authors",
+  "updated": null
+}

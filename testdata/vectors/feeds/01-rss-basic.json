@@ -1,0 +1,53 @@
+{
+  "description": "A basic blog",
+  "entries": [
+    {
+      "author": "Alice",
+      "content": "<p>Full <b>content</b> one</p>",
+      "guid": "https://basic.example/1",
+      "link": "https://basic.example/1",
+      "links": [
+        "https://basic.example/1"
+      ],
+      "published": "2024-03-04T08:00:00Z",
+      "summary": "Summary one",
+      "title": "First post",
+      "updated": "2024-03-04T08:00:00Z"
+    },
+    {
+      "author": "(Bob Builder)",
+      "content": "Only a description",
+      "guid": "post-2",
+      "link": "https://basic.example/2",
+      "links": [
+        "https://basic.example/2"
+      ],
+      "published": "2024-03-03T13:00:00Z",
+      "summary": "Only a description",
+      "title": "Second post",
+      "updated": "2024-03-03T13:00:00Z"
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "post-3",
+      "link": "https://basic.example/3",
+      "links": [
+        "https://basic.example/3"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "Third post",
+      "updated": null
+    }
+  ],
+  "feed_type": "RSS2",
+  "icon": null,
+  "id": "3353b60f96b4e62955c18f7f53f71eb1",
+  "links": [
+    "https://basic.example/"
+  ],
+  "logo": "https://basic.example/logo.png",
+  "title": "Basic Blog",
+  "updated": "2024-03-05T10:20:30Z"
+}

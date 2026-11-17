@@ -1,0 +1,79 @@
+{
+  "description": "d",
+  "entries": [
+    {
+      "author": null,
+      "content": null,
+      "guid": "spaced-guid",
+      "link": "https://gs.example/1",
+      "links": [
+        "https://gs.example/1"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "T1",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "multi\n line",
+      "link": "https://gs.example/2",
+      "links": [
+        "https://gs.example/2"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "T2",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "f5f93ed0adc09754f7ab5d807b51c92d",
+      "link": "https://gs.example/3",
+      "links": [
+        "https://gs.example/3"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "T3",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "dup",
+      "link": "https://gs.example/4",
+      "links": [
+        "https://gs.example/4"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "T4",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "dup",
+      "link": "https://gs.example/5",
+      "links": [
+        "https://gs.example/5"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "T5",
+      "updated": null
+    }
+  ],
+  "feed_type": "RSS2",
+  "icon": null,
+  "id": "76e23b1998c1f46f1595f76032bec9bf",
+  "links": [
+    "https://gs.example/"
+  ],
+  "logo": null,
+  "title": "Guid Space",
+  "updated": null
+}

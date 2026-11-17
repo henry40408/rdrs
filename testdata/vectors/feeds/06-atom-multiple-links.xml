@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Links</title><id>f</id><updated>2024-01-01T00:00:00Z</updated>
+<link rel="self" href="https://links.example/feed"/>
+<link rel="alternate" type="text/html" href="https://links.example/"/>
+<entry><title>E1</title><id>e1</id><updated>2024-01-01T00:00:00Z</updated>
+<link rel="enclosure" href="https://links.example/e1.mp3" type="audio/mpeg"/>
+<link rel="alternate" href="https://links.example/e1"/>
+<link rel="replies" href="https://links.example/e1#comments"/>
+</entry>
+<entry><title>E2</title><id>e2</id><updated>2024-01-01T00:00:00Z</updated>
+<link href="https://links.example/e2"/><link href="https://links.example/e2"/>
+</entry>
+</feed>

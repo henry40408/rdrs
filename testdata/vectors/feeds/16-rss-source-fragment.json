@@ -1,0 +1,40 @@
+{
+  "description": "d",
+  "entries": [
+    {
+      "author": null,
+      "content": null,
+      "guid": "r1",
+      "link": "/relative/post",
+      "links": [
+        "/relative/post"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "Rel link",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "r2",
+      "link": "https://q.example/p?a=1&b=2#frag",
+      "links": [
+        "https://q.example/p?a=1&b=2#frag"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "Query",
+      "updated": null
+    }
+  ],
+  "feed_type": "RSS2",
+  "icon": null,
+  "id": "eb129f690ef9881b53b1ec17a8c54277",
+  "links": [
+    "/"
+  ],
+  "logo": null,
+  "title": "Rel",
+  "updated": null
+}

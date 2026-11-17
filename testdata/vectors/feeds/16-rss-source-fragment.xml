@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Rel</title><link>/</link><description>d</description>
+<item><title>Rel link</title><link>/relative/post</link><guid>r1</guid></item>
+<item><title>Query</title><link>https://q.example/p?a=1&amp;b=2#frag</link><guid>r2</guid></item>
+</channel></rss>

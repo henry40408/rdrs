@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>中文</title><link>https://zh.example/</link><description>中文描述</description>
+<lastBuildDate>週二, 05 三月 2024 10:20:30 +0800</lastBuildDate>
+<item><title>一</title><guid>zh-1</guid><pubDate>週二, 05 三月 2024 10:20:30 +0800</pubDate></item>
+<item><title>二</title><guid>zh-2</guid><pubDate>05 三月 2024 10:20:30</pubDate></item>
+<item><title>三</title><guid>zh-3</guid><pubDate>2024-03-05 10:20:30</pubDate></item>
+<item><title>四</title><guid>zh-4</guid><pubDate>2024-03-05</pubDate></item>
+<item><title>五</title><guid>zh-5</guid><pubDate>not a date</pubDate></item>
+<item><title>六</title><guid>zh-6</guid><pubDate>Tue, 05 Mar 2024 10:20:30 +08:00</pubDate></item>
+<item><title>七</title><guid>zh-7</guid><pubDate>Tue, 5 Mar 2024 10:20 GMT</pubDate></item>
+</channel></rss>
