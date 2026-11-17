@@ -4,3 +4,9 @@
 # `cargo llvm-cov nextest --lcov --output-path lcov.info` (see CLAUDE.md) drops
 # this in the repo root.
 lcov.info
+
+# Go build output and coverage profiles.
+/bin/
+coverage.out
+coverage-bin.out
+/covdata/
