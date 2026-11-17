@@ -25,7 +25,9 @@ func Version() string {
 // IsDirty reports whether the build came from a tree with uncommitted changes.
 // Static assets use it to decide between no-cache and immutable caching.
 func IsDirty() bool {
-	return strings.Contains(Version(), "-dirty")
+	v := Version()
+	// git describe gives "-dirty"; Go stamps "+dirty" into the module version.
+	return strings.Contains(v, "-dirty") || strings.Contains(v, "+dirty")
 }
 
 func buildInfoVersion() string {

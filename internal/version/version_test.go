@@ -33,6 +33,10 @@ func TestIsDirty(t *testing.T) {
 	if !IsDirty() {
 		t.Fatal("want dirty")
 	}
+	version = "v0.0.0-20260101000000-abcdef123456+dirty"
+	if !IsDirty() {
+		t.Fatal("want dirty for the Go VCS stamp")
+	}
 	version = "v1.2.3"
 	if IsDirty() {
 		t.Fatal("want clean")
