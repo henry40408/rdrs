@@ -82,8 +82,11 @@ func load(fsys fs.FS, dir string) ([]Migration, error) {
 	}
 	var all []Migration
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+		if !isMigrationFile(entry) {
 			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".up.sql") || strings.HasSuffix(entry.Name(), ".down.sql") {
+			return nil, fmt.Errorf("migrate: %s: reversible migrations are not supported", entry.Name())
 		}
 		raw, err := fs.ReadFile(fsys, path.Join(dir, entry.Name()))
 		if err != nil {
@@ -97,6 +100,13 @@ func load(fsys fs.FS, dir string) ([]Migration, error) {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Version < all[j].Version })
 	return all, nil
+}
+
+// isMigrationFile mirrors sqlx, which skips directories, non-.sql files and
+// names without an underscore (a README.sql, say) rather than failing.
+func isMigrationFile(entry fs.DirEntry) bool {
+	name := entry.Name()
+	return !entry.IsDir() && strings.HasSuffix(name, ".sql") && strings.Contains(name, "_")
 }
 
 func parse(fileName string, raw []byte) (Migration, error) {

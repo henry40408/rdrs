@@ -90,13 +90,20 @@ func ExistingImageIDs(ctx context.Context, e db.Executor, entityType string, ent
 	return existing, nil
 }
 
+// ImageRefreshParams names the entity and the age limit of ImageNeedsRefresh.
+type ImageRefreshParams struct {
+	EntityType string
+	EntityID   int64
+	MaxAgeDays int64
+}
+
 // ImageNeedsRefresh reports whether an entity has no image fetched within
 // maxAgeDays. The cutoff is computed here to avoid dialect-specific intervals.
-func ImageNeedsRefresh(ctx context.Context, e db.Executor, entityType string, entityID, maxAgeDays int64) (bool, error) {
-	cutoff := time.Now().Add(-time.Duration(maxAgeDays) * 24 * time.Hour)
+func ImageNeedsRefresh(ctx context.Context, e db.Executor, p ImageRefreshParams) (bool, error) {
+	cutoff := time.Now().Add(-time.Duration(p.MaxAgeDays) * 24 * time.Hour)
 	count, err := countScalar(ctx, e,
 		`SELECT COUNT(*) FROM image WHERE entity_type = $1 AND entity_id = $2 AND fetched_at > $3`,
-		entityType, entityID, stamp(cutoff))
+		p.EntityType, p.EntityID, stamp(cutoff))
 	return count == 0, err
 }
 

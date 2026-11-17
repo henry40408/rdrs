@@ -17,15 +17,20 @@ import (
 	"github.com/henry40408/rdrs/internal/config"
 )
 
-const sqliteMaxOpenConns = 5
+const (
+	sqliteMaxOpenConns   = 5
+	postgresMaxOpenConns = 10
+)
 
 // sqlitePragmas are applied to every connection. WAL with synchronous=NORMAL is
 // durable to checkpoint without a per-commit fsync. analysis_limit bounds
-// PRAGMA optimize so ANALYZE does not read every index in full.
+// PRAGMA optimize so ANALYZE does not read every index in full. busy_timeout
+// comes first: switching to WAL needs a lock, and with no timeout yet a
+// contended first open fails at once with SQLITE_BUSY.
 var sqlitePragmas = []string{
+	"busy_timeout(5000)",
 	"journal_mode(WAL)",
 	"synchronous(NORMAL)",
-	"busy_timeout(5000)",
 	"cache_size(-20000)",
 	"mmap_size(134217728)",
 	"temp_store(MEMORY)",
@@ -96,7 +101,11 @@ func openPostgres(ctx context.Context, databaseURL string) (*DB, error) {
 	// Timestamps and the to_char cursor use the session zone; any zone but UTC
 	// would corrupt pagination.
 	cfg.RuntimeParams["timezone"] = "UTC"
-	return finishOpen(ctx, stdlib.OpenDB(*cfg), DialectPostgres)
+	pool := stdlib.OpenDB(*cfg)
+	// Matches sqlx's default PgPool size, so a feed-sync burst cannot exhaust
+	// the server's max_connections.
+	pool.SetMaxOpenConns(postgresMaxOpenConns)
+	return finishOpen(ctx, pool, DialectPostgres)
 }
 
 func finishOpen(ctx context.Context, pool *sql.DB, dialect Dialect) (*DB, error) {

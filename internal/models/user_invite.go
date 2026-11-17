@@ -43,31 +43,50 @@ func (i *UserInvite) IsLive(now time.Time) bool {
 
 // IssueInvite issues a link for userID, revoking any outstanding one so only
 // one link is ever live. The caller holds the only copy of the raw token.
-func IssueInvite(ctx context.Context, database *db.DB, secretKey []byte, userID int64, token string) (*UserInvite, error) {
+func IssueInvite(ctx context.Context, database *db.DB, p IssueInviteParams) (*UserInvite, error) {
 	tx, err := database.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	invite, err := IssueInviteTx(ctx, tx, secretKey, userID, token)
+	invite, err := IssueInviteTx(ctx, tx, p)
 	if err != nil {
 		return nil, err
 	}
-	return invite, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return invite, nil
+}
+
+// IssueInviteParams names the values IssueInvite takes, which are easy to
+// transpose as positional arguments.
+type IssueInviteParams struct {
+	SecretKey []byte
+	UserID    int64
+	Token     string
+}
+
+// RedeemInviteParams names the values RedeemInvite takes; the two ids are both
+// int64, so positional order would compile when swapped.
+type RedeemInviteParams struct {
+	InviteID     int64
+	UserID       int64
+	PasswordHash string
 }
 
 // IssueInviteTx is IssueInvite inside a caller-owned transaction. The revoke
 // and the insert stand or fall together: a failed insert must not cost the
 // account its old link.
-func IssueInviteTx(ctx context.Context, e db.Executor, secretKey []byte, userID int64, token string) (*UserInvite, error) {
-	if _, err := e.ExecContext(ctx, "DELETE FROM user_invite WHERE user_id = $1", userID); err != nil {
+func IssueInviteTx(ctx context.Context, e db.Executor, p IssueInviteParams) (*UserInvite, error) {
+	if _, err := e.ExecContext(ctx, "DELETE FROM user_invite WHERE user_id = $1", p.UserID); err != nil {
 		return nil, err
 	}
 	now := time.Now()
 	row := e.QueryRowContext(ctx,
 		`INSERT INTO user_invite (user_id, token_hash, created_at, expires_at)
 		 VALUES ($1, $2, $3, $4) RETURNING `+inviteColumns,
-		userID, secret.InviteHash(secretKey, token), stamp(now), stamp(now.Add(InviteTTL)))
+		p.UserID, secret.InviteHash(p.SecretKey, p.Token), stamp(now), stamp(now.Add(InviteTTL)))
 	invite, err := scanInvite(row)
 	if err != nil {
 		return nil, err
@@ -98,20 +117,23 @@ func consumeInvite(ctx context.Context, e db.Executor, inviteID int64) (bool, er
 // transaction, reporting whether this caller spent it. Spending first keeps a
 // racing double-submit single-winner; on false nothing changed. Prior sessions
 // and API tokens are revoked with the password, as admin resets land here too.
-func RedeemInvite(ctx context.Context, database *db.DB, inviteID, userID int64, passwordHash string) (bool, error) {
+func RedeemInvite(ctx context.Context, database *db.DB, p RedeemInviteParams) (bool, error) {
 	tx, err := database.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	spent, err := consumeInvite(ctx, tx, inviteID)
+	spent, err := consumeInvite(ctx, tx, p.InviteID)
 	if err != nil || !spent {
 		return false, err
 	}
-	if err := ChangePasswordTx(ctx, tx, userID, passwordHash); err != nil {
+	if err := ChangePasswordTx(ctx, tx, p.UserID, p.PasswordHash); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RevokeInvitesForUser deletes (not consumes) any outstanding link for userID;

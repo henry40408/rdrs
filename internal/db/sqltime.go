@@ -46,6 +46,9 @@ var storedLayouts = []string{
 	spaceLayout,
 	"2006-01-02 15:04",
 	"2006-01-02T15:04",
+	// Minute precision with a zone: sqlx's %F %RZ, %F %R%:z and the T forms.
+	"2006-01-02 15:04Z07:00",
+	"2006-01-02T15:04Z07:00",
 }
 
 const (

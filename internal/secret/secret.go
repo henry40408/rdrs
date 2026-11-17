@@ -47,7 +47,9 @@ const (
 	setupTokenAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 )
 
-var urlSafeNoPad = base64.RawURLEncoding
+// Strict rejects non-zero trailing bits, as Rust's base64 does, so one
+// ciphertext has exactly one string form.
+var urlSafeNoPad = base64.RawURLEncoding.Strict()
 
 // Tag is the 32-byte HMAC-SHA256 over domain followed by each part.
 func Tag(secret []byte, domain string, parts ...[]byte) [32]byte {

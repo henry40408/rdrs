@@ -109,6 +109,18 @@ func TestSealRoundTripAndKeyRotation(t *testing.T) {
 	}
 }
 
+// Rust's base64 rejects non-zero trailing bits; Go must not accept a second
+// string form of the same ciphertext.
+func TestOpenRejectsNonCanonicalBase64(t *testing.T) {
+	// "QQ" is canonical for one byte; "QR" differs only in the trailing bits.
+	if _, err := urlSafeNoPad.DecodeString("QQ"); err != nil {
+		t.Fatalf("canonical form rejected: %v", err)
+	}
+	if _, err := urlSafeNoPad.DecodeString("QR"); err == nil {
+		t.Fatal("non-zero trailing bits accepted")
+	}
+}
+
 func TestForgedSessionIsRejected(t *testing.T) {
 	cookie := SignSession(testSecret, "abc")
 	for _, bad := range []string{"abc", "abc.", "abc.zz", cookie + "0", strings.Replace(cookie, "abc", "abd", 1), ""} {

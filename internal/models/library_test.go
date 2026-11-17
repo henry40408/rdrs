@@ -220,7 +220,7 @@ func TestImageUpsertFindAndRefresh(t *testing.T) {
 		if ok, _ := ImageExists(ctx, database, EntityFeed, 1); ok {
 			t.Error("phantom image")
 		}
-		if needs, _ := ImageNeedsRefresh(ctx, database, EntityFeed, 1, 7); !needs {
+		if needs, _ := ImageNeedsRefresh(ctx, database, ImageRefreshParams{EntityType: EntityFeed, EntityID: 1, MaxAgeDays: 7}); !needs {
 			t.Error("a missing image needs refresh")
 		}
 		in := ImageUpsert{EntityType: EntityFeed, EntityID: 1, Data: []byte{1, 2, 3}, ContentType: "image/png", SourceURL: ptr("https://example.com/i.png")}
@@ -235,11 +235,11 @@ func TestImageUpsertFindAndRefresh(t *testing.T) {
 		if err != nil || img == nil || len(img.Data) != 1 || img.Data[0] != 9 || img.ContentType != "image/gif" || img.SourceURL != nil {
 			t.Fatalf("image = %+v, %v", img, err)
 		}
-		if needs, _ := ImageNeedsRefresh(ctx, database, EntityFeed, 1, 7); needs {
+		if needs, _ := ImageNeedsRefresh(ctx, database, ImageRefreshParams{EntityType: EntityFeed, EntityID: 1, MaxAgeDays: 7}); needs {
 			t.Error("a fresh image does not need refresh")
 		}
 		mustExec(t, database, "UPDATE image SET fetched_at = $1", stamp(time.Now().Add(-10*24*time.Hour)))
-		if needs, _ := ImageNeedsRefresh(ctx, database, EntityFeed, 1, 7); !needs {
+		if needs, _ := ImageNeedsRefresh(ctx, database, ImageRefreshParams{EntityType: EntityFeed, EntityID: 1, MaxAgeDays: 7}); !needs {
 			t.Error("a stale image needs refresh")
 		}
 		existing, err := ExistingImageIDs(ctx, database, EntityFeed, []int64{1, 2, 3})

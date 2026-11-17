@@ -264,10 +264,20 @@ func TestLoadOrdersByVersionAndDetectsNoTransaction(t *testing.T) {
 }
 
 func TestLoadRejectsBadFileName(t *testing.T) {
-	for _, name := range []string{"d/nounderscore.sql", "d/abc_desc.sql"} {
+	for _, name := range []string{"d/abc_desc.sql", "d/0001_x.up.sql", "d/0001_x.down.sql"} {
 		fsys := fstest.MapFS{name: {Data: []byte("SELECT 1;")}}
 		if _, err := load(fsys, "d"); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// sqlx skips a .sql file with no underscore, so README.sql must not stop
+// startup.
+func TestLoadSkipsNameWithoutUnderscore(t *testing.T) {
+	fsys := fstest.MapFS{"d/README.sql": {Data: []byte("not a migration")}}
+	got, err := load(fsys, "d")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v", got, err)
 	}
 }
