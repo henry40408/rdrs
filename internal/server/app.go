@@ -7,6 +7,7 @@ import (
 
 	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
+	"github.com/henry40408/rdrs/internal/cache"
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/version"
@@ -20,6 +21,8 @@ type App struct {
 	Audit   *audit.Logger
 	Auth    *auth.Authenticator
 	Limiter *auth.RateLimiter
+	// Sidebar caches the per-user chrome around every page.
+	Sidebar *cache.Sidebar
 	cookies auth.Cookies
 }
 
@@ -36,6 +39,7 @@ func NewApp(options Options) *App {
 		Audit:   options.Audit,
 		Auth:    authenticator,
 		Limiter: options.Limiter,
+		Sidebar: cache.DefaultSidebar(),
 		cookies: authenticator.Cookies(),
 	}
 }

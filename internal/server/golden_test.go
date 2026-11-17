@@ -16,6 +16,7 @@ import (
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
+	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/secret"
 	"github.com/henry40408/rdrs/internal/testutil"
 )
@@ -45,7 +46,15 @@ func goldenCovered(page goldenPage) bool {
 			return true
 		}
 	}
-	return false
+	return goldenPaths[page.Path]
+}
+
+// goldenPaths are the exact request targets whose handlers exist.
+var goldenPaths = map[string]bool{
+	"/categories":                     true,
+	"/api/sidebar":                    true,
+	"/api/sidebar/categories/1/feeds": true,
+	"/api/user":                       true,
 }
 
 var (
@@ -85,6 +94,23 @@ func (f *goldenFixture) seed(t *testing.T) {
 	script := strings.ReplaceAll(string(raw), "@SESSION_EXPIRES@", f.expires)
 	script = strings.ReplaceAll(script, "@INVITE_HASH@", secret.InviteHash(goldenSecret, "golden-invite-token"))
 	if _, err := f.database.ExecContext(context.Background(), script); err != nil {
+		t.Fatal(err)
+	}
+	// The Rust server's cleanup sweep ran at its start and removed the seeded
+	// summaries, which are older than a day.
+	if _, err := models.DeleteExpiredSummaries(context.Background(), f.database, 24); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// emulateOpenedEntries stands in for the entry pages the Rust capture visited
+// before /feeds: opening an entry marks it read. Remove it once those pages
+// are served by the Go handlers and replayed in order.
+func (f *goldenFixture) emulateOpenedEntries(t *testing.T) {
+	t.Helper()
+	_, err := f.database.ExecContext(context.Background(),
+		"UPDATE entry SET read_at = '2026-11-17 00:00:00' WHERE id IN (1, 3, 4, 7)")
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -160,6 +186,9 @@ func TestHTMLGoldens(t *testing.T) {
 		}
 		if page.Name == "login" {
 			f.seed(t)
+		}
+		if page.Name == "categories" {
+			f.emulateOpenedEntries(t)
 		}
 		t.Run(page.Name, func(t *testing.T) { f.check(t, page) })
 	}

@@ -46,6 +46,8 @@ func (a *App) routes() []Route {
 		table = append(table, Route{"GET", path, serveFavicon})
 	}
 	table = append(table, a.authRoutes()...)
+	table = append(table, a.chromeRoutes()...)
+	table = append(table, a.categoryRoutes()...)
 	return table
 }
 
