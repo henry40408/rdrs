@@ -57,7 +57,7 @@ func TestRegisteredRoutesAreAllInTheRustRouteList(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		known[line] = true
 	}
-	for _, route := range routes() {
+	for _, route := range NewApp(Options{}).routes() {
 		if !known[route.String()] {
 			t.Errorf("%s is registered but is not in testdata/routes.txt", route)
 		}
@@ -74,7 +74,7 @@ func TestEveryRustRouteIsRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 	registered := map[string]bool{}
-	for _, route := range routes() {
+	for _, route := range NewApp(Options{}).routes() {
 		registered[route.String()] = true
 	}
 	var missing []string

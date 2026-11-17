@@ -36,7 +36,7 @@ func (r Route) pattern() string {
 
 // routes is the single registry of what the server serves. Handlers for the
 // remaining routes are added by the steps that port them.
-func routes() []Route {
+func (a *App) routes() []Route {
 	table := []Route{
 		{"GET", "/health", serveHealth},
 		{"GET", "/static/{*path}", serveStatic},
@@ -45,6 +45,7 @@ func routes() []Route {
 	for path := range favicons {
 		table = append(table, Route{"GET", path, serveFavicon})
 	}
+	table = append(table, a.authRoutes()...)
 	return table
 }
 
@@ -61,17 +62,28 @@ type Options struct {
 	// is right for plain HTTP deployments.
 	HSTS string
 
-	// Config, DB and Audit feed the session layers.
+	// Config, DB and Audit feed the session layers and the handlers.
 	Config config.Config
 	DB     *db.DB
 	Audit  *audit.Logger
+
+	// Limiter throttles credential attempts; nil builds one from Config.
+	Limiter *auth.RateLimiter
+	// SetupToken is the one-time code first-run setup demands, printed on
+	// stderr at startup; empty means none is required.
+	SetupToken string
 }
 
 // Handler mounts every registered route inside the middleware stack, outermost
 // first as in the Rust router. The SSE route will sit outside the core stack:
 // Timeout, Compress and ETag buffer, which would break a stream.
 func Handler(options Options) http.Handler {
-	return buildHandler(options, routes())
+	return NewApp(options).Handler()
+}
+
+// Handler mounts the app's routes inside the middleware stack.
+func (a *App) Handler() http.Handler {
+	return buildHandler(a.options, a.routes())
 }
 
 // buildHandler takes the route table so tests can mount probe routes behind
