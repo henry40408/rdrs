@@ -50,8 +50,10 @@ func settingsFlash(w http.ResponseWriter, message flash.Message) {
 
 // serverSettingsPage is GET /settings: the running configuration, read-only.
 func (a *App) serverSettingsPage(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.requirePage(w, r)
-	if !ok {
+	// Admin-only: the page exposes deployment internals.
+	principal := a.Auth.AdminPage(r)
+	if principal == nil {
+		flash.Redirect(w, "/login", flash.NewWarning("Please log in to continue."))
 		return
 	}
 	layout := a.buildLayout(r, principal, flash.Take(w, r))
