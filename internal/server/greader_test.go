@@ -155,10 +155,20 @@ func itemRef(id int64) string { return "tag:google.com,2005:reader/item/" + fmt.
 
 // --- ClientLogin and credentials ---
 
-func TestClientLoginIssuesAnAPITokenAndTrimsTheUsername(t *testing.T) {
+func (f *grFixture) clientLoginAs(email, password string) *httptest.ResponseRecorder {
+	return f.do(grRequest("POST", "/accounts/ClientLogin", url.Values{"Email": {email}, "Passwd": {password}}))
+}
+
+func TestClientLoginTrimsUsernameWhitespace(t *testing.T) {
 	f := newGReader(t)
-	rec := f.do(grRequest("POST", "/accounts/ClientLogin",
-		url.Values{"Email": {"root "}, "Passwd": {testPassword}}))
+	if rec := f.clientLoginAs("root ", testPassword); rec.Code != http.StatusOK {
+		t.Fatalf("= %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestGReaderClientLoginSuccess(t *testing.T) {
+	f := newGReader(t)
+	rec := f.clientLoginAs("root", testPassword)
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, "SID=") || !strings.Contains(body, "LSID=") ||
 		!strings.Contains(body, "Auth="+models.APITokenPrefix) {
@@ -166,15 +176,17 @@ func TestClientLoginIssuesAnAPITokenAndTrimsTheUsername(t *testing.T) {
 	}
 }
 
-func TestClientLoginRefusesBadCredentials(t *testing.T) {
+func TestClientLoginInvalidPassword(t *testing.T) {
 	f := newGReader(t)
-	for name, fields := range map[string]url.Values{
-		"bad password": {"Email": {"root"}, "Passwd": {"wrong"}},
-		"unknown user": {"Email": {"nobody"}, "Passwd": {testPassword}},
-	} {
-		if rec := f.do(grRequest("POST", "/accounts/ClientLogin", fields)); rec.Code != http.StatusUnauthorized {
-			t.Errorf("%s = %d", name, rec.Code)
-		}
+	if rec := f.clientLoginAs("root", "wrong"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("= %d", rec.Code)
+	}
+}
+
+func TestGReaderClientLoginNonexistentUser(t *testing.T) {
+	f := newGReader(t)
+	if rec := f.clientLoginAs("nobody", testPassword); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("= %d", rec.Code)
 	}
 }
 
@@ -207,17 +219,24 @@ func TestAPITokenIsNotAWebSession(t *testing.T) {
 	}
 }
 
-func TestWebSessionTokenIsNotAnAPIToken(t *testing.T) {
+func TestWebSessionCookieStillWorksForGreader(t *testing.T) {
 	f := newGReader(t)
-	raw := f.sessionToken()
-	for name, token := range map[string]string{"bare": raw, "signed": f.session.Value} {
+	if rec := f.browserGet(grBase + "subscription/list"); rec.Code != http.StatusOK {
+		t.Fatalf("the session no longer works: %d", rec.Code)
+	}
+}
+
+func TestWebSessionTokenIsRejectedInTheAuthorizationHeader(t *testing.T) {
+	f := newGReader(t)
+	for name, token := range map[string]string{"bare": f.sessionToken(), "signed": f.session.Value} {
 		rec := f.do(withToken(grRequest("GET", grBase+"subscription/list", nil), token))
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s = %d", name, rec.Code)
 		}
 	}
-	if rec := f.browserGet(grBase + "subscription/list"); rec.Code != http.StatusOK {
-		t.Fatalf("the session no longer works: %d", rec.Code)
+	// The session survives: the header path rejected it, it was not deleted.
+	if got := f.count(t, "SELECT COUNT(*) FROM session"); got == 0 {
+		t.Fatal("the session was deleted instead of rejected")
 	}
 }
 
@@ -269,24 +288,46 @@ func TestPostTokenIsPerCredentialAndBoundToIt(t *testing.T) {
 	}
 }
 
-func TestClientLoginIsRateLimitedOnBothPrefixes(t *testing.T) {
-	f := newGReader(t)
-	f.app.Limiter = auth.NewRateLimiter(5, 60)
-	attempt := func(prefix string) int {
-		return f.do(grRequest("POST", prefix+"/accounts/ClientLogin",
+// attempts fires n failed ClientLogins under a prefix and returns the last status.
+func (f *grFixture) failedLogins(prefix string, n int) int {
+	status := 0
+	for range n {
+		status = f.do(grRequest("POST", prefix+"/accounts/ClientLogin",
 			url.Values{"Email": {"root"}, "Passwd": {"wrong"}})).Code
 	}
-	for i := range 5 {
-		prefix := ""
-		if i%2 == 1 {
-			prefix = greaderPrefix
-		}
-		if got := attempt(prefix); got != http.StatusUnauthorized {
-			t.Fatalf("attempt %d = %d", i, got)
-		}
+	return status
+}
+
+func TestClientLoginRateLimited(t *testing.T) {
+	f := newGReader(t)
+	f.app.Limiter = auth.NewRateLimiter(5, 60)
+	if got := f.failedLogins("", 5); got != http.StatusUnauthorized {
+		t.Fatalf("5th attempt = %d", got)
 	}
+	if got := f.failedLogins("", 1); got != http.StatusTooManyRequests {
+		t.Errorf("6th attempt = %d, want it throttled", got)
+	}
+}
+
+func TestClientLoginRateLimitAppliesToGreaderPhpPrefix(t *testing.T) {
+	f := newGReader(t)
+	f.app.Limiter = auth.NewRateLimiter(5, 60)
+	if got := f.failedLogins(greaderPrefix, 5); got != http.StatusUnauthorized {
+		t.Fatalf("5th attempt = %d", got)
+	}
+	if got := f.failedLogins(greaderPrefix, 1); got != http.StatusTooManyRequests {
+		t.Errorf("6th attempt = %d, want it throttled", got)
+	}
+}
+
+// Go-only: both prefixes draw on one bucket.
+func TestClientLoginPrefixesShareOneRateLimitBucket(t *testing.T) {
+	f := newGReader(t)
+	f.app.Limiter = auth.NewRateLimiter(5, 60)
+	f.failedLogins("", 3)
+	f.failedLogins(greaderPrefix, 2)
 	for _, prefix := range []string{"", greaderPrefix} {
-		if got := attempt(prefix); got != http.StatusTooManyRequests {
+		if got := f.failedLogins(prefix, 1); got != http.StatusTooManyRequests {
 			t.Errorf("%q after the budget = %d", prefix, got)
 		}
 	}
@@ -294,17 +335,25 @@ func TestClientLoginIsRateLimitedOnBothPrefixes(t *testing.T) {
 
 // --- subscriptions ---
 
-func TestSubscriptionListIsEmptyThenShowsFeeds(t *testing.T) {
+func TestGReaderSubscriptionListEmpty(t *testing.T) {
 	f := newGReader(t)
-	if got := f.feedCount(t); got != 0 {
-		t.Fatalf("%d feeds", got)
+	list := jsonOf(t, f.browserGet(grBase+"subscription/list"))["subscriptions"].([]any)
+	if len(list) != 0 {
+		t.Fatalf("subscriptions = %v", list)
 	}
+}
+
+func TestGReaderSubscriptionListWithFeeds(t *testing.T) {
+	f := newGReader(t)
 	f.withFeed(t)
 	list := jsonOf(t, f.browserGet(grBase+"subscription/list"))["subscriptions"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("subscriptions = %v", list)
+	}
 	first := list[0].(map[string]any)
-	category := first["categories"].([]any)[0].(map[string]any)
+	categories := first["categories"].([]any)
 	if !strings.HasPrefix(first["id"].(string), "feed/") || first["title"] != "Example" ||
-		category["label"] != "Tech" || category["id"] != "user/-/label/Tech" {
+		len(categories) != 1 || categories[0].(map[string]any)["label"] != "Tech" {
 		t.Fatalf("subscription = %v", first)
 	}
 }
@@ -322,18 +371,24 @@ func (f *grFixture) feed(t *testing.T, feedURL string) *models.Feed {
 	return found
 }
 
-func TestSubscriptionUnsubscribeAndRename(t *testing.T) {
+func TestSubscriptionEditRename(t *testing.T) {
 	f := newGReader(t)
 	f.withFeed(t)
-	const stream = "feed/https://example.com/feed.xml"
-	if rec := f.edit(url.Values{"ac": {"edit"}, "s": {stream}, "t": {"Renamed"}}); rec.Code != 200 || rec.Body.String() != "OK" {
+	rec := f.edit(url.Values{"ac": {"edit"}, "s": {"feed/https://example.com/feed.xml"}, "t": {"Renamed"}})
+	if rec.Code != 200 || rec.Body.String() != "OK" {
 		t.Fatalf("rename = %d %q", rec.Code, rec.Body)
 	}
 	list := jsonOf(t, f.browserGet(grBase+"subscription/list"))["subscriptions"].([]any)
 	if list[0].(map[string]any)["title"] != "Renamed" {
 		t.Fatalf("not renamed: %v", list)
 	}
-	if rec := f.edit(url.Values{"ac": {"unsubscribe"}, "s": {stream}}); rec.Code != 200 {
+}
+
+func TestSubscriptionEditUnsubscribe(t *testing.T) {
+	f := newGReader(t)
+	f.withFeed(t)
+	rec := f.edit(url.Values{"ac": {"unsubscribe"}, "s": {"feed/https://example.com/feed.xml"}})
+	if rec.Code != 200 {
 		t.Fatalf("unsubscribe = %d", rec.Code)
 	}
 	if got := f.feedCount(t); got != 0 {
@@ -341,6 +396,43 @@ func TestSubscriptionUnsubscribeAndRename(t *testing.T) {
 	}
 }
 
+// wantEditStatus posts a subscription/edit form and checks the status code.
+func (f *grFixture) wantEditStatus(t *testing.T, fields url.Values, want int) {
+	t.Helper()
+	if rec := f.edit(fields); rec.Code != want {
+		t.Fatalf("= %d, want %d (%s)", rec.Code, want, rec.Body)
+	}
+}
+
+func TestSubscriptionEditAnswersOk(t *testing.T) {
+	f := newGReader(t)
+	f.withFeed(t)
+	f.wantEditStatus(t, url.Values{"ac": {"edit"}, "s": {"feed/https://example.com/feed.xml"}}, 200)
+}
+
+func TestSubscriptionEditFeedNotFound(t *testing.T) {
+	f := newGReader(t)
+	f.wantEditStatus(t, url.Values{"ac": {"edit"}, "s": {"feed/https://nope.example/rss"}}, 404)
+}
+
+func TestSubscriptionEditRejectsAStreamIdWithoutFeedPrefix(t *testing.T) {
+	f := newGReader(t)
+	f.withFeed(t)
+	f.wantEditStatus(t, url.Values{"ac": {"edit"}, "s": {"https://example.com/feed.xml"}}, 400)
+}
+
+func TestSubscriptionEditRequiresAStreamId(t *testing.T) {
+	f := newGReader(t)
+	f.wantEditStatus(t, url.Values{"ac": {"edit"}}, 400)
+}
+
+func TestSubscriptionUnsubscribeOfAnUnknownFeedIsNotFound(t *testing.T) {
+	f := newGReader(t)
+	f.wantEditStatus(t, url.Values{"ac": {"unsubscribe"}, "s": {"feed/https://nope.example/rss"}}, 404)
+}
+
+// The remaining refusals have no Rust counterpart of their own; they keep the
+// validation table that guards the unmapped branches.
 func TestSubscriptionEditValidation(t *testing.T) {
 	f := newGReader(t)
 	f.withFeed(t)
@@ -348,18 +440,11 @@ func TestSubscriptionEditValidation(t *testing.T) {
 		fields url.Values
 		status int
 	}{
-		"subscribe without s":      {url.Values{"ac": {"subscribe"}}, 400},
-		"subscribe bare url":       {url.Values{"ac": {"subscribe"}, "s": {"https://example.com/feed.xml"}}, 400},
-		"subscribe empty url":      {url.Values{"ac": {"subscribe"}, "s": {"feed/"}}, 400},
-		"edit without s":           {url.Values{"ac": {"edit"}}, 400},
-		"unsubscribe without s":    {url.Values{"ac": {"unsubscribe"}}, 400},
-		"edit bare url":            {url.Values{"ac": {"edit"}, "s": {"https://example.com/feed.xml"}}, 400},
-		"unsubscribe bare url":     {url.Values{"ac": {"unsubscribe"}, "s": {"https://example.com/feed.xml"}}, 400},
-		"edit unknown feed":        {url.Values{"ac": {"edit"}, "s": {"feed/https://nope.example/rss"}}, 404},
-		"unsubscribe unknown feed": {url.Values{"ac": {"unsubscribe"}, "s": {"feed/https://nope.example/rss"}}, 404},
-		"unknown action":           {url.Values{"ac": {"explode"}}, 400},
-		"missing action":           {url.Values{"s": {"feed/x"}}, 422},
-		"bad http2 flag":           {url.Values{"ac": {"edit"}, "s": {"feed/https://example.com/feed.xml"}, "http2_disabled": {"yes"}}, 422},
+		"unsubscribe without s": {url.Values{"ac": {"unsubscribe"}}, 400},
+		"unsubscribe bare url":  {url.Values{"ac": {"unsubscribe"}, "s": {"https://example.com/feed.xml"}}, 400},
+		"unknown action":        {url.Values{"ac": {"explode"}}, 400},
+		"missing action":        {url.Values{"s": {"feed/x"}}, 422},
+		"bad http2 flag":        {url.Values{"ac": {"edit"}, "s": {"feed/https://example.com/feed.xml"}, "http2_disabled": {"yes"}}, 422},
 	}
 	for name, c := range cases {
 		if rec := f.edit(c.fields); rec.Code != c.status {
@@ -443,26 +528,37 @@ func (f *grFixture) categoryNameOf(t *testing.T, feedURL string) string {
 	return found.Name
 }
 
-func TestSubscriptionEditMovesAFeedByLabel(t *testing.T) {
+func TestSubscriptionEditAddLabelMovesCategory(t *testing.T) {
 	f := newGReader(t)
 	f.withFeed(t)
 	const feedURL = "https://example.com/feed.xml"
-	if rec := f.edit(url.Values{"ac": {"edit"}, "s": {"feed/" + feedURL}, "a": {"user/-/label/NewCat"}}); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
+	f.wantEditStatus(t, url.Values{"ac": {"edit"}, "s": {"feed/" + feedURL}, "a": {"user/-/label/NewCat"}}, 200)
 	if got := f.categoryNameOf(t, feedURL); got != "NewCat" {
 		t.Fatalf("category = %q", got)
 	}
-	// A label that exists is reused, not duplicated.
-	f.edit(url.Values{"ac": {"edit"}, "s": {"feed/" + feedURL}, "a": {"user/-/label/Tech"}})
-	f.edit(url.Values{"ac": {"edit"}, "s": {"feed/" + feedURL}, "a": {"user/-/label/NewCat"}})
-	categories, _ := models.ListCategoriesByUser(context.Background(), f.database, 1)
-	names := map[string]int{}
-	for _, category := range categories {
-		names[category.Name]++
+}
+
+func TestSubscriptionEditExistingLabelReusesItsCategory(t *testing.T) {
+	f := newGReader(t)
+	f.withFeed(t)
+	const feedURL = "https://example.com/feed.xml"
+	target, err := models.CreateCategory(context.Background(), f.database, 1, "Target")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if names["NewCat"] != 1 || names["Tech"] != 1 {
-		t.Fatalf("categories = %v", names)
+	f.wantEditStatus(t, url.Values{"ac": {"edit"}, "s": {"feed/" + feedURL}, "a": {"user/-/label/Target"}}, 200)
+	if got := f.feed(t, feedURL).CategoryID; got != target.ID {
+		t.Fatalf("category = %d, want %d", got, target.ID)
+	}
+	categories, _ := models.ListCategoriesByUser(context.Background(), f.database, 1)
+	count := 0
+	for _, category := range categories {
+		if category.Name == "Target" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%d Target categories", count)
 	}
 }
 
@@ -487,17 +583,45 @@ func (f *grFixture) removeCategories(t *testing.T) {
 	}
 }
 
-func TestSubscribeCreatesTheFeed(t *testing.T) {
+// subscribe posts a subscribe for feedURL, with optional extra fields.
+func (f *grFixture) subscribe(feedURL string, extra url.Values) *httptest.ResponseRecorder {
+	fields := url.Values{"ac": {"subscribe"}, "s": {"feed/" + feedURL}}
+	for key, values := range extra {
+		fields[key] = values
+	}
+	return f.edit(fields)
+}
+
+func (f *grFixture) quickAdd(feedURL string) *httptest.ResponseRecorder {
+	return f.browserPost(grBase+"subscription/quickadd", url.Values{"quickadd": {feedURL}})
+}
+
+func TestQuickaddSuccess(t *testing.T) {
 	f := newGReader(t)
 	feedURL := stubFeedServer(t)
-	if rec := f.edit(url.Values{"ac": {"subscribe"}, "s": {"feed/" + feedURL}, "a": {"user/-/label/Tech"}}); rec.Code != 200 {
+	body := jsonOf(t, f.quickAdd(feedURL))
+	if body["numResults"] != float64(1) || body["streamId"] != "feed/"+feedURL || body["query"] != feedURL {
+		t.Fatalf("quickadd = %v", body)
+	}
+}
+
+func TestSubscriptionSubscribeSuccess(t *testing.T) {
+	f := newGReader(t)
+	feedURL := stubFeedServer(t)
+	if rec := f.subscribe(feedURL, nil); rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body)
+	}
+	f.feed(t, feedURL)
+}
+
+func TestSubscriptionSubscribeWithLabel(t *testing.T) {
+	f := newGReader(t)
+	feedURL := stubFeedServer(t)
+	if rec := f.subscribe(feedURL, url.Values{"a": {"user/-/label/Tech"}}); rec.Code != 200 {
 		t.Fatalf("= %d %s", rec.Code, rec.Body)
 	}
 	if got := f.categoryNameOf(t, feedURL); got != "Tech" {
 		t.Fatalf("category = %q", got)
-	}
-	if rec := f.edit(url.Values{"ac": {"subscribe"}, "s": {"feed/" + feedURL}}); rec.Code != http.StatusConflict {
-		t.Fatalf("duplicate = %d", rec.Code)
 	}
 }
 
@@ -510,45 +634,96 @@ func TestSubscribeTitleOverridesTheDiscoveredOne(t *testing.T) {
 	}
 }
 
-func TestSubscribeAndQuickAddLandInTheFirstCategory(t *testing.T) {
-	f := newGReader(t)
+// withExtraCategory adds a second category and returns the id of the first one
+// and the category count, which a subscription must leave alone.
+func (f *grFixture) withExtraCategory(t *testing.T) (firstID int64, count int) {
+	t.Helper()
 	if _, err := models.CreateCategory(context.Background(), f.database, 1, "Extra"); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := models.ListCategoriesByUser(context.Background(), f.database, 1)
-	subscribed, quickAdded := stubFeedServer(t), stubFeedServer(t)
-	f.edit(url.Values{"ac": {"subscribe"}, "s": {"feed/" + subscribed}})
-	rec := f.browserPost(grBase+"subscription/quickadd", url.Values{"quickadd": {quickAdded}})
-	body := jsonOf(t, rec)
-	if body["numResults"] != float64(1) || body["streamId"] != "feed/"+quickAdded || body["query"] != quickAdded {
-		t.Fatalf("quickadd = %v", body)
+	categories, _ := models.ListCategoriesByUser(context.Background(), f.database, 1)
+	return categories[0].ID, len(categories)
+}
+
+func (f *grFixture) wantFeedInFirstCategory(t *testing.T, feedURL string, firstID int64, count int) {
+	t.Helper()
+	if got := f.feed(t, feedURL).CategoryID; got != firstID {
+		t.Errorf("category %d, want %d", got, firstID)
 	}
-	for _, feedURL := range []string{subscribed, quickAdded} {
-		if got := f.feed(t, feedURL).CategoryID; got != before[0].ID {
-			t.Errorf("%s in category %d, want %d", feedURL, got, before[0].ID)
-		}
-	}
-	if after, _ := models.ListCategoriesByUser(context.Background(), f.database, 1); len(after) != len(before) {
-		t.Fatalf("categories %d -> %d", len(before), len(after))
+	if after, _ := models.ListCategoriesByUser(context.Background(), f.database, 1); len(after) != count {
+		t.Errorf("categories %d -> %d", count, len(after))
 	}
 }
 
-func TestSubscribeAndQuickAddRecreateUncategorized(t *testing.T) {
+func TestQuickaddLandsInTheFirstCategory(t *testing.T) {
+	f := newGReader(t)
+	firstID, count := f.withExtraCategory(t)
+	feedURL := stubFeedServer(t)
+	if rec := f.quickAdd(feedURL); rec.Code != 200 {
+		t.Fatalf("= %d", rec.Code)
+	}
+	f.wantFeedInFirstCategory(t, feedURL, firstID, count)
+}
+
+func TestSubscriptionSubscribeLandsInTheFirstCategory(t *testing.T) {
+	f := newGReader(t)
+	firstID, count := f.withExtraCategory(t)
+	feedURL := stubFeedServer(t)
+	if rec := f.subscribe(feedURL, nil); rec.Code != 200 {
+		t.Fatalf("= %d", rec.Code)
+	}
+	f.wantFeedInFirstCategory(t, feedURL, firstID, count)
+}
+
+func TestQuickaddRecreatesUncategorizedForAUserWithNone(t *testing.T) {
 	f := newGReader(t)
 	f.removeCategories(t)
-	subscribed := stubFeedServer(t)
-	f.edit(url.Values{"ac": {"subscribe"}, "s": {"feed/" + subscribed}})
-	if got := f.categoryNameOf(t, subscribed); got != "Uncategorized" {
-		t.Fatalf("subscribe category = %q", got)
+	feedURL := stubFeedServer(t)
+	if rec := f.quickAdd(feedURL); rec.Code != 200 {
+		t.Fatalf("= %d", rec.Code)
 	}
-	f.removeCategories(t)
-	quickAdded := stubFeedServer(t)
-	f.browserPost(grBase+"subscription/quickadd", url.Values{"quickadd": {quickAdded}})
-	if got := f.categoryNameOf(t, quickAdded); got != "Uncategorized" {
-		t.Fatalf("quickadd category = %q", got)
+	if got := f.categoryNameOf(t, feedURL); got != "Uncategorized" {
+		t.Fatalf("category = %q", got)
 	}
 }
 
+func TestSubscriptionSubscribeRecreatesUncategorizedForAUserWithNone(t *testing.T) {
+	f := newGReader(t)
+	f.removeCategories(t)
+	feedURL := stubFeedServer(t)
+	if rec := f.subscribe(feedURL, nil); rec.Code != 200 {
+		t.Fatalf("= %d", rec.Code)
+	}
+	if got := f.categoryNameOf(t, feedURL); got != "Uncategorized" {
+		t.Fatalf("category = %q", got)
+	}
+}
+
+func TestSubscriptionSubscribeBadPrefix(t *testing.T) {
+	f := newGReader(t)
+	f.wantEditStatus(t, url.Values{"ac": {"subscribe"}, "s": {"https://example.com/feed.xml"}}, 400)
+}
+
+func TestSubscriptionSubscribeDuplicate(t *testing.T) {
+	f := newGReader(t)
+	feedURL := stubFeedServer(t)
+	f.subscribe(feedURL, nil)
+	if rec := f.subscribe(feedURL, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate = %d", rec.Code)
+	}
+}
+
+func TestSubscriptionSubscribeEmptyUrl(t *testing.T) {
+	f := newGReader(t)
+	f.wantEditStatus(t, url.Values{"ac": {"subscribe"}, "s": {"feed/"}}, 400)
+}
+
+func TestSubscriptionSubscribeMissingStreamId(t *testing.T) {
+	f := newGReader(t)
+	f.wantEditStatus(t, url.Values{"ac": {"subscribe"}}, 400)
+}
+
+// Quickadd refusals have no Rust counterpart; they extend the subscribe ones.
 func TestQuickAddRefusesEmptyAndDuplicateURLs(t *testing.T) {
 	f := newGReader(t)
 	if rec := f.browserPost(grBase+"subscription/quickadd", url.Values{"quickadd": {"  "}}); rec.Code != 400 {
@@ -558,8 +733,8 @@ func TestQuickAddRefusesEmptyAndDuplicateURLs(t *testing.T) {
 		t.Fatalf("missing = %d", rec.Code)
 	}
 	feedURL := stubFeedServer(t)
-	f.browserPost(grBase+"subscription/quickadd", url.Values{"quickadd": {feedURL}})
-	if rec := f.browserPost(grBase+"subscription/quickadd", url.Values{"quickadd": {feedURL}}); rec.Code != http.StatusConflict {
+	f.quickAdd(feedURL)
+	if rec := f.quickAdd(feedURL); rec.Code != http.StatusConflict {
 		t.Fatalf("duplicate = %d", rec.Code)
 	}
 }
@@ -591,29 +766,64 @@ func TestSubscribedExportAndImport(t *testing.T) {
 
 // --- streams and tags ---
 
-func TestStreamContentsPagesWithAContinuation(t *testing.T) {
+const readingListStream = grBase + "stream/contents/" + readingList
+
+func (f *grFixture) streamItems(t *testing.T, path string) []any {
+	t.Helper()
+	return jsonOf(t, f.browserGet(path))["items"].([]any)
+}
+
+func TestStreamContentsNegativeNDoesNotReturnEverything(t *testing.T) {
 	f := newGReader(t)
-	_, feedID := f.withFeed(t)
-	f.entries(t, feedID, 3)
-	const reading = "stream/contents/user/-/state/com.google/reading-list"
-	all := jsonOf(t, f.browserGet(grBase+reading))
-	if got := len(all["items"].([]any)); got != 3 {
-		t.Fatalf("%d items", got)
+	f.feedWithEntries(t, 5)
+	if got := len(f.streamItems(t, readingListStream+"?n=-2")); got != 0 {
+		t.Fatalf("n=-2 returned %d items, a negative n must not bypass the limit", got)
 	}
-	page := jsonOf(t, f.browserGet(grBase+reading+"?n=2"))
-	if len(page["items"].([]any)) != 2 || page["continuation"] == nil {
+}
+
+func TestStreamContentsReadingList(t *testing.T) {
+	f := newGReader(t)
+	f.feedWithEntries(t, 3)
+	items := f.streamItems(t, readingListStream)
+	if len(items) != 3 {
+		t.Fatalf("%d items", len(items))
+	}
+	first := items[0].(map[string]any)
+	if _, ok := first["id"].(string); !ok {
+		t.Errorf("no id: %v", first)
+	}
+	if _, ok := first["title"].(string); !ok {
+		t.Errorf("no title: %v", first)
+	}
+}
+
+func TestStreamContentsStarredEmpty(t *testing.T) {
+	f := newGReader(t)
+	if items := f.streamItems(t, grBase+"stream/contents/user/-/state/com.google/starred"); len(items) != 0 {
+		t.Fatalf("starred = %v", items)
+	}
+}
+
+func TestStreamContentsWithLimit(t *testing.T) {
+	f := newGReader(t)
+	f.feedWithEntries(t, 5)
+	page := jsonOf(t, f.browserGet(readingListStream+"?n=2"))
+	if len(page["items"].([]any)) != 2 {
 		t.Fatalf("page = %v", page)
 	}
-	next := jsonOf(t, f.browserGet(grBase+reading+"?n=2&c="+url.QueryEscape(page["continuation"].(string))))
+	if _, ok := page["continuation"].(string); !ok {
+		t.Fatalf("no continuation: %v", page)
+	}
+}
+
+// Go-only: following the continuation to the last page.
+func TestStreamContentsPagesWithAContinuation(t *testing.T) {
+	f := newGReader(t)
+	f.feedWithEntries(t, 3)
+	page := jsonOf(t, f.browserGet(readingListStream+"?n=2"))
+	next := jsonOf(t, f.browserGet(readingListStream+"?n=2&c="+url.QueryEscape(page["continuation"].(string))))
 	if len(next["items"].([]any)) != 1 || next["continuation"] != nil {
 		t.Fatalf("next = %v", next)
-	}
-	if got := len(jsonOf(t, f.browserGet(grBase+reading+"?n=-2"))["items"].([]any)); got != 0 {
-		t.Fatalf("n=-2 returned %d items", got)
-	}
-	starred := jsonOf(t, f.browserGet(grBase+"stream/contents/user/-/state/com.google/starred"))
-	if len(starred["items"].([]any)) != 0 {
-		t.Fatalf("starred = %v", starred)
 	}
 }
 
@@ -682,32 +892,83 @@ func TestStreamItemIDsListsRefsAndPages(t *testing.T) {
 	}
 }
 
-func TestEditTagMarksReadStarsAndRefusesUnknownIDs(t *testing.T) {
-	f := newGReader(t)
-	_, feedID := f.withFeed(t)
-	ids := f.entries(t, feedID, 3)
-	const reading = "user/-/state/com.google/reading-list"
-	rec := f.browserPost(grBase+"edit-tag", url.Values{"i": {itemRef(ids[0])}, "a": {"user/-/state/com.google/read"}})
-	if rec.Code != 200 || rec.Header().Get("X-Rdrs-Affected") != "1" || rec.Body.String() != "OK" {
-		t.Fatalf("mark read = %d %v %q", rec.Code, rec.Header(), rec.Body)
+const readState = "user/-/state/com.google/read"
+
+// markRead posts edit-tag marking every id read.
+func (f *grFixture) markRead(ids ...int64) *httptest.ResponseRecorder {
+	refs := make([]string, len(ids))
+	for i, id := range ids {
+		refs[i] = itemRef(id)
 	}
-	if got := f.unreadCount(t, reading); got != 2 {
+	return f.browserPost(grBase+"edit-tag", url.Values{"i": refs, "a": {readState}})
+}
+
+func (f *grFixture) feedWithEntries(t *testing.T, n int) []int64 {
+	t.Helper()
+	_, feedID := f.withFeed(t)
+	return f.entries(t, feedID, n)
+}
+
+const readingList = "user/-/state/com.google/reading-list"
+
+func TestEditTagAffectedCountExcludesAlreadyRead(t *testing.T) {
+	f := newGReader(t)
+	ids := f.feedWithEntries(t, 3)
+	if rec := f.markRead(ids[0]); rec.Code != 200 || rec.Header().Get("X-Rdrs-Affected") != "1" {
+		t.Fatalf("first = %d %v", rec.Code, rec.Header())
+	}
+	rec := f.markRead(ids...)
+	if rec.Code != 200 || rec.Body.String() != "OK" {
+		t.Fatalf("second = %d %q", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("X-Rdrs-Affected"); got != "2" {
+		t.Fatalf("affected = %q, already-read entries must not be counted again", got)
+	}
+}
+
+func TestEditTagMarkRead(t *testing.T) {
+	f := newGReader(t)
+	ids := f.feedWithEntries(t, 1)
+	if rec := f.markRead(ids[0]); rec.Code != 200 || rec.Body.String() != "OK" {
+		t.Fatalf("= %d %q", rec.Code, rec.Body)
+	}
+	if got := f.unreadCount(t, readingList); got != 0 {
 		t.Fatalf("unread = %v", got)
 	}
-	// Already read: nothing to change.
-	rec = f.browserPost(grBase+"edit-tag", url.Values{
-		"i": {itemRef(ids[0]), itemRef(ids[1]), itemRef(ids[2])}, "a": {"user/-/state/com.google/read"}})
-	if got := rec.Header().Get("X-Rdrs-Affected"); got != "2" {
-		t.Fatalf("batch affected = %q", got)
+}
+
+func TestEditTagMarkReadMultiple(t *testing.T) {
+	f := newGReader(t)
+	ids := f.feedWithEntries(t, 3)
+	if rec := f.markRead(ids...); rec.Code != 200 || rec.Body.String() != "OK" {
+		t.Fatalf("= %d %q", rec.Code, rec.Body)
 	}
-	f.browserPost(grBase+"edit-tag", url.Values{"i": {itemRef(ids[0])}, "r": {"user/-/state/com.google/read"}})
-	before := f.unreadCount(t, reading)
-	rec = f.browserPost(grBase+"edit-tag", url.Values{
-		"i": {itemRef(ids[1]), itemRef(999999)}, "a": {"user/-/state/com.google/read"}})
-	if rec.Code != 404 || f.unreadCount(t, reading) != before {
-		t.Fatalf("unknown id = %d, unread %v -> %v", rec.Code, before, f.unreadCount(t, reading))
+	if got := f.unreadCount(t, readingList); got != 0 {
+		t.Fatalf("unread = %v", got)
 	}
-	if rec := f.browserPost(grBase+"edit-tag", url.Values{"a": {"user/-/state/com.google/read"}}); rec.Code != 400 {
+}
+
+func TestEditTagMarkReadRejectsUnknownEntry(t *testing.T) {
+	f := newGReader(t)
+	ids := f.feedWithEntries(t, 2)
+	if rec := f.markRead(append(ids, 999_999)...); rec.Code != http.StatusNotFound {
+		t.Fatalf("= %d", rec.Code)
+	}
+	if got := f.unreadCount(t, readingList); got != 2 {
+		t.Fatalf("unread = %v, a refused batch must change nothing", got)
+	}
+}
+
+// Go-only: un-reading and a request with no ids.
+func TestEditTagUnreadsAndRequiresIDs(t *testing.T) {
+	f := newGReader(t)
+	ids := f.feedWithEntries(t, 3)
+	f.markRead(ids...)
+	f.browserPost(grBase+"edit-tag", url.Values{"i": {itemRef(ids[0])}, "r": {readState}})
+	if got := f.unreadCount(t, readingList); got != 1 {
+		t.Fatalf("unread = %v", got)
+	}
+	if rec := f.browserPost(grBase+"edit-tag", url.Values{"a": {readState}}); rec.Code != 400 {
 		t.Fatalf("no ids = %d", rec.Code)
 	}
 }
@@ -727,11 +988,24 @@ func TestEditTagStarsAndUnstars(t *testing.T) {
 	}
 }
 
-func TestMarkAllAsReadReportsHowManyChanged(t *testing.T) {
+func TestMarkAllAsRead(t *testing.T) {
 	f := newGReader(t)
-	_, feedID := f.withFeed(t)
-	f.entries(t, feedID, 5)
-	fields := url.Values{"s": {"user/-/state/com.google/reading-list"}}
+	f.feedWithEntries(t, 5)
+	if got := f.unreadCount(t, readingList); got != 5 {
+		t.Fatalf("before = %v", got)
+	}
+	if rec := f.browserPost(grBase+"mark-all-as-read", url.Values{"s": {readingList}}); rec.Code != 200 {
+		t.Fatalf("= %d", rec.Code)
+	}
+	if got := f.unreadCount(t, readingList); got != 0 {
+		t.Fatalf("after = %v", got)
+	}
+}
+
+func TestMarkAllAsReadReportsAffectedCount(t *testing.T) {
+	f := newGReader(t)
+	f.feedWithEntries(t, 5)
+	fields := url.Values{"s": {readingList}}
 	for _, want := range []string{"5", "0"} {
 		rec := f.browserPost(grBase+"mark-all-as-read", fields)
 		if rec.Code != 200 || rec.Header().Get("X-Rdrs-Affected") != want || rec.Body.String() != "OK" {
@@ -765,15 +1039,18 @@ func TestMarkAllAsReadValidation(t *testing.T) {
 	}
 }
 
-func TestUnreadCountListsFeedsLabelsAndTotal(t *testing.T) {
+func TestUnreadCountEmpty(t *testing.T) {
 	f := newGReader(t)
 	body := jsonOf(t, f.browserGet(grBase+"unread-count"))
 	if body["max"] != float64(1000) || len(body["unreadcounts"].([]any)) != 2 {
 		t.Fatalf("empty = %v", body)
 	}
-	_, feedID := f.withFeed(t)
-	f.entries(t, feedID, 3)
-	if got := f.unreadCount(t, "user/-/state/com.google/reading-list"); got != 3 {
+}
+
+func TestUnreadCountWithEntries(t *testing.T) {
+	f := newGReader(t)
+	f.feedWithEntries(t, 3)
+	if got := f.unreadCount(t, readingList); got != 3 {
 		t.Fatalf("total = %v", got)
 	}
 	if f.unreadCount(t, "feed/https://example.com/feed.xml") != 3 || f.unreadCount(t, "user/-/label/Tech") != 3 {
@@ -885,32 +1162,44 @@ func TestPrefixedRoutesServeTheSameHandlers(t *testing.T) {
 
 // --- sidebar events ---
 
-func TestGReaderWritesAnnounceSidebarChanges(t *testing.T) {
+// wantSidebarEvent posts a write and waits for the sidebar event it announces.
+func (f *grFixture) wantSidebarEvent(t *testing.T, path string, fields url.Values) {
+	t.Helper()
+	subscription := f.app.Events.Subscribe()
+	defer subscription.Close()
+	if rec := f.browserPost(grBase+path, fields); rec.Code != 200 {
+		t.Fatalf("%s = %d %s", path, rec.Code, rec.Body)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	event, err := subscription.Next(ctx)
+	if err != nil || event.Kind != events.Sidebar || event.UserID != 1 {
+		t.Errorf("%s: event %+v, err %v", path, event, err)
+	}
+}
+
+func TestDisableTagEmitsSidebarEvent(t *testing.T) {
 	f := newGReader(t)
-	_, feedID := f.withFeed(t)
-	ids := f.entries(t, feedID, 3)
-	cases := []struct {
-		name, path string
-		fields     url.Values
-	}{
-		{"edit-tag", "edit-tag", url.Values{"i": {itemRef(ids[0])}, "a": {"user/-/state/com.google/read"}}},
-		{"mark-all-as-read", "mark-all-as-read", url.Values{"s": {"user/-/state/com.google/reading-list"}}},
-		{"rename-tag", "rename-tag", url.Values{"s": {"user/-/label/Tech"}, "dest": {"user/-/label/Technology"}}},
-		{"disable-tag", "disable-tag", url.Values{"s": {"user/-/label/Technology"}}},
-	}
-	for _, c := range cases {
-		subscription := f.app.Events.Subscribe()
-		if rec := f.browserPost(grBase+c.path, c.fields); rec.Code != 200 {
-			t.Fatalf("%s = %d %s", c.name, rec.Code, rec.Body)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		event, err := subscription.Next(ctx)
-		cancel()
-		subscription.Close()
-		if err != nil || event.Kind != events.Sidebar || event.UserID != 1 {
-			t.Errorf("%s: event %+v, err %v", c.name, event, err)
-		}
-	}
+	f.withFeed(t)
+	f.wantSidebarEvent(t, "disable-tag", url.Values{"s": {"user/-/label/Tech"}})
+}
+
+func TestEditTagEmitsSidebarEvent(t *testing.T) {
+	f := newGReader(t)
+	ids := f.feedWithEntries(t, 1)
+	f.wantSidebarEvent(t, "edit-tag", url.Values{"i": {itemRef(ids[0])}, "a": {readState}})
+}
+
+func TestMarkAllAsReadEmitsSidebarEvent(t *testing.T) {
+	f := newGReader(t)
+	f.feedWithEntries(t, 3)
+	f.wantSidebarEvent(t, "mark-all-as-read", url.Values{"s": {readingList}})
+}
+
+func TestRenameTagEmitsSidebarEvent(t *testing.T) {
+	f := newGReader(t)
+	f.withFeed(t)
+	f.wantSidebarEvent(t, "rename-tag", url.Values{"s": {"user/-/label/Tech"}, "dest": {"user/-/label/Technology"}})
 }
 
 // --- CSRF ---
@@ -935,16 +1224,31 @@ func TestSameSiteForgedPostCannotUnsubscribe(t *testing.T) {
 	}
 }
 
-func TestCookieAuthenticatedPostNeedsTheCSRFToken(t *testing.T) {
+// cookiePostWithoutToken unsubscribes through the session cookie alone, the way
+// a same-origin page without the CSRF token header would.
+func (f *grFixture) cookiePostWithoutToken(prefix string) *httptest.ResponseRecorder {
+	request := grRequest("POST", prefix+grBase+"subscription/edit", f.unsubscribeFields())
+	request.AddCookie(f.session)
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	return f.do(request)
+}
+
+func TestCookieAuthenticatedGreaderPostRequiresTheCsrfToken(t *testing.T) {
 	f := newGReader(t)
 	f.withFeed(t)
-	for _, prefix := range []string{"", greaderPrefix} {
-		request := grRequest("POST", prefix+grBase+"subscription/edit", f.unsubscribeFields())
-		request.AddCookie(f.session)
-		request.Header.Set("Sec-Fetch-Site", "same-origin")
-		if rec := f.do(request); rec.Code != http.StatusForbidden {
-			t.Errorf("%q = %d", prefix, rec.Code)
-		}
+	if rec := f.cookiePostWithoutToken(""); rec.Code != http.StatusForbidden {
+		t.Fatalf("= %d", rec.Code)
+	}
+	if got := f.feedCount(t); got != 1 {
+		t.Fatalf("a POST without the token unsubscribed the feed: %d", got)
+	}
+}
+
+func TestGreaderPhpPrefixAlsoRequiresTheCsrfToken(t *testing.T) {
+	f := newGReader(t)
+	f.withFeed(t)
+	if rec := f.cookiePostWithoutToken(greaderPrefix); rec.Code != http.StatusForbidden {
+		t.Fatalf("= %d", rec.Code)
 	}
 	if got := f.feedCount(t); got != 1 {
 		t.Fatalf("a POST without the token unsubscribed the feed: %d", got)
