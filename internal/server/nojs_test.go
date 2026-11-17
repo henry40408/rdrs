@@ -347,6 +347,10 @@ func TestAScriptlessEntryActionReportsItself(t *testing.T) {
 	csrf := entryPaneCSRF(t, app, entryID)
 	// "Marked as unread." is only raised when the call changes state.
 	wantStatus(t, postEntryAction(app, fmt.Sprintf("/entries/%d/read", entryID), csrf), http.StatusSeeOther)
+	// The read write is detached; unread only counts as a change once it landed.
+	if !waitForRead(t, app, entryID) {
+		t.Fatal("the read write never landed")
+	}
 	page := followRedirect(t, app, postEntryAction(app, fmt.Sprintf("/entries/%d/unread", entryID), csrf))
 	if !strings.Contains(page, "Marked as unread.") || !strings.Contains(page, `data-testid="flash-message"`) {
 		t.Errorf("the message must survive the redirect as a banner:\n%s", page)
