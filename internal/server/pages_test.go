@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -558,4 +561,429 @@ func TestSearchPage(t *testing.T) {
 		`data-testid="search-input"`, "Search your library", `class="empty-state"`)
 	// The old editorial empty-state class is retired.
 	wantAbsent(t, body, "search-status", "<rdrs-entries-page>", "/static/js/pages/entries.js")
+}
+
+func TestSearchPageWithResults(t *testing.T) {
+	app, _, _ := usersApp(t, itestConfig())
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Search Cat")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)", 1, "https://example.com/search-feed.xml", "Search Feed")
+	execStatistics(t, app, "INSERT INTO entry (feed_id, guid, title, link, content) VALUES ($1, $2, $3, $4, $5)",
+		1, "search-guid-1", "Quokka Discovery in Western Australia", "https://example.com/quokka", "<p>The quokka is a small marsupial.</p>")
+	execStatistics(t, app, "INSERT INTO entry (feed_id, guid, title, link, content) VALUES ($1, $2, $3, $4, $5)",
+		1, "search-guid-2", "Other Topic", "https://example.com/other", "<p>Unrelated article.</p>")
+	app.Login("admin")
+
+	body := app.GetOK("/search?q=Quokka")
+
+	// Title and snippet wrap matches in <mark>; the unmatched text stays verbatim.
+	wantContains(t, body, `data-testid="search-results"`, "<mark>Quokka</mark>", "Discovery in Western Australia",
+		// Results link to the in-app entry route, not the article URL.
+		`href="/entries/1"`, "Search Feed",
+		// The match is case-insensitive and keeps the snippet's lowercase.
+		"<mark>quokka</mark>", "is a small marsupial.")
+	wantAbsent(t, body, "https://example.com/quokka", "Other Topic")
+}
+
+// appWithWombats is admin with n entries titled "Wombat {i}"; search pages
+// hold 50.
+func appWithWombats(t *testing.T, n int) *itestApp {
+	t.Helper()
+	app, _, _ := usersApp(t, itestConfig())
+	execStatistics(t, app, "INSERT INTO category (user_id, name) VALUES ($1, $2)", 1, "Cat")
+	execStatistics(t, app, "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)", 1, "https://example.com/wombats.xml", "Wombat Feed")
+	for i := 0; i < n; i++ {
+		execStatistics(t, app, "INSERT INTO entry (feed_id, guid, title, content) VALUES ($1, $2, $3, $4)",
+			1, fmt.Sprintf("wombat-%d", i), fmt.Sprintf("Wombat %d", i), "<p>Burrowing.</p>")
+	}
+	app.Login("admin")
+	return app
+}
+
+// resultIDs are the entry ids linked from a search page or fragment, in order;
+// nav links such as /entries/read are skipped.
+func resultIDs(html string) []int64 {
+	var ids []int64
+	parts := strings.Split(html, `href="/entries/`)
+	for _, rest := range parts[1:] {
+		end := strings.IndexByte(rest, '"')
+		if end < 0 {
+			continue
+		}
+		if id, err := strconv.ParseInt(rest[:end], 10, 64); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// loadMoreAfter is the Load More cursor, URL-encoded for the next request.
+func loadMoreAfter(html string) (string, bool) {
+	const marker = `name="after" value="`
+	start := strings.Index(html, marker)
+	if start < 0 {
+		return "", false
+	}
+	start += len(marker)
+	end := strings.IndexByte(html[start:], '"')
+	if end < 0 {
+		return "", false
+	}
+	return url.QueryEscape(html[start : start+end]), true
+}
+
+func TestSearchPagesThroughEveryMatchOnce(t *testing.T) {
+	app := appWithWombats(t, 125)
+
+	page := app.GetOK("/search?q=Wombat")
+	ids := resultIDs(page)
+	if len(ids) != 50 {
+		t.Fatalf("first page has %d results, want 50", len(ids))
+	}
+	wantContains(t, page, `<li id="search-load-more"`, "data-swap-fragment")
+	// Scriptless submits must reach the page, so the markup leaves fragment to JS.
+	wantAbsent(t, page, `name="fragment"`)
+
+	cursor, more := loadMoreAfter(page)
+	for more {
+		fragment := app.GetOK("/search?q=Wombat&fragment=1&after=" + cursor)
+		wantContains(t, fragment, `<template data-swap-target="#search-load-more">`)
+		ids = append(ids, resultIDs(fragment)...)
+		cursor, more = loadMoreAfter(fragment)
+	}
+	unique := slices.Clone(ids)
+	slices.Sort(unique)
+	unique = slices.Compact(unique)
+	if len(ids) != 125 {
+		t.Errorf("every match once: got %d ids: %v", len(ids), ids)
+	}
+	if len(unique) != 125 {
+		t.Errorf("no duplicates: got %d unique of %v", len(unique), ids)
+	}
+}
+
+func TestSearchFragmentModesAndDocumentNavigation(t *testing.T) {
+	app := appWithWombats(t, 3)
+
+	// Live search: the whole results region, no layout.
+	live := app.GetOK("/search?q=Wombat&fragment=1")
+	wantContains(t, live, `<template data-swap-target="[data-search-results]">`)
+	wantAbsent(t, live, "<h1>Search</h1>")
+	if got := len(resultIDs(live)); got != 3 {
+		t.Errorf("live results = %d, want 3", got)
+	}
+
+	// A cleared field goes back to the empty state.
+	wantContains(t, app.GetOK("/search?q=&fragment=1"), "Search your library")
+
+	// A bookmarked or scriptless fragment URL still gets the page.
+	document := app.Do(documentRequest(http.MethodGet, "/search?q=Wombat&fragment=1", "", nil))
+	wantStatus(t, document, http.StatusOK)
+	wantContains(t, document.Text(), "<h1>Search</h1>")
+	wantAbsent(t, document.Text(), "<template")
+}
+
+func TestSearchLoadMoreWithoutScriptRendersTheNextPage(t *testing.T) {
+	app := appWithWombats(t, 55)
+
+	page := app.GetOK("/search?q=Wombat")
+	cursor, ok := loadMoreAfter(page)
+	if !ok {
+		t.Fatal("a second page is expected")
+	}
+	next := app.GetOK("/search?q=Wombat&after=" + cursor)
+
+	wantContains(t, next, "<h1>Search</h1>")
+	first, second := resultIDs(page), resultIDs(next)
+	if len(second) != 5 {
+		t.Errorf("second page = %d results, want 5", len(second))
+	}
+	for _, id := range second {
+		if slices.Contains(first, id) {
+			t.Errorf("entry %d appears on both pages", id)
+		}
+	}
+	wantAbsent(t, next, `id="search-load-more"`)
+}
+
+func TestSearchPageNoResults(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/search?q=zzznotfoundzzz")
+
+	wantContains(t, body, "Nothing matched", "zzznotfoundzzz", "No matches", `data-testid="search-empty"`)
+}
+
+func TestSearchPageInvalidQueryShowsErrorNoResults(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	// "(rust OR": unbalanced parenthesis.
+	body := app.GetOK("/search?q=%28rust%20OR")
+
+	wantContains(t, body, "Search syntax error", `data-testid="search-error"`)
+	wantAbsent(t, body, `data-testid="search-results"`)
+}
+
+func TestSearchPageValidStructuredQueryRendersWithoutError(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	wantAbsent(t, app.GetOK("/search?q=is%3Aunread"), "Search syntax error", `data-testid="search-error"`)
+}
+
+// The syntax reference is the shared help dialog, opened from a button; the
+// old <details> panel is gone.
+func TestSearchPageOpensSyntaxHelpFromAButton(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	body := app.GetOK("/search")
+
+	wantContains(t, body, "data-search-help",
+		// Without scripts the same button opens a server-rendered popover.
+		`popovertarget="search-syntax-popover"`,
+		`id="search-syntax-popover" class="search-syntax-popover" popover`,
+		"<code>is:starred</code>")
+	wantAbsent(t, body, "search-syntax-help")
+}
+
+// Every entries list takes the inline search drawer, with its help button.
+func TestListPagesRenderTheInlineSearchDrawer(t *testing.T) {
+	app := appWithWombats(t, 3)
+
+	for _, path := range []string{
+		"/", "/entries", "/entries/read", "/entries/starred", "/entries/summarized",
+		"/categories/1/entries", "/feeds/1/entries",
+	} {
+		body := app.GetOK(path)
+		for _, marker := range []string{"data-search-drawer", "data-search-toggle", "data-search-help", "data-search-error"} {
+			if !strings.Contains(body, marker) {
+				t.Errorf("%s: missing %s", path, marker)
+			}
+		}
+	}
+}
+
+// The inline search speaks the /search syntax on every list, not a substring.
+func TestListSearchUsesSearchSyntax(t *testing.T) {
+	app := appWithWombats(t, 3)
+
+	for _, base := range []string{"/", "/entries", "/categories/1/entries", "/feeds/1/entries"} {
+		get := func(q string) string {
+			return app.GetOK(base + "?fragment=1&q=" + url.QueryEscape(q))
+		}
+		exact := get(`title:"Wombat 1"`)
+		expect(t, base+": title: term", strings.Contains(exact, "Wombat 1"))
+		expect(t, base+": title: term narrows", !strings.Contains(exact, "Wombat 2"))
+
+		excluded := get("Wombat -2")
+		expect(t, base+": -term keeps others", strings.Contains(excluded, "Wombat 1"))
+		expect(t, base+": -term excludes", !strings.Contains(excluded, "Wombat 2"))
+
+		expect(t, base+": feed: + is:", strings.Contains(get("feed:wombat is:unread"), "Wombat 0"))
+
+		none := get("is:starred")
+		expect(t, base+": is:starred", !strings.Contains(none, "Wombat 0"))
+		expect(t, base+": no matches", strings.Contains(none, "scoped-search-empty"))
+	}
+}
+
+func expect(t *testing.T, what string, ok bool) {
+	t.Helper()
+	if !ok {
+		t.Error(what)
+	}
+}
+
+// An unparseable query reports why and lists nothing, instead of falling back
+// to the unfiltered list.
+func TestListSearchSyntaxErrorListsNothing(t *testing.T) {
+	app := appWithWombats(t, 3)
+
+	for _, base := range []string{"/", "/entries/starred", "/categories/1/entries"} {
+		body := app.GetOK(base + "?fragment=1&q=%28Wombat")
+		expect(t, base+": "+body, strings.Contains(body, "Search syntax error (near character 1)"))
+		expect(t, base+": must list nothing", !strings.Contains(body, "Wombat 0"))
+		expect(t, base+": no empty-state", !strings.Contains(body, "scoped-search-empty"))
+	}
+}
+
+// --- Category and feed entries pages ---
+
+// libraryOwner is setupAndSignIn: the first account made through /api/setup,
+// signed in.
+type libraryOwner struct {
+	app    *itestApp
+	userID int64
+}
+
+func newLibraryOwner(t *testing.T, username string) libraryOwner {
+	t.Helper()
+	app := defaultITestApp(t)
+	wantStatus(t, app.PostJSON("/api/setup", map[string]string{"username": username, "password": fixturePassword}), http.StatusCreated)
+	app.Login(username)
+	user, err := models.FindUserByUsername(context.Background(), app.DB, username)
+	if err != nil || user == nil {
+		t.Fatalf("user = %v, err = %v", user, err)
+	}
+	return libraryOwner{app: app, userID: user.ID}
+}
+
+func (o libraryOwner) category(t *testing.T, name string) int64 {
+	t.Helper()
+	created, err := models.CreateCategory(context.Background(), o.app.DB, o.userID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return created.ID
+}
+
+func (o libraryOwner) feed(t *testing.T, categoryID int64, feedURL, title string) int64 {
+	t.Helper()
+	created, err := models.CreateFeed(context.Background(), o.app.DB, models.CreateFeedParams{
+		CategoryID: categoryID, URL: feedURL, Title: &title,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return created.ID
+}
+
+func (o libraryOwner) entry(t *testing.T, feedID int64, guid, title, link string) int64 {
+	t.Helper()
+	result, err := entry.UpsertEntry(context.Background(), o.app.DB, &entry.Upsert{
+		FeedID: feedID, GUID: guid, Title: &title, Link: &link,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.ID
+}
+
+func TestCategoryEntriesPage(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_ce")
+	catID := owner.category(t, "Engineering")
+	feed1 := owner.feed(t, catID, "https://x/ce-feed-1", "Feed 1")
+	feed2 := owner.feed(t, catID, "https://x/ce-feed-2", "Feed 2")
+	entryA := owner.entry(t, feed1, "guid-ce-a", "Entry A", "https://x/ce/a")
+	entryB := owner.entry(t, feed2, "guid-ce-b", "Entry B", "https://x/ce/b")
+
+	response := owner.app.Get(fmt.Sprintf("/categories/%d/entries", catID))
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+
+	wantContains(t, html, "Engineering",
+		fmt.Sprintf(`id="entry-row-%d"`, entryA), fmt.Sprintf(`id="entry-row-%d"`, entryB),
+		"Select an entry from the list to start reading.",
+		`data-testid="breadcrumb"`, `<a href="/categories">Categories</a>`,
+		// The sidebar highlights the current category.
+		fmt.Sprintf(`active-category-id="%d"`, catID),
+		// The scoped Mark-as-Read dropdown carries the category's GReader stream.
+		`id="mark-read-age"`, `data-mark-read-scope="user/-/label/Engineering"`,
+		`id="mark-above-read"`)
+	wantAbsent(t, html, "rdrs-entries-page", "/static/js/pages/entries.js")
+	if strings.Contains(html, `id="load-more"`) {
+		wantContains(t, html, fmt.Sprintf(`action="/categories/%d/entries"`, catID))
+	}
+}
+
+func TestNotFoundPagesRenderInsideTheAppChrome(t *testing.T) {
+	app, _, _ := signedInAs(t, "admin")
+
+	for _, c := range []struct{ path, heading string }{
+		{"/categories/999999/entries", "Category not found"},
+		{"/feeds/999999/entries", "Feed not found"},
+		{"/feeds/999999/edit", "Feed not found"},
+		{"/this-page-does-not-exist", "Page not found"},
+	} {
+		response := app.Get(c.path)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404", c.path, response.Code)
+		}
+		if !strings.Contains(response.Text(), c.heading) {
+			t.Errorf("%s: heading %q missing", c.path, c.heading)
+		}
+		if !strings.Contains(response.Text(), "rdrs-sidebar") {
+			t.Errorf("%s should render inside the app chrome (sidebar present)", c.path)
+		}
+	}
+}
+
+func TestCategoryEntriesPageOtherUser(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.PostJSON("/api/setup", map[string]string{"username": "alice_cou", "password": fixturePassword}), http.StatusCreated)
+	app.SeedAccount("bob_cou", fixturePassword, models.RoleUser)
+	alice, err := models.FindUserByUsername(context.Background(), app.DB, "alice_cou")
+	if err != nil || alice == nil {
+		t.Fatalf("alice = %v, err = %v", alice, err)
+	}
+	category, err := models.CreateCategory(context.Background(), app.DB, alice.ID, "Alice Cat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.Login("bob_cou")
+
+	if got := app.Get(fmt.Sprintf("/categories/%d/entries", category.ID)).Code; got != http.StatusNotFound {
+		t.Errorf("cross-user category entries = %d, want 404", got)
+	}
+}
+
+func TestCategoryEntriesPageLoadMoreFragment(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_cl")
+	catID := owner.category(t, "LMCat")
+	feedID := owner.feed(t, catID, "https://x/clm-feed", "CLM Feed")
+	for i := 0; i < 3; i++ {
+		owner.entry(t, feedID, fmt.Sprintf("guid-clm-%d", i), fmt.Sprintf("Entry %d", i), fmt.Sprintf("https://x/clm/%d", i))
+	}
+
+	response := owner.app.Get(fmt.Sprintf("/categories/%d/entries?fragment=1", catID))
+	wantStatus(t, response, http.StatusOK)
+
+	wantContains(t, response.Text(), "data-entry-row")
+	wantAbsent(t, response.Text(), "<rdrs-sidebar", "<h1>LMCat</h1>")
+}
+
+// The category-switch fragment app.js swaps in place of a document reload: the
+// whole left column, header included, plus an emptied reading pane, which stays
+// empty even with ?entry= because switching closes the previous entry.
+func TestCategoryEntriesPagePaneFragment(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_cp")
+	catID := owner.category(t, "PaneCat")
+	feedID := owner.feed(t, catID, "https://x/cpane-feed", "CPane Feed")
+	entryID := owner.entry(t, feedID, "guid-cpane-0", "Pane Entry", "https://x/cpane/0")
+
+	response := owner.app.Get(fmt.Sprintf("/categories/%d/entries?pane=1&entry=%d", catID, entryID))
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+
+	wantContains(t, html, `data-swap-target="[data-list-pane]"`, `data-swap-target="#reading-pane"`,
+		"<h1>PaneCat</h1>", "data-entry-row", "reading-pane-empty")
+	wantAbsent(t, html, "<rdrs-sidebar", "reading-pane-article")
+}
+
+// The same in-place navigation contract for feeds, since the sidebar lists
+// feeds and clicking one must not reload the document either.
+func TestFeedEntriesPagePaneFragment(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_fp")
+	catID := owner.category(t, "FPCat")
+	feedID := owner.feed(t, catID, "https://x/fp-feed", "FP Feed")
+	entryID := owner.entry(t, feedID, "guid-fp-0", "FP Entry", "https://x/fp/0")
+
+	response := owner.app.Get(fmt.Sprintf("/feeds/%d/entries?pane=1&entry=%d", feedID, entryID))
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+
+	wantContains(t, html, `data-swap-target="[data-list-pane]"`, `data-swap-target="#reading-pane"`,
+		"<h1>", "FP Feed", "reading-pane-empty")
+	wantAbsent(t, html, "<rdrs-sidebar", "reading-pane-article")
+}
+
+// A feed page names its feed to the sidebar, and its parent category, which is
+// what makes that category's list expand at all.
+func TestFeedEntriesPageMarksActiveFeed(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_af")
+	catID := owner.category(t, "AFCat")
+	feedID := owner.feed(t, catID, "https://x/af-feed", "AF Feed")
+
+	html := owner.app.Get(fmt.Sprintf("/feeds/%d/entries", feedID)).Text()
+	wantContains(t, html, fmt.Sprintf(`active-feed-id="%d"`, feedID), fmt.Sprintf(`active-category-id="%d"`, catID))
+
+	wantAbsent(t, owner.app.Get(fmt.Sprintf("/categories/%d/entries", catID)).Text(), "active-feed-id")
 }
