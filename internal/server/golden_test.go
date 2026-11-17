@@ -55,6 +55,11 @@ var goldenPaths = map[string]bool{
 	"/api/sidebar":                    true,
 	"/api/sidebar/categories/1/feeds": true,
 	"/api/user":                       true,
+	"/feeds":                          true,
+	"/feeds/1/edit":                   true,
+	"/feeds/2/edit":                   true,
+	"/feeds/3/edit":                   true,
+	"/feeds/import":                   true,
 }
 
 var (
@@ -77,6 +82,8 @@ func newGoldenFixture(t *testing.T) *goldenFixture {
 		Config: config.Config{Secret: goldenSecret, MultiUser: true}, DB: database, SetupToken: "CCCCC-CCCCC",
 		Audit:   audit.New(slog.New(slog.DiscardHandler), goldenSecret),
 		Limiter: auth.NewRateLimiter(0, 60),
+		// Inside the window the Rust capture ran in, so relative times match.
+		Now: func() time.Time { return time.Date(2026, 11, 17, 7, 15, 0, 0, time.UTC) },
 	})
 	return &goldenFixture{
 		handler: app.Handler(), database: database, version: gitVersion(),
@@ -187,7 +194,7 @@ func TestHTMLGoldens(t *testing.T) {
 		if page.Name == "login" {
 			f.seed(t)
 		}
-		if page.Name == "categories" {
+		if page.Name == "feeds" {
 			f.emulateOpenedEntries(t)
 		}
 		t.Run(page.Name, func(t *testing.T) { f.check(t, page) })

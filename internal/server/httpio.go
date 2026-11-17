@@ -98,6 +98,20 @@ func parseForm(w http.ResponseWriter, r *http.Request) (url.Values, bool) {
 	return values, true
 }
 
+// optionalForm reads a urlencoded body that may be absent or of another type
+// (the forms whose only field is return_to); it never answers.
+func optionalForm(r *http.Request) (url.Values, bool) {
+	if !hasMediaType(r, "application/x-www-form-urlencoded") {
+		return nil, false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	if err != nil {
+		return nil, false
+	}
+	values, err := url.ParseQuery(string(body))
+	return values, err == nil
+}
+
 // requireFields answers 422 naming the first absent field, like serde does
 // for a struct field with no default.
 func requireFields(w http.ResponseWriter, form url.Values, names ...string) bool {

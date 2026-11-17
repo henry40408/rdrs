@@ -1,8 +1,11 @@
 package server
 
 import (
+	"github.com/henry40408/rdrs/internal/feedsync"
+	"github.com/henry40408/rdrs/internal/fetch"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
@@ -48,6 +51,7 @@ func (a *App) routes() []Route {
 	table = append(table, a.authRoutes()...)
 	table = append(table, a.chromeRoutes()...)
 	table = append(table, a.categoryRoutes()...)
+	table = append(table, a.feedRoutes()...)
 	return table
 }
 
@@ -77,6 +81,14 @@ type Options struct {
 	SetupToken string
 	// SkipSetupToken drops the token check; for tests only.
 	SkipSetupToken bool
+
+	// Fetcher guards every outbound request; nil builds one that allows no
+	// private host.
+	Fetcher *fetch.Fetcher
+	// Syncer refreshes feeds on demand; nil builds one around Fetcher.
+	Syncer *feedsync.Syncer
+	// Now is the clock of relative times; nil is time.Now. Tests pin it.
+	Now func() time.Time
 }
 
 // Handler mounts every registered route inside the middleware stack, outermost

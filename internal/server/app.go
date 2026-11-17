@@ -2,8 +2,11 @@ package server
 
 import (
 	"errors"
+	"github.com/henry40408/rdrs/internal/feedsync"
+	"github.com/henry40408/rdrs/internal/fetch"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
@@ -23,6 +26,11 @@ type App struct {
 	Limiter *auth.RateLimiter
 	// Sidebar caches the per-user chrome around every page.
 	Sidebar *cache.Sidebar
+	// Fetcher and Syncer reach the network for discovery, import and refresh.
+	Fetcher *fetch.Fetcher
+	Syncer  *feedsync.Syncer
+	// Now is the clock of relative times.
+	Now     func() time.Time
 	cookies auth.Cookies
 }
 
@@ -31,8 +39,23 @@ func NewApp(options Options) *App {
 	if options.Limiter == nil {
 		options.Limiter = auth.NewRateLimiter(options.Config.LoginRateLimitAttempts, options.Config.LoginRateLimitWindowSecs)
 	}
+	if options.Fetcher == nil {
+		options.Fetcher = fetch.NewFetcher(fetch.Policy{})
+	}
+	if options.Syncer == nil {
+		options.Syncer = &feedsync.Syncer{
+			DB: options.DB, Fetcher: options.Fetcher, DefaultUserAgent: options.Config.UserAgent,
+			Retry: fetch.DefaultRetry(),
+		}
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
 	authenticator := &auth.Authenticator{DB: options.DB, Config: options.Config, Audit: options.Audit}
 	return &App{
+		Fetcher: options.Fetcher,
+		Syncer:  options.Syncer,
+		Now:     options.Now,
 		options: options,
 		Config:  options.Config,
 		DB:      options.DB,

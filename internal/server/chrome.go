@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -132,22 +133,31 @@ func (a *App) buildSidebar(ctx context.Context, principal *auth.Principal) (side
 	}, chrome
 }
 
+// jsonForScript serialises value for a raw inline <script>: serde's output
+// (no HTML escaping), with "</" broken up so a name such as "</script>"
+// cannot close the element. "null" if encoding fails.
+func jsonForScript(value any) string {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return "null"
+	}
+	encoded := strings.TrimSuffix(buf.String(), "\n")
+	return strings.ReplaceAll(encoded, "</", `<\/`)
+}
+
 // buildLayout is the shared layout data of a logged-in page.
 func (a *App) buildLayout(r *http.Request, principal *auth.Principal, banners []flash.Message) views.Layout {
 	sidebar, chrome := a.buildSidebar(r.Context(), principal)
-	encoded, err := json.Marshal(sidebar)
-	if err != nil {
-		encoded = []byte("null")
-	}
 	theme := ""
 	if chrome.Theme != nil {
 		theme = *chrome.Theme
 	}
 	return views.Layout{
-		Theme:      theme,
-		GitVersion: gitVersion(),
-		// The escape keeps the JSON from closing its <script> element.
-		SidebarBootstrapJSON: strings.ReplaceAll(string(encoded), "</", `<\/`),
+		Theme:                theme,
+		GitVersion:           gitVersion(),
+		SidebarBootstrapJSON: jsonForScript(sidebar),
 		FlashMessages:        banners,
 		IsAdmin:              sidebar.IsAdmin,
 		TotalUnread:          sidebar.TotalUnread,
