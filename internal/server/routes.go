@@ -71,6 +71,8 @@ func (a *App) routes() []Route {
 	table = append(table, a.markReadRoutes()...)
 	table = append(table, a.entryAPIRoutes()...)
 	table = append(table, a.eventRoutes()...)
+	table = append(table, a.greaderRoutes("")...)
+	table = append(table, a.greaderRoutes(greaderPrefix)...)
 	return table
 }
 
@@ -212,7 +214,7 @@ func buildHandler(options Options, table []Route) http.Handler {
 		layers = append(layers, middleware.HSTS(options.HSTS))
 	}
 	layers = append(layers, middleware.SecurityHeaders)
-	return middleware.Chain(outer, layers...)
+	return middleware.Chain(keepFeedURLSlashes(outer), layers...)
 }
 
 // withRoute tells the request log which template matched.
@@ -221,4 +223,19 @@ func withRoute(route Route) http.HandlerFunc {
 		middleware.SetRoute(r, route.Path)
 		route.Handler(w, r)
 	}
+}
+
+// feedStreamPath is where a GReader client puts a raw feed URL in the path.
+const feedStreamPath = "/reader/api/0/stream/contents/feed/"
+
+// keepFeedURLSlashes stops ServeMux redirecting the "//" of a raw feed URL
+// ("feed/https://host/x") to its cleaned form, which axum does not do: the
+// second slash is sent on as %2F, which the route's wildcard decodes again.
+func keepFeedURLSlashes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, feedStreamPath) && strings.Contains(r.URL.Path, "//") {
+			r.URL.RawPath = strings.ReplaceAll(r.URL.EscapedPath(), "//", "/%2F")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
