@@ -14,6 +14,7 @@ import (
 
 	"github.com/henry40408/rdrs/internal/feedparse"
 	"github.com/henry40408/rdrs/internal/fetch"
+	"github.com/henry40408/rdrs/internal/htmldepth"
 )
 
 // Feed is what discovery learned about a feed.
@@ -161,6 +162,9 @@ var feedLinkTypes = map[string]bool{
 // first match decides.
 func findFeedLink(body []byte, base *url.URL) (string, error) {
 	doc, err := html.Parse(strings.NewReader(string(body)))
+	if htmldepth.IsTooDeep(err) {
+		doc, err = html.Parse(strings.NewReader(htmldepth.Flatten(string(body))))
+	}
 	if err != nil {
 		return "", &Error{Kind: KindNoFeed}
 	}

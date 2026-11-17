@@ -95,6 +95,20 @@ func TestExtractsTitleAndContentAndSendsUserAgent(t *testing.T) {
 	}
 }
 
+func TestExtractsFromAPageNestedDeeperThanTheHTMLParserLimit(t *testing.T) {
+	deep := "<html><head><title>Deep</title></head><body>" + strings.Repeat("<div>", 600) +
+		"<p>" + strings.Repeat("A long enough sentence for the scorer to keep. ", 20) + "</p>" +
+		strings.Repeat("</div>", 600) + "</body></html>"
+	server := serve(t, page(deep))
+	got, err := FetchAndExtract(context.Background(), loopbackParams(t, server.URL+"/deep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Content, "A long enough sentence") {
+		t.Fatalf("content = %.200s", got.Content)
+	}
+}
+
 func TestEmptyTitleBecomesNil(t *testing.T) {
 	body := `<!DOCTYPE html><html><head></head><body><article>
 <p>Body-only content with no title anywhere in the document, long

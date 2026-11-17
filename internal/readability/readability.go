@@ -15,6 +15,7 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/henry40408/rdrs/internal/fetch"
+	"github.com/henry40408/rdrs/internal/htmldepth"
 )
 
 // MaxElements bounds the element nodes in a fetched document; a larger one is
@@ -132,6 +133,9 @@ func extractArticle(page string, base *url.URL, maxElements int) (title, content
 	parser := goreadability.NewParser()
 	parser.MaxElemsToParse = maxElements
 	article, err := parser.Parse(strings.NewReader(page), base)
+	if htmldepth.IsTooDeep(err) {
+		article, err = parser.Parse(strings.NewReader(htmldepth.Flatten(page)), base)
+	}
 	if err != nil {
 		return "", "", describe(err)
 	}

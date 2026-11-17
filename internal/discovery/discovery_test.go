@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +80,22 @@ func TestDiscoverViaHTMLLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	if feed.FeedURL != server.URL+"/feed.xml" || *feed.Title != "Example Feed" {
+		t.Fatalf("feed = %+v", feed)
+	}
+}
+
+func TestDiscoverInAPageNestedDeeperThanTheHTMLParserLimit(t *testing.T) {
+	page := `<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head><body>` +
+		strings.Repeat("<div>", 600) + "x" + strings.Repeat("</div>", 600) + `</body></html>`
+	server := serve(t, map[string]http.HandlerFunc{
+		"/":         reply("text/html", page),
+		"/feed.xml": reply("application/rss+xml", rssBody),
+	})
+	feed, err := Discover(context.Background(), loopbackParams(t, server.URL+"/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feed.FeedURL != server.URL+"/feed.xml" {
 		t.Fatalf("feed = %+v", feed)
 	}
 }
