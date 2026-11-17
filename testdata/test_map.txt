@@ -1,0 +1,35 @@
+# Rust integration test -> Go test. One line per Rust test:
+#   <rust file>::<rust test> <go package dir>::<Go test>
+# internal/testutil.TestEveryMappedGoTestExists checks that each Go test
+# exists and that the number of mapped Rust tests never drops.
+tests/compression_test.rs::test_login_page_compressed_with_the_accepted_encoding internal/server::TestLoginPageCompressedWithTheAcceptedEncoding
+tests/compression_test.rs::test_login_page_not_compressed_without_accept_encoding internal/server::TestLoginPageNotCompressedWithoutAcceptEncoding
+tests/etag_test.rs::html_response_carries_weak_etag internal/server::TestHtmlResponseCarriesWeakEtag
+tests/etag_test.rs::matching_if_none_match_returns_304 internal/server::TestMatchingIfNoneMatchReturns304
+tests/etag_test.rs::non_html_response_has_no_etag internal/server::TestNonHtmlResponseHasNoEtag
+tests/etag_test.rs::non_matching_if_none_match_returns_full_body internal/server::TestNonMatchingIfNoneMatchReturnsFullBody
+tests/etag_test.rs::test_etag_still_emitted_under_no_store internal/server::TestEtagStillEmittedUnderNoStore
+tests/client_info_test.rs::a_matching_timezone_earns_no_hint internal/server::TestAMatchingTimezoneEarnsNoHint
+tests/client_info_test.rs::a_different_timezone_earns_a_hint_linking_to_preferences internal/server::TestADifferentTimezoneEarnsAHintLinkingToPreferences
+tests/client_info_test.rs::a_hint_changes_no_setting internal/server::TestAHintChangesNoSetting
+tests/client_info_test.rs::an_alias_of_the_stored_timezone_earns_no_hint internal/server::TestAnAliasOfTheStoredTimezoneEarnsNoHint
+tests/client_info_test.rs::an_unknown_timezone_name_is_refused internal/server::TestAnUnknownTimezoneNameIsRefused
+tests/client_info_test.rs::a_report_without_fields_earns_no_hint internal/server::TestAReportWithoutFieldsEarnsNoHint
+tests/client_info_test.rs::an_anonymous_report_is_refused internal/server::TestAnAnonymousReportIsRefused
+tests/client_info_test.rs::the_settings_page_prefills_a_suggested_timezone_without_saving_it internal/server::TestTheSettingsPagePrefillsASuggestedTimezoneWithoutSavingIt
+tests/client_info_test.rs::the_settings_page_ignores_a_suggestion_it_cannot_use internal/server::TestTheSettingsPageIgnoresASuggestionItCannotUse
+tests/page_cache_test.rs::insert_and_get_roundtrip internal/cache::TestInsertAndGetRoundtrip
+tests/page_cache_test.rs::invalidate_removes_entry internal/cache::TestInvalidateRemovesEntry
+tests/page_cache_test.rs::ttl_expiry_drops_entry internal/cache::TestTtlExpiryDropsEntry
+tests/logging_test.rs::every_log_call_carries_an_event_field cmd/rdrs::TestEveryLogCallCarriesAnEvent
+tests/logging_test.rs::log_messages_do_not_interpolate_values cmd/rdrs::TestEveryLogCallCarriesAnEvent
+tests/summary_cancel.rs::test_cancel_clears_failed_summary internal/server::TestCancelClearsFailedSummary
+tests/summary_cancel.rs::test_cancel_non_owner_returns_404 internal/server::TestCancelNonOwnerReturns404
+tests/summary_cancel.rs::summarize_emits_pending_event internal/server::TestSummarizeEmitsPendingEvent
+tests/summary_cancel.rs::test_cancel_removes_inflight_token internal/summarize::TestCancelStopsARunningJobWithoutWriting
+tests/summarizer_test.rs::page_shows_settings_prompt_when_kagi_unset internal/server::TestPageShowsSettingsPromptWhenKagiUnset
+tests/summarizer_test.rs::page_shows_form_when_kagi_configured internal/server::TestPageShowsFormWhenKagiConfigured
+tests/summarizer_test.rs::page_requires_auth internal/server::TestPageRequiresAuth
+tests/summarizer_test.rs::start_renders_queued_cards internal/server::TestStartRendersQueuedCards
+tests/summarizer_test.rs::start_rejects_over_30 internal/server::TestStartRejectsOver30
+tests/summarizer_test.rs::item_returns_completed_then_error_card internal/server::TestSummarizerItemCompletesThroughKagi
