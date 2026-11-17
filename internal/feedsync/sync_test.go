@@ -37,12 +37,34 @@ type fixture struct {
 
 func openDB(t *testing.T) *db.DB {
 	t.Helper()
+	return openBackend(t, filepath.Join(t.TempDir(), "test.sqlite3"), config.SQLite)
+}
+
+// eachBackend runs fn against SQLite and, when TEST_DATABASE_URL is set,
+// against a freshly migrated PostgreSQL schema.
+func eachBackend(t *testing.T, fn func(t *testing.T, database *db.DB)) {
+	t.Helper()
+	t.Run("sqlite", func(t *testing.T) { fn(t, openDB(t)) })
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		return
+	}
+	t.Run("postgres", func(t *testing.T) { fn(t, openBackend(t, url, config.Postgres)) })
+}
+
+func openBackend(t *testing.T, target string, backend config.Backend) *db.DB {
+	t.Helper()
 	ctx := context.Background()
-	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "test.sqlite3"), config.SQLite)
+	database, err := db.Open(ctx, target, backend)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Shutdown(ctx) })
+	if backend == config.Postgres {
+		if _, err := database.ExecContext(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := migrate.Run(ctx, database); err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +73,17 @@ func openDB(t *testing.T) *db.DB {
 
 func newFixture(t *testing.T, handler http.HandlerFunc) *fixture {
 	t.Helper()
+	return newFixtureOn(t, openDB(t), handler)
+}
+
+func newFixtureOn(t *testing.T, database *db.DB, handler http.HandlerFunc) *fixture {
+	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	policy, err := fetch.ParsePolicy("127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	database := openDB(t)
 	ctx := context.Background()
 	user, err := models.CreateUser(ctx, database, "u", "hash", models.RoleUser)
 	if err != nil {
@@ -92,50 +118,54 @@ func serveFeed(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestRefreshStoresEntriesAndValidators(t *testing.T) {
-	f := newFixture(t, serveFeed)
-	result, err := f.syncer.Refresh(context.Background(), f.feed.ID)
-	if err != nil || result.NewEntries != 2 || result.UpdatedEntries != 0 {
-		t.Fatalf("result = %+v, %v", result, err)
-	}
-	feed := f.reload(t)
-	if feed.ETag == nil || *feed.ETag != `"v1"` || feed.FetchError != nil || feed.FetchedAt == nil {
-		t.Errorf("feed = %+v", feed)
-	}
-	want := time.Date(2024, 3, 6, 12, 0, 0, 0, time.UTC)
-	if feed.FeedUpdatedAt == nil || !feed.FeedUpdatedAt.Equal(want) {
-		t.Errorf("feed_updated_at = %v, want the newest signal %v", feed.FeedUpdatedAt, want)
-	}
-	again, err := f.syncer.Refresh(context.Background(), f.feed.ID)
-	if err != nil || again.NewEntries != 0 || again.UpdatedEntries != 0 {
-		t.Errorf("second refresh = %+v, %v", again, err)
-	}
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		result, err := f.syncer.Refresh(context.Background(), f.feed.ID)
+		if err != nil || result.NewEntries != 2 || result.UpdatedEntries != 0 {
+			t.Fatalf("result = %+v, %v", result, err)
+		}
+		feed := f.reload(t)
+		if feed.ETag == nil || *feed.ETag != `"v1"` || feed.FetchError != nil || feed.FetchedAt == nil {
+			t.Errorf("feed = %+v", feed)
+		}
+		want := time.Date(2024, 3, 6, 12, 0, 0, 0, time.UTC)
+		if feed.FeedUpdatedAt == nil || !feed.FeedUpdatedAt.Equal(want) {
+			t.Errorf("feed_updated_at = %v, want the newest signal %v", feed.FeedUpdatedAt, want)
+		}
+		again, err := f.syncer.Refresh(context.Background(), f.feed.ID)
+		if err != nil || again.NewEntries != 0 || again.UpdatedEntries != 0 {
+			t.Errorf("second refresh = %+v, %v", again, err)
+		}
+	})
 }
 
 func TestRefreshSendsConditionalHeadersAndKeepsThemOn304(t *testing.T) {
-	var seen atomic.Pointer[http.Header]
-	f := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") == `"v1"` {
-			seen.Store(&r.Header)
-			w.WriteHeader(http.StatusNotModified)
-			return
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		var seen atomic.Pointer[http.Header]
+		f := newFixtureOn(t, database, func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("If-None-Match") == `"v1"` {
+				seen.Store(&r.Header)
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			serveFeed(w, r)
+		})
+		ctx := context.Background()
+		if _, err := f.syncer.Refresh(ctx, f.feed.ID); err != nil {
+			t.Fatal(err)
 		}
-		serveFeed(w, r)
+		result, err := f.syncer.Refresh(ctx, f.feed.ID)
+		if err != nil || result != (Result{}) {
+			t.Fatalf("304 refresh = %+v, %v", result, err)
+		}
+		header := seen.Load()
+		if header == nil || header.Get("If-Modified-Since") != "Wed, 06 Mar 2024 12:00:00 GMT" || header.Get("User-Agent") != "default-ua" {
+			t.Fatalf("headers = %v", header)
+		}
+		if feed := f.reload(t); feed.ETag == nil || *feed.ETag != `"v1"` {
+			t.Errorf("etag lost: %+v", feed)
+		}
 	})
-	ctx := context.Background()
-	if _, err := f.syncer.Refresh(ctx, f.feed.ID); err != nil {
-		t.Fatal(err)
-	}
-	result, err := f.syncer.Refresh(ctx, f.feed.ID)
-	if err != nil || result != (Result{}) {
-		t.Fatalf("304 refresh = %+v, %v", result, err)
-	}
-	header := seen.Load()
-	if header == nil || header.Get("If-Modified-Since") != "Wed, 06 Mar 2024 12:00:00 GMT" || header.Get("User-Agent") != "default-ua" {
-		t.Fatalf("headers = %v", header)
-	}
-	if feed := f.reload(t); feed.ETag == nil || *feed.ETag != `"v1"` {
-		t.Errorf("etag lost: %+v", feed)
-	}
 }
 
 func TestRefreshUsesTheFeedUserAgent(t *testing.T) {
@@ -204,25 +234,27 @@ func TestRefreshUnknownFeed(t *testing.T) {
 }
 
 func TestIconIsFetchedOnlyWhenStale(t *testing.T) {
-	f := newFixture(t, serveFeed)
-	var calls atomic.Int32
-	f.syncer.FetchIcon = func(_ context.Context, c IconCandidates) (*FetchedIcon, error) {
-		calls.Add(1)
-		if c.UserAgent != "default-ua" {
-			t.Errorf("user agent = %q", c.UserAgent)
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		var calls atomic.Int32
+		f.syncer.FetchIcon = func(_ context.Context, c IconCandidates) (*FetchedIcon, error) {
+			calls.Add(1)
+			if c.UserAgent != "default-ua" {
+				t.Errorf("user agent = %q", c.UserAgent)
+			}
+			return &FetchedIcon{Data: []byte("png"), ContentType: "image/png", SourceURL: "https://x.example/i.png"}, nil
 		}
-		return &FetchedIcon{Data: []byte("png"), ContentType: "image/png", SourceURL: "https://x.example/i.png"}, nil
-	}
-	ctx := context.Background()
-	for range 2 {
-		if _, err := f.syncer.Refresh(ctx, f.feed.ID); err != nil {
-			t.Fatal(err)
+		ctx := context.Background()
+		for range 2 {
+			if _, err := f.syncer.Refresh(ctx, f.feed.ID); err != nil {
+				t.Fatal(err)
+			}
 		}
-	}
-	image, err := models.FindImage(ctx, f.syncer.DB, models.EntityFeed, f.feed.ID)
-	if err != nil || image == nil || string(image.Data) != "png" || calls.Load() != 1 {
-		t.Fatalf("image = %+v, %v, calls = %d", image, err, calls.Load())
-	}
+		image, err := models.FindImage(ctx, f.syncer.DB, models.EntityFeed, f.feed.ID)
+		if err != nil || image == nil || string(image.Data) != "png" || calls.Load() != 1 {
+			t.Fatalf("image = %+v, %v, calls = %d", image, err, calls.Load())
+		}
+	})
 }
 
 func TestIconFailureDoesNotFailTheSync(t *testing.T) {
@@ -246,29 +278,31 @@ func TestLatestPicksTheNewestNonNil(t *testing.T) {
 }
 
 func TestRefreshBucketReportsEachFeed(t *testing.T) {
-	f := newFixture(t, serveFeed)
-	ctx := context.Background()
-	broken, err := models.CreateFeed(ctx, f.syncer.DB, models.CreateFeedParams{CategoryID: f.feed.CategoryID, URL: "http://127.0.0.1:1/x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.syncer.Retry = fetch.RetryConfig{}
-	if _, err := f.syncer.DB.ExecContext(ctx, "UPDATE feed SET bucket = $1 WHERE id = $2", *f.feed.Bucket, broken.ID); err != nil {
-		t.Fatal(err)
-	}
-	results := f.syncer.RefreshBucket(ctx, *f.feed.Bucket)
-	if len(results) != 2 {
-		t.Fatalf("results = %+v", results)
-	}
-	failed := 0
-	for _, r := range results {
-		if r.Err != "" {
-			failed++
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		ctx := context.Background()
+		broken, err := models.CreateFeed(ctx, f.syncer.DB, models.CreateFeedParams{CategoryID: f.feed.CategoryID, URL: "http://127.0.0.1:1/x"})
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if failed != 1 {
-		t.Errorf("results = %+v", results)
-	}
+		f.syncer.Retry = fetch.RetryConfig{}
+		if _, err := f.syncer.DB.ExecContext(ctx, "UPDATE feed SET bucket = $1 WHERE id = $2", *f.feed.Bucket, broken.ID); err != nil {
+			t.Fatal(err)
+		}
+		results := f.syncer.RefreshBucket(ctx, *f.feed.Bucket)
+		if len(results) != 2 {
+			t.Fatalf("results = %+v", results)
+		}
+		failed := 0
+		for _, r := range results {
+			if r.Err != "" {
+				failed++
+			}
+		}
+		if failed != 1 {
+			t.Errorf("results = %+v", results)
+		}
+	})
 }
 
 func deref(s *string) string {
