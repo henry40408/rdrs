@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/cache"
@@ -27,6 +29,9 @@ type App struct {
 	Audit   *audit.Logger
 	Auth    *auth.Authenticator
 	Limiter *auth.RateLimiter
+	// webauthn is the relying party; webauthnErr says why it is missing.
+	webauthn    *webauthn.WebAuthn
+	webauthnErr error
 	// Sidebar caches the per-user chrome around every page.
 	Sidebar *cache.Sidebar
 	// AdminDBStats holds the site-wide database figures of /statistics.
@@ -103,6 +108,7 @@ func NewApp(options Options) *App {
 		cookies:        authenticator.Cookies(),
 		externalClient: fetch.NewExternalAPIClient(),
 	}
+	app.webauthn, app.webauthnErr = auth.NewWebAuthn(options.Config)
 	app.detach = app.goDetached
 	return app
 }

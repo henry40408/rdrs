@@ -66,6 +66,7 @@ func (a *App) routes() []Route {
 	table = append(table, a.summarizerRoutes()...)
 	table = append(table, a.adminRoutes()...)
 	table = append(table, a.accountRoutes()...)
+	table = append(table, a.passkeyRoutes()...)
 	table = append(table, a.entryFragmentRoutes()...)
 	table = append(table, a.entryActionRoutes()...)
 	table = append(table, a.markReadRoutes()...)
