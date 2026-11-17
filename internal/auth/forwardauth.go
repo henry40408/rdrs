@@ -24,7 +24,11 @@ const defaultCategoryName = "Uncategorized"
 // or "" when the feature is off, the peer is not a trusted proxy, or the
 // header is empty. The auth checks share it so the trust logic lives once.
 func ForwardAuthIdentity(cfg config.Config, r *http.Request) string {
-	if !cfg.AuthProxyEnabled() || !cfg.IsTrustedPeer(PeerIP(r)) {
+	if !cfg.AuthProxyEnabled() {
+		return ""
+	}
+	peer, ok := PeerIP(r)
+	if !ok || !cfg.IsTrustedPeer(peer) {
 		return ""
 	}
 	return strings.TrimSpace(headerText(r, cfg.AuthProxyHeader))

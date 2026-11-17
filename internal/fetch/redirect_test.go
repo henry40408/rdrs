@@ -50,3 +50,51 @@ func TestRedirectChainIsBounded(t *testing.T) {
 		t.Fatal("a redirect loop must fail")
 	}
 }
+
+func TestAuthorizationStaysDroppedOnLaterSameOriginHops(t *testing.T) {
+	var got string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/second" {
+			got = r.Header.Get("Authorization")
+			return
+		}
+		http.Redirect(w, r, "/second", http.StatusTemporaryRedirect)
+	}))
+	defer other.Close()
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/first", http.StatusTemporaryRedirect)
+	}))
+	defer first.Close()
+
+	got = "unset"
+	request, _ := http.NewRequest(http.MethodPost, first.URL, nil)
+	request.Header.Set("Authorization", "Token secret")
+	response, err := NewExternalAPIClient().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if got != "" {
+		t.Errorf("the second hop got %q", got)
+	}
+}
+
+func TestAuthorizationIsDroppedOnAnHTTPSDowngrade(t *testing.T) {
+	origin, _ := http.NewRequest(http.MethodGet, "https://example.test/", nil)
+	hop, _ := http.NewRequest(http.MethodGet, "http://example.test/x", nil)
+	hop.Header.Set("Authorization", "Token secret")
+	if err := DropAuthorizationOnOriginChange(hop, []*http.Request{origin}); err != nil {
+		t.Fatal(err)
+	}
+	if hop.Header.Get("Authorization") != "" {
+		t.Error("a scheme change must drop the token")
+	}
+	later, _ := http.NewRequest(http.MethodGet, "http://example.test/y", nil)
+	later.Header.Set("Authorization", "Token secret")
+	if err := DropAuthorizationOnOriginChange(later, []*http.Request{origin, hop}); err != nil {
+		t.Fatal(err)
+	}
+	if later.Header.Get("Authorization") != "" {
+		t.Error("the token must not return on a hop after the downgrade")
+	}
+}

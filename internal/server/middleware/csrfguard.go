@@ -22,6 +22,8 @@ const (
 	// unreadable cross-origin, and login-CSRF is stopped by the origin guard.
 	// It is suffix-matched because it is also mounted under /api/greader.php.
 	csrfSkipSuffix = "/accounts/ClientLogin"
+	// multipartRoute is the only route that reads a multipart body.
+	multipartRoute = "/feeds/import"
 	// csrfMaxBodyBytes caps the body buffered to read the form field (1 MiB).
 	csrfMaxBodyBytes = 1 << 20
 )
@@ -41,7 +43,7 @@ func CSRFGuard(cookies auth.Cookies) Middleware {
 	guard := csrfRejecter{secret: cookies.Secret}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isSafeMethod(r.Method) || strings.HasSuffix(r.URL.Path, csrfSkipSuffix) {
+			if isSafeMethod(r.Method) || strings.HasSuffix(r.URL.EscapedPath(), csrfSkipSuffix) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -83,8 +85,10 @@ func (g csrfRejecter) allows(r *http.Request, sessionToken string) bool {
 		g.warn(r, sessionToken, "header token does not derive from this session")
 		return false
 	}
-	// The OPML import route validates the field itself.
-	if strings.HasPrefix(strings.TrimLeft(r.Header.Get("Content-Type"), " \t"), "multipart/form-data") {
+	// Only the OPML import validates the field itself. Elsewhere a multipart
+	// body is not waved through: Go handlers have no extractor that answers 415,
+	// and multipart is a CORS-safelisted content type for cross-site posts.
+	if r.URL.Path == multipartRoute && isMultipart(r) {
 		return true
 	}
 	body, ok := readLimited(r)
@@ -137,4 +141,8 @@ func (g csrfRejecter) warn(r *http.Request, sessionToken, reason string) {
 	slog.Warn("rejected a state-changing request whose CSRF token did not match its session",
 		"event", "csrf.mismatch", "reason", reason, "method", r.Method, "path", r.URL.Path,
 		"session", secret.AuditID(g.secret, sessionToken))
+}
+
+func isMultipart(r *http.Request) bool {
+	return strings.HasPrefix(strings.TrimLeft(r.Header.Get("Content-Type"), " \t"), "multipart/form-data")
 }

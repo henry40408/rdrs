@@ -177,6 +177,9 @@ func (w *Worker) process(ctx context.Context, job Job) {
 	key := jobKey{job.UserID, job.EntryID}
 	jobCtx, unregister := w.Cancels.register(key)
 	defer unregister()
+	// The drain deadline must reach a Kagi call in flight, not only the gap
+	// between jobs; the row is left for RecoverIncomplete.
+	defer context.AfterFunc(ctx, unregister)()
 	w.run(ctx, jobCtx, job)
 }
 

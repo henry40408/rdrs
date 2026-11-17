@@ -190,11 +190,16 @@ func TestCSRFGuardMatrix(t *testing.T) {
 		{"form field", postForm("/x", "a=1&_csrf="+good, nil), http.StatusOK},
 		{"wrong form field", postForm("/x", "_csrf="+wrong, nil), http.StatusForbidden},
 		{"first of repeated form fields counts", postForm("/x", "_csrf="+wrong+"&_csrf="+good, nil), http.StatusForbidden},
-		{"multipart passes through", func() *http.Request {
-			r := postForm("/import", "x", nil)
+		{"multipart passes through on the OPML import", func() *http.Request {
+			r := postForm("/feeds/import", "x", nil)
 			r.Header.Set("Content-Type", "multipart/form-data; boundary=b")
 			return r
 		}(), http.StatusOK},
+		{"multipart is checked everywhere else", func() *http.Request {
+			r := postForm("/api/feeds", "x", nil)
+			r.Header.Set("Content-Type", "multipart/form-data; boundary=b")
+			return r
+		}(), http.StatusForbidden},
 		{"ClientLogin is exempt", postForm("/accounts/ClientLogin", "a=1", nil), http.StatusOK},
 		{"ClientLogin under the greader prefix is exempt", postForm("/api/greader.php/accounts/ClientLogin", "a=1", nil), http.StatusOK},
 		{"a longer ClientLogin lookalike is not exempt", postForm("/accounts/ClientLogin/x", "a=1", nil), http.StatusForbidden},

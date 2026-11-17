@@ -15,13 +15,11 @@ import (
 // maxUserAgentChars bounds the User-Agent stored with a session.
 const maxUserAgentChars = 512
 
-// PeerIP is the address of the TCP peer. A request without a parsable peer
-// (tests calling the handler directly) counts as loopback.
-func PeerIP(r *http.Request) netip.Addr {
-	if peer, ok := parsePeer(r.RemoteAddr); ok {
-		return peer
-	}
-	return netip.AddrFrom4([4]byte{127, 0, 0, 1})
+// PeerIP is the address of the TCP peer, without any IPv6 zone. ok is false
+// when there is no parsable peer; callers that grant trust must then refuse,
+// and only ClientIP falls back to loopback.
+func PeerIP(r *http.Request) (peer netip.Addr, ok bool) {
+	return parsePeer(r.RemoteAddr)
 }
 
 func parsePeer(remoteAddr string) (netip.Addr, bool) {
@@ -30,10 +28,12 @@ func parsePeer(remoteAddr string) (netip.Addr, bool) {
 		host = remoteAddr
 	}
 	peer, err := netip.ParseAddr(host)
-	if err != nil || peer.Zone() != "" {
+	if err != nil {
 		return netip.Addr{}, false
 	}
-	return peer, true
+	// A link-local peer always carries a zone, which would not match any
+	// trusted network; Rust's SocketAddr drops it too.
+	return peer.WithZone(""), true
 }
 
 // ClientIP is the originating client address. Forwarding headers are honoured

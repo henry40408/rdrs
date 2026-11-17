@@ -37,6 +37,7 @@ func Timeout(limit time.Duration) Middleware {
 			defer timer.Stop()
 			select {
 			case <-done:
+				tw.finish()
 			case <-timer.C:
 				if tw.expire() {
 					// The handler goroutine is abandoned: its context is cancelled
@@ -45,6 +46,7 @@ func Timeout(limit time.Duration) Middleware {
 					return
 				}
 				<-done
+				tw.finish()
 			}
 			select {
 			case p := <-panicked:
@@ -82,6 +84,19 @@ func (w *timeoutWriter) expire() bool {
 	w.headSent = true
 	w.ResponseWriter.WriteHeader(http.StatusRequestTimeout)
 	return true
+}
+
+// finish answers 200 for a handler that returned without starting a
+// response, so the headers it set (a cookie removal) are not lost.
+func (w *timeoutWriter) finish() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.headSent || w.timedOut {
+		return
+	}
+	w.headSent = true
+	w.publishHeader()
+	w.ResponseWriter.WriteHeader(http.StatusOK)
 }
 
 // publishHeader copies the handler's headers to the real writer. The caller

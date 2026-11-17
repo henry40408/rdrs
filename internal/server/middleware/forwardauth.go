@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/flash"
@@ -48,7 +49,7 @@ func ForwardAuth(login auth.ForwardLogin) Middleware {
 			http.SetCookie(w, cookies.Session(session.SessionToken))
 			// The CSRF cookie goes out now so the first rendered form has a valid token.
 			http.SetCookie(w, cookies.CSRF(session.SessionToken))
-			w.Header().Set("Location", r.URL.RequestURI())
+			w.Header().Set("Location", sameOriginTarget(r.URL.RequestURI()))
 			w.WriteHeader(http.StatusSeeOther)
 		})
 	}
@@ -61,4 +62,10 @@ func hasLiveSession(r *http.Request, login auth.ForwardLogin, cookies auth.Cooki
 	}
 	session, err := models.FindSessionByToken(r.Context(), login.DB, token)
 	return err == nil && session != nil && !session.IsExpired()
+}
+
+// sameOriginTarget keeps a request target that starts with several slashes
+// from becoming a scheme-relative URL, which would redirect to another host.
+func sameOriginTarget(target string) string {
+	return "/" + strings.TrimLeft(target, "/\\")
 }

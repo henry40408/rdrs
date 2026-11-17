@@ -73,3 +73,19 @@ func TestUserAgentIsTruncatedAndASCIIOnly(t *testing.T) {
 		t.Errorf("non-ASCII header = %q, want empty as Rust to_str", got)
 	}
 }
+
+func TestPeerIPDropsTheZoneAndReportsAnUnknownPeer(t *testing.T) {
+	peer, ok := PeerIP(requestFrom("[fe80::1%en0]:5555", nil))
+	if !ok || peer != netip.MustParseAddr("fe80::1") {
+		t.Errorf("zoned peer = %v, %v", peer, ok)
+	}
+	for _, remote := range []string{"", "@", "not-an-address"} {
+		if _, ok := PeerIP(requestFrom(remote, nil)); ok {
+			t.Errorf("%q must not count as a peer", remote)
+		}
+	}
+	cfg := trustedConfig(t, "fe80::/10")
+	if got := ClientIP(cfg, requestFrom("[fe80::9%en0]:1", nil)); got != netip.MustParseAddr("fe80::9") {
+		t.Errorf("ClientIP = %v, want the link-local peer, not loopback", got)
+	}
+}
