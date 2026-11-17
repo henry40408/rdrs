@@ -15,6 +15,7 @@ import (
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
+	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/models/entry"
 	"github.com/henry40408/rdrs/internal/testutil"
@@ -57,7 +58,19 @@ func newITestAppWith(t testing.TB, options Options) *itestApp {
 	t.Helper()
 	t.Setenv("RDRS_FAST_HASH", "1")
 	options.DB = testutil.SQLite(t)
-	options.Audit = audit.New(slog.New(slog.DiscardHandler), options.Config.Secret)
+	if options.Audit == nil {
+		options.Audit = audit.New(slog.New(slog.DiscardHandler), options.Config.Secret)
+	}
+	if options.Fetcher == nil {
+		policy, err := fetch.ParsePolicy(options.Config.FetchAllowPrivate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options.Fetcher = fetch.NewFetcher(policy)
+	}
+	if header, ok := options.Config.HSTSHeader(); ok && options.HSTS == "" {
+		options.HSTS = header
+	}
 	options.SkipSetupToken = options.SetupToken == ""
 	app := NewApp(options)
 	// Detached writes (mark-read on a fragment fetch) must land before the

@@ -3,25 +3,32 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/png"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
+	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/imageproxy"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/models/entry"
 	"github.com/henry40408/rdrs/internal/secret"
+	"github.com/henry40408/rdrs/internal/server/middleware"
 	"github.com/henry40408/rdrs/internal/version"
 )
 
@@ -2559,5 +2566,1082 @@ func TestUnreadEntryFormIsIdempotentMarkUnread(t *testing.T) {
 	}
 	if strings.Contains(second, "Marked as unread.") {
 		t.Error("no-op /unread must not re-emit the flash")
+	}
+}
+
+// --- POST /entries/{id}/star, unstar, read, unread: cross-tenant 404 ---
+
+// otherUsersEntry is an entry owned by a second account made behind the
+// router's back, so the signed-in session stays the first account's.
+func otherUsersEntry(t *testing.T, app *itestApp, username, feedURL, guid string) int64 {
+	t.Helper()
+	other, err := models.CreateUser(context.Background(), app.DB, username, "x", models.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := libraryOwner{app: app, userID: other.ID}
+	feedID := bob.feed(t, bob.category(t, "Bob Cat"), feedURL, "Bob Feed")
+	return bob.entry(t, feedID, guid, "Bob Entry", "https://bob/entry")
+}
+
+func TestStarEntryForm404ForOtherUser(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_s404")
+	bobEntryID := otherUsersEntry(t, owner.app, "bob_s404", "https://bob/star-feed", "guid-bob-star")
+
+	for _, action := range []string{"star", "unstar"} {
+		response := owner.app.request(http.MethodPost, fmt.Sprintf("/entries/%d/%s", bobEntryID, action))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("cross-user %s = %d, want 404", action, response.Code)
+		}
+	}
+}
+
+func TestReadEntryForm404ForOtherUser(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_r404")
+	bobEntryID := otherUsersEntry(t, owner.app, "bob_r404", "https://bob/read-feed", "guid-bob-read")
+
+	for _, action := range []string{"read", "unread"} {
+		response := owner.app.request(http.MethodPost, fmt.Sprintf("/entries/%d/%s", bobEntryID, action))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("cross-user %s = %d, want 404", action, response.Code)
+		}
+	}
+}
+
+// POST /entries/{id}/summarize returns a small multi-target swap that only
+// updates #rp-summary-container, so a Fetch-Full-Content view keeps its
+// externally-fetched article body.
+func TestSummarizeEntryFormRendersSummaryPendingFragment(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_sum")
+	feedID := owner.feed(t, owner.category(t, "T"), "https://x/sum-feed", "Sum Feed")
+	entryID := owner.entryWithContent(t, feedID, "guid-sum-test", "Summarizable Entry", "https://x/sum-post", "<p>Content to summarize</p>")
+
+	response := owner.app.request(http.MethodPost, fmt.Sprintf("/entries/%d/summarize", entryID))
+
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+	if !strings.Contains(html, `data-swap-target="#rp-summary-container"`) {
+		t.Error("response must target the summary container, not the whole reading pane")
+	}
+	if !strings.Contains(html, "Summarizing") {
+		t.Error("pending fragment must show a 'Summarizing…' message")
+	}
+	if strings.Contains(html, "reading-pane-article") {
+		t.Error("response must NOT swap the article body (would reset full-content view)")
+	}
+}
+
+// --- GET /entries?fragment=1&after=...: Load-More fragment ---
+
+func TestEntriesLoadMoreReturnsRowFragments(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_lm")
+	// Pinned rather than left to the default: this test is about append
+	// semantics, and the row counts below should not move with the default.
+	owner.setEntriesPerPage(t, 50)
+	feedID := owner.feed(t, owner.category(t, "LoadMore Cat"), "https://lm/feed", "LM Feed")
+	for i := 0; i < 75; i++ {
+		owner.entry(t, feedID, fmt.Sprintf("guid-lm-%d", i), fmt.Sprintf("LM Entry %d", i), fmt.Sprintf("https://lm/%d", i))
+	}
+
+	page1 := owner.app.Get("/entries")
+	wantStatus(t, page1, http.StatusOK)
+	_, afterToken, found := strings.Cut(page1.Text(), `name="after" value="`)
+	if !found {
+		t.Fatal("page 1 should have a load-more cursor (75 entries > 50 page size)")
+	}
+	cursor, _, _ := strings.Cut(afterToken, `"`)
+
+	response := owner.app.Get("/entries?fragment=1&after=" + url.QueryEscape(cursor))
+
+	wantStatus(t, response, http.StatusOK)
+	html := response.Text()
+	if rows := strings.Count(html, "data-entry-row"); rows != 25 {
+		t.Errorf("rows = %d, want 25: append semantics return only the new slice", rows)
+	}
+	if strings.Contains(html, `id="load-more"`) {
+		t.Error("no more pages: the load-more form must be absent")
+	}
+	if !strings.Contains(html, `data-swap-target="#load-more"`) {
+		t.Error("fragment must use the multi-target template swap that targets #load-more")
+	}
+}
+
+// --- feed edit form: additional branches ---
+
+// editFeedPairs is the full edit form; custom headers default to blank.
+func editFeedPairs(feedURL, title string, categoryID int64, customUserAgent, customReferrer string) []string {
+	return []string{
+		"url", feedURL, "title", title, "description", "", "site_url", "",
+		"category_id", fmt.Sprint(categoryID),
+		"custom_user_agent", customUserAgent, "custom_referrer", customReferrer,
+	}
+}
+
+func queryNullString(t *testing.T, app *itestApp, query string, args ...any) sql.NullString {
+	t.Helper()
+	var value sql.NullString
+	if err := app.DB.QueryRowContext(context.Background(), query, args...).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestEditFeedFormEmptyUrl(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://empty-url-test.example.com/feed.xml")
+
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID), editFeedPairs("", "Test Feed", categoryID, "", "")...)
+
+	wantSeeOther(t, response, fmt.Sprintf("/feeds/%d/edit", feedID))
+	if got := queryString(t, app, "SELECT url FROM feed WHERE id = $1", feedID); got != "https://empty-url-test.example.com/feed.xml" {
+		t.Errorf("url = %q", got)
+	}
+}
+
+// Editing the URL used to write whatever was typed straight into the feed
+// table, with no scheme check and no SSRF guard.
+func TestEditFeedFormRefusesAPrivateUrl(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://private-url-test.example.com/feed.xml")
+
+	for _, feedURL := range []string{
+		"http://169.254.169.254/latest/meta-data/",
+		"http://192.168.1.5/feed.xml",
+		"file:///etc/passwd",
+	} {
+		response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID), editFeedPairs(feedURL, "Test Feed", categoryID, "", "")...)
+
+		wantSeeOther(t, response, fmt.Sprintf("/feeds/%d/edit", feedID))
+		if stored := queryString(t, app, "SELECT url FROM feed WHERE id = $1", feedID); stored != "https://private-url-test.example.com/feed.xml" {
+			t.Errorf("%s must not reach the feed table, stored %q", feedURL, stored)
+		}
+	}
+}
+
+func TestEditFeedFormNotFound(t *testing.T) {
+	app := authedApp(t)
+	categoryID, _ := insertTestFeed(t, app, "Tech", "https://notfound-test.example.com/feed.xml")
+
+	response := app.postPairs("/feeds/999999/edit", editFeedPairs("https://notfound-test.example.com/feed.xml", "Test", categoryID, "", "")...)
+
+	wantSeeOther(t, response, "/feeds/999999/edit")
+}
+
+func TestEditFeedFormOtherUsersFeed(t *testing.T) {
+	app := authedApp(t)
+	otherFeedID := otherUsersFeed(t, app)
+
+	// The handler checks ownership through the feed's category, which belongs
+	// to the other account.
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", otherFeedID),
+		editFeedPairs("https://other.example.com/feed.xml", "Hacked", 1, "", "")...)
+
+	if response.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", response.Code)
+	}
+	if title := queryString(t, app, "SELECT title FROM feed WHERE id = $1", otherFeedID); title != "Other" {
+		t.Errorf("the other user's feed title = %q, want unchanged", title)
+	}
+}
+
+func TestEditFeedFormCategoryNotOwned(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "OwnedCat", "https://cat-not-owned.example.com/feed.xml")
+	other, err := models.CreateUser(context.Background(), app.DB, "other_catowner", "x", models.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCategory, err := models.CreateCategory(context.Background(), app.DB, other.ID, "NotMyCategory")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Moving the feed into the other account's category must be refused.
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+		editFeedPairs("https://cat-not-owned.example.com/feed.xml", "Test Feed", otherCategory.ID, "", "")...)
+
+	if response.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", response.Code)
+	}
+	if got := queryInt(t, app, "SELECT category_id FROM feed WHERE id = $1", feedID); got != categoryID {
+		t.Errorf("category_id = %d, want unchanged %d", got, categoryID)
+	}
+}
+
+// A blank custom_user_agent / custom_referrer erases the stored value, the
+// same way a blank description or site_url does.
+func TestEditFeedFormBlankHttpSettingsClearThem(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://clear-ua.example.com/feed.xml")
+	setFeedHTTPSettings(t, app, feedID)
+
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+		editFeedPairs("https://clear-ua.example.com/feed.xml", "Test Feed", categoryID, "", "   ")...)
+
+	wantSeeOther(t, response, "/feeds")
+	if ua := queryNullString(t, app, "SELECT custom_user_agent FROM feed WHERE id = $1", feedID); ua.Valid {
+		t.Errorf("custom_user_agent should be NULL after a blank field, got %q", ua.String)
+	}
+	// Whitespace-only counts as blank, matching the trim the other fields use.
+	if referrer := queryNullString(t, app, "SELECT custom_referrer FROM feed WHERE id = $1", feedID); referrer.Valid {
+		t.Errorf("custom_referrer should be NULL after whitespace, got %q", referrer.String)
+	}
+}
+
+func setFeedHTTPSettings(t *testing.T, app *itestApp, feedID int64) {
+	t.Helper()
+	if _, err := app.DB.ExecContext(context.Background(),
+		"UPDATE feed SET custom_user_agent = 'MyBot/1.0', custom_referrer = 'https://ref.example.com' WHERE id = $1", feedID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The counterpart: a non-empty submission round-trips unchanged, so an
+// ordinary save never disturbs the overrides.
+func TestEditFeedFormKeepsResubmittedHttpSettings(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://keep-ua.example.com/feed.xml")
+	setFeedHTTPSettings(t, app, feedID)
+
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+		editFeedPairs("https://keep-ua.example.com/feed.xml", "Renamed Feed", categoryID, "MyBot/1.0", "https://ref.example.com")...)
+
+	if response.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", response.Code)
+	}
+	if ua := queryNullString(t, app, "SELECT custom_user_agent FROM feed WHERE id = $1", feedID); ua.String != "MyBot/1.0" {
+		t.Errorf("custom_user_agent = %v", ua)
+	}
+	if referrer := queryNullString(t, app, "SELECT custom_referrer FROM feed WHERE id = $1", feedID); referrer.String != "https://ref.example.com" {
+		t.Errorf("custom_referrer = %v", referrer)
+	}
+}
+
+// Omitting an optional field is not the same as sending it blank: a partial
+// POST that carries only the fields it means to change must leave everything
+// else alone.
+func TestEditFeedFormOmittedFieldsAreLeftAlone(t *testing.T) {
+	app := authedApp(t)
+	_, feedID := insertTestFeed(t, app, "Tech", "https://omitted.example.com/feed.xml")
+	execStatistics(t, app, "UPDATE feed SET description = 'Kept description', site_url = 'https://site.example.com', custom_user_agent = 'MyBot/1.0', custom_referrer = 'https://ref.example.com' WHERE id = $1", feedID)
+	otherCategoryID := libraryOwner{app: app, userID: 1}.category(t, "Other")
+
+	// Only the two required fields plus the category: everything optional is
+	// absent from the body entirely.
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+		"url", "https://omitted.example.com/feed.xml", "category_id", fmt.Sprint(otherCategoryID))
+
+	if response.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", response.Code)
+	}
+	if got := queryInt(t, app, "SELECT category_id FROM feed WHERE id = $1", feedID); got != otherCategoryID {
+		t.Errorf("category_id = %d, the category change should have applied", got)
+	}
+	for column, want := range map[string]string{
+		"description": "Kept description", "site_url": "https://site.example.com",
+		"custom_user_agent": "MyBot/1.0", "custom_referrer": "https://ref.example.com",
+	} {
+		if got := queryNullString(t, app, "SELECT "+column+" FROM feed WHERE id = $1", feedID); got.String != want {
+			t.Errorf("%s = %v, want %q", column, got, want)
+		}
+	}
+}
+
+func TestDeleteFeedFormNotFound(t *testing.T) {
+	app := authedApp(t)
+
+	wantSeeOther(t, app.request(http.MethodPost, "/feeds/999999/delete"), "/feeds")
+}
+
+func TestImportOpmlFormInvalid(t *testing.T) {
+	app := authedApp(t)
+	body, contentType := multipartUpload(t, map[string]string{"file": "<not valid opml"})
+
+	wantSeeOther(t, postMultipart(app, "/feeds/import", body, contentType), "/feeds/import")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed") != 0 {
+		t.Error("no feeds may be created from a parse error")
+	}
+}
+
+func opmlWithFeeds(title, category string, feedURLs ...string) string {
+	var feeds strings.Builder
+	for i, feedURL := range feedURLs {
+		fmt.Fprintf(&feeds, "      <outline type=\"rss\" text=\"Feed %d\" xmlUrl=\"%s\"/>\n", i, feedURL)
+	}
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>%s</title></head>
+  <body>
+    <outline text="%s" title="%s">
+%s    </outline>
+  </body>
+</opml>`, title, category, category, feeds.String())
+}
+
+func TestImportOpmlFormDuplicateSkipped(t *testing.T) {
+	app := authedApp(t)
+	feedURL := "https://dup-import.example.com/feed.xml"
+	insertTestFeed(t, app, "DupCat", feedURL)
+	body, contentType := multipartUpload(t, map[string]string{"file": opmlWithFeeds("Dup Test", "DupCat", feedURL)})
+
+	wantSeeOther(t, postMultipart(app, "/feeds/import", body, contentType), "/feeds")
+
+	if count := queryInt(t, app, "SELECT COUNT(*) FROM feed WHERE url = $1", feedURL); count != 1 {
+		t.Errorf("count = %d, a duplicate import must not create a second feed row", count)
+	}
+}
+
+// "OPML imported." cannot distinguish a 300-feed haul from a re-import that
+// added nothing, which is what a user wants to know after uploading a file.
+func TestImportOpmlFormFlashReportsCounts(t *testing.T) {
+	app := authedApp(t)
+	existing := "https://already.example.com/feed.xml"
+	insertTestFeed(t, app, "MixCat", existing)
+	body, contentType := multipartUpload(t, map[string]string{"file": opmlWithFeeds("Mixed", "MixCat",
+		existing, "https://new-a.example.com/feed.xml", "https://new-b.example.com/feed.xml")})
+
+	response := postMultipart(app, "/feeds/import", body, contentType)
+
+	wantSeeOther(t, response, "/feeds")
+	if text := flashText(t, response); !strings.Contains(text, "OPML imported: 2 feeds added, 1 already subscribed.") {
+		t.Errorf("flash must break the import down by outcome, got: %s", text)
+	}
+}
+
+// --- feed forms that fetch: against a stub feed server ---
+
+const mockRSSFixture = `<?xml version="1.0"?><rss version="2.0"><channel>
+  <title>Mock Feed</title><description>Mock Desc</description><link>https://e</link>
+  <item><guid>m1</guid><title>One</title><link>https://e/1</link><description>c1</description></item>
+</channel></rss>`
+
+// mockFeedServer serves mockRSSFixture at every path.
+func mockFeedServer(t *testing.T) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(mockRSSFixture))
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+func TestCreateFeedFormSuccess(t *testing.T) {
+	app := authedApp(t)
+	categoryID := libraryOwner{app: app, userID: 1}.category(t, "Tech")
+	feedURL := mockFeedServer(t)
+
+	wantSeeOther(t, app.postPairs("/feeds", "url", feedURL, "category_id", fmt.Sprint(categoryID)), "/feeds")
+
+	if count := queryInt(t, app, "SELECT COUNT(*) FROM feed WHERE url = $1", feedURL); count != 1 {
+		t.Errorf("count = %d, the feed should have been created", count)
+	}
+}
+
+func TestCreateFeedFormDuplicate(t *testing.T) {
+	app := authedApp(t)
+	feedURL := mockFeedServer(t)
+	categoryID, _ := insertTestFeed(t, app, "Tech", feedURL)
+
+	wantSeeOther(t, app.postPairs("/feeds", "url", feedURL, "category_id", fmt.Sprint(categoryID)), "/feeds")
+
+	if count := queryInt(t, app, "SELECT COUNT(*) FROM feed WHERE url = $1", feedURL); count != 1 {
+		t.Errorf("count = %d, a duplicate create must not add a second feed row", count)
+	}
+}
+
+func TestRefreshFeedFormSuccess(t *testing.T) {
+	app := authedApp(t)
+	_, feedID := insertTestFeed(t, app, "Tech", mockFeedServer(t))
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/feeds/%d/refresh", feedID)), "/feeds")
+
+	if count := queryInt(t, app, "SELECT COUNT(*) FROM entry WHERE feed_id = $1", feedID); count < 1 {
+		t.Errorf("refresh should have synced at least 1 entry, got %d", count)
+	}
+}
+
+func TestFetchMetadataFormSuccess(t *testing.T) {
+	app := authedApp(t)
+	_, feedID := insertTestFeed(t, app, "Tech", mockFeedServer(t))
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/feeds/%d/fetch-metadata", feedID)), fmt.Sprintf("/feeds/%d/edit", feedID))
+
+	if title := queryString(t, app, "SELECT title FROM feed WHERE id = $1", feedID); title != "Mock Feed" {
+		t.Errorf("title = %q", title)
+	}
+	if description := queryNullString(t, app, "SELECT description FROM feed WHERE id = $1", feedID); description.String != "Mock Desc" {
+		t.Errorf("description = %v", description)
+	}
+}
+
+// --- SSE /events auth gate and cache-control wiring ---
+
+func TestEventsEndpointRequiresAuth(t *testing.T) {
+	app := defaultITestApp(t)
+
+	// PageAuthUser redirects every unauthenticated request to /login.
+	wantStatus(t, app.Get("/events"), http.StatusSeeOther)
+}
+
+func TestAuthenticatedPageIsNoStore(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.Get("/")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q: an authenticated page must never be retained by a disk cache or shared proxy", got)
+	}
+	if got := response.Header().Get("Vary"); got != "Cookie" {
+		t.Errorf("Vary = %q: Vary: Cookie must accompany no-store so a proxy cannot conflate the variants", got)
+	}
+}
+
+// Regression guard: the cache-control layer only fills in a header when the
+// response has none, so the long-lived static-asset directive must survive.
+func TestStaticAssetKeepsItsCacheControl(t *testing.T) {
+	app := defaultITestApp(t)
+
+	response := app.Get("/static/css/app.css")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Cache-Control"); got != expectedStaticCacheControl() {
+		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+// proxyNotModified requests the signed image URL with a matching If-None-Match,
+// the SSRF-free 304 path that carries the handler's own Cache-Control. A real
+// upstream fetch cannot be exercised: the proxy's SSRF guard rejects loopback.
+func proxyNotModified(app *itestApp) itestResponse {
+	signature := imageproxy.SignURL(make([]byte, 32), proxyTestImageURL)
+	return app.Do(itestRequest{
+		Path:    "/api/proxy/image?url=" + proxyTestImageURLB64 + "&s=" + signature,
+		Headers: map[string]string{"If-None-Match": `"` + signature + `"`},
+	})
+}
+
+// Authenticated on purpose: that is where the cache-control layer could
+// plausibly override the proxy's own header.
+func TestImageProxyKeepsUpstreamCacheControl(t *testing.T) {
+	response := proxyNotModified(authedApp(t))
+
+	wantStatus(t, response, http.StatusNotModified)
+	if got := response.Header().Get("Cache-Control"); got != "public, max-age=86400" {
+		t.Errorf("Cache-Control = %q: the proxy's own header must pass through untouched", got)
+	}
+}
+
+// Regression test for session-cookie cache poisoning: a shared cache that
+// stores this publicly-cacheable response must never receive a live session or
+// CSRF cookie riding along on it.
+func TestAuthenticatedCacheableResponseCarriesNoSetCookie(t *testing.T) {
+	response := proxyNotModified(authedApp(t))
+
+	wantStatus(t, response, http.StatusNotModified)
+	wantNoSetCookie(t, response, "a publicly-cacheable authenticated response")
+}
+
+func TestHealthEndpointStaysCacheable(t *testing.T) {
+	app := defaultITestApp(t)
+
+	response := app.Get("/health")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("Cache-Control = %q: an unauthenticated request must not get a forced no-store", got)
+	}
+}
+
+// --- Strict-Transport-Security (HSTS) ---
+
+// httpsConfig derives HSTS the real way, from RDRS_PUBLIC_BASE_URL's scheme
+// through config.Load, instead of a hand-set flag.
+func httpsConfig(t *testing.T) config.Config {
+	t.Helper()
+	loaded, err := config.Load(func(name string) (string, bool) {
+		if name != "RDRS_PUBLIC_BASE_URL" {
+			return "", false
+		}
+		return "https://rdrs.example.com", true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := itestConfig()
+	cfg.HSTS, cfg.HSTSMaxAge, cfg.HSTSIncludeSubdomains = loaded.HSTS, loaded.HSTSMaxAge, loaded.HSTSIncludeSubdomains
+	return cfg
+}
+
+const wantHSTS = "max-age=31536000; includeSubDomains"
+
+func TestHstsHeaderPresentWhenPublicBaseUrlIsHttps(t *testing.T) {
+	app := newITestApp(t, httpsConfig(t))
+
+	if got := app.Get("/health").Header().Get("Strict-Transport-Security"); got != wantHSTS {
+		t.Errorf("Strict-Transport-Security = %q", got)
+	}
+}
+
+func TestHstsHeaderAbsentByDefault(t *testing.T) {
+	// HSTS is sticky and cannot be retracted quickly, so a plain-HTTP
+	// deployment must never receive it by accident.
+	cfg := itestConfig()
+	cfg.HSTS = false
+	app := newITestApp(t, cfg)
+
+	response := app.Get("/health")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("a plain-HTTP deployment must never receive Strict-Transport-Security, got %q", got)
+	}
+}
+
+// HSTS is a declaration about the host, not any one response, so there is no
+// skip list.
+func TestHstsHeaderOnStaticAndHealth(t *testing.T) {
+	app := newITestApp(t, httpsConfig(t))
+
+	for _, path := range []string{"/health", "/static/css/app.css"} {
+		response := app.Get(path)
+		wantStatus(t, response, http.StatusOK)
+		if got := response.Header().Get("Strict-Transport-Security"); got != wantHSTS {
+			t.Errorf("%s: Strict-Transport-Security = %q", path, got)
+		}
+	}
+}
+
+// The realistic source of a pre-existing header is a TLS-terminating reverse
+// proxy, so the middleware is wired around a handler standing in for one.
+func TestExistingHstsHeaderIsNotOverwritten(t *testing.T) {
+	proxy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Strict-Transport-Security", "max-age=1")
+	})
+	recorder := httptest.NewRecorder()
+
+	middleware.HSTS(wantHSTS)(proxy).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/probe", nil))
+
+	if got := recorder.Header().Get("Strict-Transport-Security"); got != "max-age=1" {
+		t.Errorf("Strict-Transport-Security = %q", got)
+	}
+}
+
+// crossSitePost is a request the CSRF origin guard refuses before any handler.
+func crossSitePost(app *itestApp) itestResponse {
+	return app.Do(itestRequest{
+		Method: http.MethodPost, Path: "/api/session", Headers: map[string]string{"Sec-Fetch-Site": "cross-site"},
+	})
+}
+
+// Regression test: HSTS must be the outermost layer, because the CSRF guard
+// short-circuits with a 403 without calling next.
+func TestHstsIsSentOnACsrfRejectedResponse(t *testing.T) {
+	response := crossSitePost(newITestApp(t, httpsConfig(t)))
+
+	wantStatus(t, response, http.StatusForbidden)
+	if got := response.Header().Get("Strict-Transport-Security"); got != wantHSTS {
+		t.Errorf("Strict-Transport-Security = %q", got)
+	}
+}
+
+// --- Fixed security headers ---
+
+// expectedSecurityHeaders pairs each header the fixed layer owns with the
+// exact value it must carry, so a test asserts the whole set.
+var expectedSecurityHeaders = map[string]string{
+	"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; " +
+		"img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; " +
+		"base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+	"X-Content-Type-Options": "nosniff",
+	"Referrer-Policy":        "strict-origin-when-cross-origin",
+	"Permissions-Policy": "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), " +
+		"geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), " +
+		"usb=(), xr-spatial-tracking=()",
+	"X-Frame-Options":            "DENY",
+	"Cross-Origin-Opener-Policy": "same-origin",
+}
+
+func wantSecurityHeaders(t *testing.T, response itestResponse, context string) {
+	t.Helper()
+	for name, want := range expectedSecurityHeaders {
+		if got := response.Header().Get(name); got != want {
+			t.Errorf("%s: wrong or missing %s: %q", context, name, got)
+		}
+	}
+}
+
+// Unlike HSTS these are unconditional: none of them depends on the transport.
+func TestSecurityHeadersPresentOnTheDefaultConfig(t *testing.T) {
+	response := defaultITestApp(t).Get("/health")
+
+	wantStatus(t, response, http.StatusOK)
+	wantSecurityHeaders(t, response, "/health")
+}
+
+func TestSecurityHeadersOnStaticAndAPage(t *testing.T) {
+	app := defaultITestApp(t)
+
+	for _, path := range []string{"/static/css/app.css", "/login"} {
+		response := app.Get(path)
+		wantStatus(t, response, http.StatusOK)
+		wantSecurityHeaders(t, response, path)
+	}
+}
+
+// A rejected response is exactly the one an attacker sees, so it must carry
+// the policy too.
+func TestSecurityHeadersAreSentOnACsrfRejectedResponse(t *testing.T) {
+	response := crossSitePost(defaultITestApp(t))
+
+	wantStatus(t, response, http.StatusForbidden)
+	wantSecurityHeaders(t, response, "csrf-rejected /api/session")
+}
+
+func TestExistingSecurityHeaderIsNotOverwritten(t *testing.T) {
+	proxy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+	})
+	recorder := httptest.NewRecorder()
+
+	middleware.SecurityHeaders(proxy).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/probe", nil))
+
+	if got := recorder.Header().Get("Content-Security-Policy"); got != "default-src 'none'" {
+		t.Errorf("Content-Security-Policy = %q", got)
+	}
+	if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q: the headers the proxy did not set are still filled in", got)
+	}
+}
+
+// --- Admin re-authentication ---
+
+// Every route that changes another account is behind the same window that
+// guards passkey enrolment; a lapsed session must be refused before it touches
+// the account.
+func TestAdminAccountChangesRequireRecentAuthentication(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+	staleAuthentication(t, app)
+
+	for path, pairs := range map[string][]string{
+		"/admin/users/2/role":       {"role", "admin"},
+		"/admin/users/2/status":     {"disabled", "true"},
+		"/admin/users/2/masquerade": nil,
+		"/admin/users/2/delete":     nil,
+	} {
+		wantSeeOther(t, app.postPairs(path, pairs...), "/admin")
+	}
+
+	target := userNamed(t, app, "target")
+	if target.Role != models.RoleUser || target.IsDisabled() {
+		t.Errorf("target = %+v: still a plain, enabled user", target)
+	}
+	if admin := userNamed(t, app, "admin"); !admin.IsAdmin() {
+		t.Error("the admin was dragged into a masquerade on the way")
+	}
+}
+
+func TestConfirmingThePasswordReopensTheAdminWindow(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+	staleAuthentication(t, app)
+
+	wantStatus(t, app.postPairs("/admin/reauth", "password", fixturePassword), http.StatusSeeOther)
+	wantStatus(t, app.postPairs("/admin/users/2/role", "role", "admin"), http.StatusSeeOther)
+
+	if target := userNamed(t, app, "target"); target.Role != models.RoleAdmin {
+		t.Errorf("role = %v: the action refused a moment ago must now land", target.Role)
+	}
+}
+
+// The confirmation is a real credential check, not a click-through. Both
+// responses are the same 303, so the account state afterwards is what counts.
+func TestAWrongPasswordDoesNotReopenTheAdminWindow(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+	staleAuthentication(t, app)
+
+	wantStatus(t, app.postPairs("/admin/reauth", "password", "not-the-password"), http.StatusSeeOther)
+	wantStatus(t, app.postPairs("/admin/users/2/role", "role", "admin"), http.StatusSeeOther)
+
+	if target := userNamed(t, app, "target"); target.Role != models.RoleUser {
+		t.Errorf("role = %v: a failed confirmation must not let the change through", target.Role)
+	}
+}
+
+// While masquerading, the password that would be asked for belongs to the
+// impersonated account, so requiring one would strand the admin there.
+func TestStoppingAMasqueradeNeverRequiresReauthentication(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+	started := app.request(http.MethodPost, "/admin/users/2/masquerade")
+	wantStatus(t, started, http.StatusSeeOther)
+	app.ApplyCSRF(started)
+	staleAuthentication(t, app)
+
+	wantStatus(t, app.request(http.MethodPost, "/api/admin/unmasquerade"), http.StatusOK)
+}
+
+// The form is rendered ahead of time, so an admin learns the window lapsed
+// before clicking "delete" rather than after.
+func TestTheAdminPageAsksForConfirmationOnlyOnceTheWindowLapses(t *testing.T) {
+	app := adminApp(t)
+
+	fresh := app.Get("/admin")
+	wantStatus(t, fresh, http.StatusOK)
+	if strings.Contains(fresh.Text(), "admin-reauth-form") {
+		t.Error("a session inside the window has nothing to confirm")
+	}
+	staleAuthentication(t, app)
+
+	stale := app.Get("/admin")
+	wantStatus(t, stale, http.StatusOK)
+	if !strings.Contains(stale.Text(), "admin-reauth-form") {
+		t.Error("a lapsed window must surface the confirmation form")
+	}
+}
+
+// The browser's minlength/maxlength hints come from the constants the handler
+// validates against, so the two cannot drift.
+func TestPasswordFieldsAdvertiseTheServerSidePolicy(t *testing.T) {
+	wantHints := func(body string) {
+		t.Helper()
+		wantContains(t, body,
+			fmt.Sprintf(`minlength="%d"`, auth.PasswordMinLength),
+			fmt.Sprintf(`maxlength="%d"`, auth.PasswordMaxLength))
+	}
+	// Two apps on purpose: /setup is only served while no account exists, and
+	// loading any page first mints an anonymous CSRF cookie.
+	setup := defaultITestApp(t).Get("/setup")
+	wantStatus(t, setup, http.StatusOK)
+	wantHints(setup.Text())
+
+	settings := adminApp(t).Get("/user-settings")
+	wantStatus(t, settings, http.StatusOK)
+	wantHints(settings.Text())
+}
+
+// --- Admin-created accounts and the one-time link that activates them ---
+
+const (
+	newcomerPassword = "heron-lantern-53-drift"
+	createNewcomer   = "newcomer"
+)
+
+// invitePathFrom reads the /invite/{token} path off the flash the create-account
+// redirect sets, as an admin has to: the link is shown once and never stored
+// in recoverable form.
+func invitePathFrom(t *testing.T, response itestResponse) string {
+	t.Helper()
+	raw := strings.ReplaceAll(flashText(t, response), "%2F", "/")
+	_, tail, found := strings.Cut(raw, "/invite/")
+	if !found {
+		t.Fatalf("expected a link in the flash, got %q", raw)
+	}
+	// The token is base64url; the path ends where the encoded JSON resumes.
+	token := tail
+	end := strings.IndexFunc(token, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
+	})
+	if end >= 0 {
+		token = token[:end]
+	}
+	return "/invite/" + token
+}
+
+func createAccount(app *itestApp, username string) itestResponse {
+	return app.postPairs("/admin/users", "username", username, "role", "user")
+}
+
+func redeemInvite(app *itestApp, invite, password string) itestResponse {
+	return app.postPairs(invite, "password", password, "confirm_password", password)
+}
+
+func signInAs(app *itestApp, username, password string) itestResponse {
+	return app.PostJSON("/api/session", map[string]string{"username": username, "password": password})
+}
+
+func TestAnAdminCreatedAccountIsActivatedThroughItsLink(t *testing.T) {
+	app := adminApp(t)
+	created := createAccount(app, createNewcomer)
+	wantStatus(t, created, http.StatusSeeOther)
+	invite := invitePathFrom(t, created)
+
+	// The account exists but cannot be signed into: no password has been set.
+	wantStatus(t, signInAs(app, createNewcomer, fixturePassword), http.StatusUnauthorized)
+	// The link names the account it opens...
+	page := app.Get(invite)
+	wantStatus(t, page, http.StatusOK)
+	if !strings.Contains(page.Text(), createNewcomer) {
+		t.Error("the link page must name the account")
+	}
+	// ...and redeeming it sets the password.
+	wantSeeOther(t, redeemInvite(app, invite, newcomerPassword), "/login")
+	wantStatus(t, signInAs(app, createNewcomer, newcomerPassword), http.StatusOK)
+}
+
+func TestAnAdminCannotCreateAnAccountWithAnInvalidUsername(t *testing.T) {
+	app := adminApp(t)
+
+	for _, bad := range []string{"   ", "a\tb"} {
+		refused := createAccount(app, bad)
+		wantStatus(t, refused, http.StatusSeeOther)
+		if strings.Contains(flashText(t, refused), "/invite/") {
+			t.Errorf("%q: a link was issued", bad)
+		}
+		if found, _ := models.FindUserByUsername(context.Background(), app.DB, strings.TrimSpace(bad)); found != nil {
+			t.Errorf("%q: the account was created", bad)
+		}
+	}
+}
+
+// renameInviteTable breaks and restores the last step of account creation: the
+// account and its category are written before the invite.
+func renameInviteTable(t *testing.T, app *itestApp, from, to string) {
+	t.Helper()
+	execStatistics(t, app, "ALTER TABLE "+from+" RENAME TO "+to)
+}
+
+func TestAFailedAccountCreationLeavesNoAccountBehind(t *testing.T) {
+	app := adminApp(t)
+	renameInviteTable(t, app, "user_invite", "user_invite_off")
+
+	failed := createAccount(app, createNewcomer)
+
+	wantStatus(t, failed, http.StatusSeeOther)
+	if !strings.Contains(flashText(t, failed), "Failed to create the account.") {
+		t.Error("the flash must say the creation failed")
+	}
+	if found, _ := models.FindUserByUsername(context.Background(), app.DB, createNewcomer); found != nil {
+		t.Error("a failed creation must not hold the username")
+	}
+	renameInviteTable(t, app, "user_invite_off", "user_invite")
+	if retried := createAccount(app, createNewcomer); !strings.HasPrefix(invitePathFrom(t, retried), "/invite/") {
+		t.Error("the admin can retry with the same username")
+	}
+}
+
+// capturedLogs keeps everything a logger wrote so a test can assert on it.
+type capturedLogs struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (c *capturedLogs) Write(data []byte) (int, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.buffer.Write(data)
+}
+
+func (c *capturedLogs) count(needle string) int {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return strings.Count(c.buffer.String(), needle)
+}
+
+// An audit event claims the account or link exists, so it must follow the
+// commit: a rolled-back attempt must leave no trace that says otherwise.
+func TestAFailedInviteOrAccountCreationEmitsNoAuditEvent(t *testing.T) {
+	logs := &capturedLogs{}
+	cfg := itestConfig()
+	app := newITestAppWith(t, Options{
+		Config: cfg, Audit: audit.New(slog.New(slog.NewTextHandler(logs, nil)), cfg.Secret),
+	})
+	wantStatus(t, app.setupJSON("admin", nil), http.StatusCreated)
+	app.Login("admin")
+	// Setup already audits the first admin's own account.
+	accountsBefore, invitesBefore := logs.count("account.created"), logs.count("invite.issued")
+
+	renameInviteTable(t, app, "user_invite", "user_invite_off")
+	failed := createAccount(app, createNewcomer)
+	if !strings.Contains(flashText(t, failed), "Failed to create the account.") {
+		t.Error("the creation should have failed")
+	}
+	wantAuditCounts(t, logs, accountsBefore, invitesBefore)
+
+	renameInviteTable(t, app, "user_invite_off", "user_invite")
+	created := createAccount(app, createNewcomer)
+	if !strings.HasPrefix(invitePathFrom(t, created), "/invite/") {
+		t.Error("the retry should have succeeded")
+	}
+	wantAuditCounts(t, logs, accountsBefore+1, invitesBefore+1)
+
+	renameInviteTable(t, app, "user_invite", "user_invite_off")
+	failedReissue := app.request(http.MethodPost, "/admin/users/2/invite")
+	if !strings.Contains(flashText(t, failedReissue), "Failed to issue a link.") {
+		t.Error("the reissue should have failed")
+	}
+	wantAuditCounts(t, logs, accountsBefore+1, invitesBefore+1)
+
+	renameInviteTable(t, app, "user_invite_off", "user_invite")
+	reissued := app.request(http.MethodPost, "/admin/users/2/invite")
+	if !strings.HasPrefix(invitePathFrom(t, reissued), "/invite/") {
+		t.Error("the second reissue should have succeeded")
+	}
+	wantAuditCounts(t, logs, accountsBefore+1, invitesBefore+2)
+}
+
+func wantAuditCounts(t *testing.T, logs *capturedLogs, accounts, invites int) {
+	t.Helper()
+	if got := logs.count("account.created"); got != accounts {
+		t.Errorf("account.created events = %d, want %d", got, accounts)
+	}
+	if got := logs.count("invite.issued"); got != invites {
+		t.Errorf("invite.issued events = %d, want %d", got, invites)
+	}
+}
+
+func TestALinkWorksExactlyOnce(t *testing.T) {
+	app := adminApp(t)
+	invite := invitePathFrom(t, createAccount(app, createNewcomer))
+	wantStatus(t, redeemInvite(app, invite, newcomerPassword), http.StatusSeeOther)
+
+	// A second submission must not replace the password the first person chose.
+	replayed := redeemInvite(app, invite, "badger-kestrel-19-plume")
+
+	wantStatus(t, replayed, http.StatusOK)
+	if !strings.Contains(replayed.Text(), "not valid") {
+		t.Error("a spent link must say it is not valid")
+	}
+	wantStatus(t, signInAs(app, createNewcomer, newcomerPassword), http.StatusOK)
+}
+
+// Unknown, revoked and already-spent links must be indistinguishable, and none
+// may name an account: otherwise the page becomes the enumeration oracle that
+// removing registration was meant to close.
+func TestEveryBadTokenGetsTheSameAnswer(t *testing.T) {
+	app := adminApp(t)
+	invite := invitePathFrom(t, createAccount(app, createNewcomer))
+	unknown := app.Get("/invite/completely-made-up-token")
+	wantStatus(t, unknown, http.StatusOK)
+	wantStatus(t, app.request(http.MethodPost, "/admin/users/2/invite/revoke"), http.StatusSeeOther)
+
+	revoked := app.Get(invite)
+
+	wantStatus(t, revoked, http.StatusOK)
+	if unknown.Text() != revoked.Text() {
+		t.Error("an unknown and a revoked token must get the same page")
+	}
+	if strings.Contains(revoked.Text(), createNewcomer) {
+		t.Error("a revoked link must not name the account")
+	}
+}
+
+// The unusable hash has to hold for the GReader client protocol too, not just
+// the browser form.
+func TestAPendingAccountCannotSignInByAnyPath(t *testing.T) {
+	app := adminApp(t)
+	wantStatus(t, createAccount(app, createNewcomer), http.StatusSeeOther)
+
+	wantStatus(t, signInAs(app, createNewcomer, "!"), http.StatusUnauthorized)
+	wantStatus(t, clientLogin(app, createNewcomer, "!"), http.StatusUnauthorized)
+}
+
+func TestRedemptionEnforcesThePasswordPolicy(t *testing.T) {
+	app := adminApp(t)
+	invite := invitePathFrom(t, createAccount(app, createNewcomer))
+
+	// Too short; the link survives so the person can try again.
+	short := redeemInvite(app, invite, "short")
+	wantStatus(t, short, http.StatusOK)
+	if !strings.Contains(short.Text(), "at least") {
+		t.Error("a short password must name the minimum length")
+	}
+	// Built out of the username, which only the estimator can catch.
+	derived := redeemInvite(app, invite, "newcomernewcomer")
+	wantStatus(t, derived, http.StatusOK)
+	if !strings.Contains(derived.Text(), "invite-error") {
+		t.Error("a username-derived password must be refused")
+	}
+	wantStatus(t, redeemInvite(app, invite, newcomerPassword), http.StatusSeeOther)
+}
+
+// rdrs has no self-service recovery, so this is the reset path; issuing one
+// must not lock the account's owner out on its own.
+func TestAnAdminIssuedResetLeavesTheOldPasswordWorkingUntilRedeemed(t *testing.T) {
+	app := adminApp(t)
+	app.SeedAccount("forgetful", fixturePassword, models.RoleUser)
+	issued := app.request(http.MethodPost, "/admin/users/2/invite")
+	wantStatus(t, issued, http.StatusSeeOther)
+	invite := invitePathFrom(t, issued)
+
+	// Signing in as the target replaces the session cookie, so the CSRF header
+	// is refreshed from the response, exactly as a browser does on its own.
+	signedIn := signInAs(app, "forgetful", fixturePassword)
+	wantStatus(t, signedIn, http.StatusOK)
+	app.ApplyCSRF(signedIn)
+	wantStatus(t, redeemInvite(app, invite, newcomerPassword), http.StatusSeeOther)
+
+	wantStatus(t, signInAs(app, "forgetful", fixturePassword), http.StatusUnauthorized)
+	wantStatus(t, signInAs(app, "forgetful", newcomerPassword), http.StatusOK)
+}
+
+func TestCreatingAnAccountRequiresRecentAuthentication(t *testing.T) {
+	app := adminApp(t)
+	staleAuthentication(t, app)
+
+	wantStatus(t, createAccount(app, createNewcomer), http.StatusSeeOther)
+
+	if found, _ := models.FindUserByUsername(context.Background(), app.DB, createNewcomer); found != nil {
+		t.Error("a stale session must not be able to create an account")
+	}
+}
+
+func TestASingleUserInstanceRefusesASecondAccount(t *testing.T) {
+	cfg := itestConfig()
+	cfg.MultiUser = false
+	app := newITestApp(t, cfg)
+	wantStatus(t, app.setupJSON("admin", nil), http.StatusCreated)
+	app.Login("admin")
+
+	wantStatus(t, createAccount(app, createNewcomer), http.StatusSeeOther)
+
+	if found, _ := models.FindUserByUsername(context.Background(), app.DB, createNewcomer); found != nil {
+		t.Error("a single-user instance must refuse a second account")
+	}
+}
+
+// The link is the only copy that will ever exist, so it belongs where it can be
+// read and copied, not in a banner that fades, and exactly once on the page.
+func TestTheOneTimeLinkIsShownInItsOwnBlockNotABanner(t *testing.T) {
+	app := adminApp(t)
+	created := createAccount(app, createNewcomer)
+	wantStatus(t, created, http.StatusSeeOther)
+	invite := invitePathFrom(t, created)
+
+	page := app.Get("/admin")
+
+	wantStatus(t, page, http.StatusOK)
+	body := page.Text()
+	if !strings.Contains(body, "admin-invite-link") {
+		t.Error("the link should render in its own block")
+	}
+	if count := strings.Count(body, invite); count != 1 {
+		t.Errorf("the link appears %d times, want once: not in the block and the banner", count)
+	}
+	// Dropping the message entirely would leave the flash cookie uncleared and
+	// the link would come back on the next load.
+	if !strings.Contains(body, "Account link ready.") {
+		t.Error("the banner must still say something happened")
+	}
+}
+
+// An admin pastes this into a chat window, so a bare path is close to useless:
+// RDRS_PUBLIC_BASE_URL when set, never the client-supplied Host header.
+func TestTheOneTimeLinkIsAbsoluteWhenAPublicBaseUrlIsConfigured(t *testing.T) {
+	cfg := itestConfig()
+	cfg.PublicBaseURL = "https://reader.example.com"
+	app := newITestApp(t, cfg)
+	wantStatus(t, app.setupJSON("admin", nil), http.StatusCreated)
+	app.Login("admin")
+	wantStatus(t, createAccount(app, createNewcomer), http.StatusSeeOther)
+
+	body := app.Get("/admin").Text()
+
+	if !strings.Contains(body, "https://reader.example.com/invite/") {
+		t.Errorf("expected an absolute link, got: %s", body)
 	}
 }
