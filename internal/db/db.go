@@ -247,3 +247,10 @@ var (
 	_ Executor = (*DB)(nil)
 	_ Executor = (*Tx)(nil)
 )
+
+// Conn pins one connection for work that needs session state, such as the
+// migrator's PostgreSQL advisory lock. It skips write-priority admission, so
+// use it only before the server starts.
+func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) {
+	return d.pool.Conn(ctx)
+}
