@@ -73,6 +73,8 @@ type itestRequest struct {
 	Path    string
 	Body    string
 	Headers map[string]string
+	// Host overrides the request's Host (httptest ignores a Host header).
+	Host string
 	// NoCookies sends the request without the saved cookies.
 	NoCookies bool
 }
@@ -101,6 +103,9 @@ func (a *itestApp) Do(request itestRequest) itestResponse {
 		method = http.MethodGet
 	}
 	r := httptest.NewRequest(method, request.Path, strings.NewReader(request.Body))
+	if request.Host != "" {
+		r.Host = request.Host
+	}
 	for name, values := range a.headers {
 		r.Header[name] = append([]string(nil), values...)
 	}
