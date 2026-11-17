@@ -228,3 +228,10 @@ func Open(secret []byte, stored string) (string, bool) {
 	}
 	return string(plain), true
 }
+
+// InviteHash is the stored form of a user-invite token: hex of its tag under
+// DomainInvite, so the database never holds a redeemable token.
+func InviteHash(secret []byte, token string) string {
+	tag := Tag(secret, DomainInvite, []byte(token))
+	return hex.EncodeToString(tag[:])
+}
