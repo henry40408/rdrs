@@ -20,6 +20,7 @@ import (
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/imageproxy"
 	"github.com/henry40408/rdrs/internal/models"
+	"github.com/henry40408/rdrs/internal/models/entry"
 	"github.com/henry40408/rdrs/internal/secret"
 	"github.com/henry40408/rdrs/internal/version"
 )
@@ -2443,4 +2444,120 @@ func TestEntryFragment404ForOtherUser(t *testing.T) {
 	response := app.Get(fmt.Sprintf("/entries/%d/fragment", bobEntry))
 
 	wantStatus(t, response, http.StatusNotFound)
+}
+
+// --- POST /entries/{id}/star, unstar, read, unread: idempotent form actions ---
+
+// singleEntryOwner is a signed-in reader with one entry titled "E".
+func singleEntryOwner(t *testing.T, username, feedURL, guid string) (app *itestApp, entryID int64) {
+	t.Helper()
+	owner := newLibraryOwner(t, username)
+	feedID := owner.feed(t, owner.category(t, "T"), feedURL, "Test Feed")
+	return owner.app, owner.entry(t, feedID, guid, "E", "https://x/p")
+}
+
+func postActionHTML(t *testing.T, app *itestApp, entryID int64, action string) string {
+	t.Helper()
+	response := app.request(http.MethodPost, fmt.Sprintf("/entries/%d/%s", entryID, action))
+	wantStatus(t, response, http.StatusOK)
+	return response.Text()
+}
+
+func TestStarEntryFormIsIdempotentMarkStarred(t *testing.T) {
+	app, entryID := singleEntryOwner(t, "alice_star", "https://x/star-feed", "guid-star-test")
+
+	// The first /star is a real state change.
+	html := postActionHTML(t, app, entryID, "star")
+
+	for what, want := range map[string]string{
+		"multi-target row block":     `data-swap-target="#entry-row-`,
+		"Unstar on the row toggle":   `aria-label="Unstar"`,
+		"pane star form swap target": `data-swap-target="#reading-pane-star-form-`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("%s: %q missing", what, want)
+		}
+	}
+	if strings.Contains(html, "sidebar-unread") {
+		t.Error("the unconsumed sidebar-unread payload must not be reintroduced")
+	}
+	// The second /star is idempotent: the entry stays starred, no toggle back.
+	if second := postActionHTML(t, app, entryID, "star"); !strings.Contains(second, `aria-label="Unstar"`) {
+		t.Error("second /star call must be a no-op: the star toggle must still show Unstar")
+	}
+}
+
+func TestUnstarEntryFormIsIdempotentMarkUnstarred(t *testing.T) {
+	app, entryID := singleEntryOwner(t, "alice_unstar", "https://x/unstar-feed", "guid-unstar-test")
+	// Already starred, so the first /unstar is a real state change.
+	if _, err := entry.StarEntry(context.Background(), app.DB, entryID); err != nil {
+		t.Fatal(err)
+	}
+
+	html := postActionHTML(t, app, entryID, "unstar")
+
+	if strings.Contains(html, `aria-label="Unstar"`) {
+		t.Error("row star toggle must show Star, not Unstar, after /unstar")
+	}
+	if !strings.Contains(html, ">Star<") {
+		t.Error("pane-star-form swap must render the Star label after unstar")
+	}
+	if second := postActionHTML(t, app, entryID, "unstar"); strings.Contains(second, `aria-label="Unstar"`) {
+		t.Error("second /unstar call must be a no-op: the row must still be unstarred")
+	}
+}
+
+func TestReadEntryFormIsIdempotentMarkRead(t *testing.T) {
+	app, entryID := singleEntryOwner(t, "alice_read", "https://x/read-feed", "guid-read-test")
+
+	html := postActionHTML(t, app, entryID, "read")
+
+	if !strings.Contains(html, `data-swap-target="#entry-row-`) {
+		t.Error("multi-target row block must be present")
+	}
+	if strings.Contains(html, "sidebar-unread") {
+		t.Error("the unconsumed sidebar-unread payload must not be reintroduced")
+	}
+	// The row's read state travels as a class directive applied to the row the
+	// client already has.
+	if !strings.Contains(html, `data-class-add="entry-read"`) {
+		t.Error("row must be marked read via the class directive after first call")
+	}
+	if !strings.Contains(html, `action="/entries/`) || !strings.Contains(html, `/unread"`) {
+		t.Error("the swapped marker form must now offer the inverse (unread) action")
+	}
+	// The second /read is idempotent: the entry stays read.
+	second := postActionHTML(t, app, entryID, "read")
+	if !strings.Contains(second, `data-class-add="entry-read"`) {
+		t.Error("second /read call must be a no-op: the row must still be marked read")
+	}
+	if strings.Contains(second, `data-class-remove="entry-read"`) {
+		t.Error("second /read call must not flip the row back to unread")
+	}
+}
+
+func TestUnreadEntryFormIsIdempotentMarkUnread(t *testing.T) {
+	app, entryID := singleEntryOwner(t, "alice_unr", "https://x/unread-feed", "guid-unread-test")
+	// Already read, so the first /unread is a real state change.
+	if _, err := entry.MarkAsRead(context.Background(), app.DB, entryID); err != nil {
+		t.Fatal(err)
+	}
+
+	html := postActionHTML(t, app, entryID, "unread")
+
+	if !strings.Contains(html, `data-class-remove="entry-read"`) {
+		t.Error("row must be told to drop .entry-read after /unread")
+	}
+	if !strings.Contains(html, "Marked as unread.") {
+		t.Error("the first /unread must emit the flash")
+	}
+	// The second /unread is a no-op and must not re-emit the flash, which
+	// would spam the user on stale-label re-clicks.
+	second := postActionHTML(t, app, entryID, "unread")
+	if !strings.Contains(second, `data-class-remove="entry-read"`) {
+		t.Error("second /unread call must be a no-op: the row must still be unread")
+	}
+	if strings.Contains(second, "Marked as unread.") {
+		t.Error("no-op /unread must not re-emit the flash")
+	}
 }
