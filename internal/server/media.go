@@ -240,7 +240,7 @@ func (a *App) proxyImage(w http.ResponseWriter, r *http.Request) {
 func (a *App) fetchImage(r *http.Request, target *url.URL, req proxyRequest) (*http.Response, error) {
 	return fetch.SendWithRetry(r.Context(), fetch.SendParams{
 		Client: a.Fetcher.Client(false),
-		Config: fetch.DefaultRetry(),
+		Config: a.requestRetry,
 		Build: func(ctx context.Context) (*http.Request, error) {
 			outgoing, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 			if err != nil {

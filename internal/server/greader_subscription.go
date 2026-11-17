@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/discovery"
-	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/greader"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/opml"
@@ -133,7 +132,7 @@ func (a *App) firstOrUncategorizedID(ctx context.Context, userID int64) (int64, 
 // discoverFeed finds the feed at rawURL, mapping a failure to its AppError.
 func (a *App) discoverFeed(ctx context.Context, rawURL string) (*discovery.Feed, error) {
 	discovered, err := discovery.Discover(ctx, discovery.Params{
-		URL: rawURL, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: fetch.DefaultRetry(),
+		URL: rawURL, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: a.requestRetry,
 	})
 	if err == nil {
 		return discovered, nil

@@ -15,7 +15,6 @@ import (
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/discovery"
-	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/flash"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/opml"
@@ -426,7 +425,7 @@ func (a *App) createFeedForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	discovered, err := discovery.Discover(r.Context(), discovery.Params{
-		URL: feedURL, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: fetch.DefaultRetry(),
+		URL: feedURL, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: a.requestRetry,
 	})
 	if err != nil {
 		flash.Redirect(w, back, flash.NewError("Failed to discover feed: "+err.Error()))
@@ -626,7 +625,7 @@ func (a *App) fetchMetadataForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	discovered, err := discovery.Discover(r.Context(), discovery.Params{
-		URL: feed.URL, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: fetch.DefaultRetry(),
+		URL: feed.URL, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: a.requestRetry,
 	})
 	if err != nil {
 		flash.Redirect(w, failHere, flash.NewError("Failed to fetch metadata: "+err.Error()))

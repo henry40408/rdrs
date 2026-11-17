@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/cache"
-	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/models/entry"
 	"github.com/henry40408/rdrs/internal/readability"
@@ -191,7 +190,7 @@ func (a *App) fetchFullContentAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	extracted, err := readability.FetchAndExtract(r.Context(), readability.Params{
-		URL: *found.Link, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: fetch.DefaultRetry(),
+		URL: *found.Link, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: a.requestRetry,
 	})
 	if err != nil {
 		writeError(w, extractionError(err))

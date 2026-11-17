@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/auth"
-	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/flash"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/models/entry"
@@ -263,7 +262,7 @@ func (a *App) fetchFullContentForm(w http.ResponseWriter, r *http.Request) {
 // failed write is an error.
 func (a *App) storeFullContent(ctx context.Context, userID int64, found *entry.WithFeed) (toast, error) {
 	extracted, err := readability.FetchAndExtract(ctx, readability.Params{
-		URL: *found.Link, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: fetch.DefaultRetry(),
+		URL: *found.Link, UserAgent: a.Config.UserAgent, Fetcher: a.Fetcher, Retry: a.requestRetry,
 	})
 	if err != nil {
 		return toast{flash.Error, "Failed to fetch full content: " + err.Error()}, nil
@@ -357,7 +356,7 @@ func (a *App) saveToServices(ctx context.Context, config save.ServicesConfig, bo
 	var outcomes []saveOutcome
 	if config.Linkding != nil && config.Linkding.IsConfigured() {
 		result, err := save.SaveToLinkding(ctx, save.LinkdingRequest{
-			Config: *config.Linkding, Bookmark: bookmark, Client: a.externalClient, Retry: fetch.DefaultRetry(),
+			Config: *config.Linkding, Bookmark: bookmark, Client: a.externalClient, Retry: a.requestRetry,
 		})
 		outcomes = append(outcomes, saveOutcome{service: "Linkding", result: result, failure: err})
 	}

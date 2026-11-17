@@ -218,7 +218,7 @@ func (a *App) summarizeItem(ctx context.Context, userID int64, form itemForm) vi
 		return failed("Kagi is not configured.")
 	}
 	result, err := summarize.Summarize(ctx, summarize.Request{
-		Config: config, URL: form.url, Client: a.externalClient, Retry: fetch.DefaultRetry(),
+		Config: config, URL: form.url, Client: a.externalClient, Retry: a.requestRetry,
 	})
 	if err != nil {
 		return failed(err.Error())

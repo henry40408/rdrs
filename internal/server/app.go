@@ -57,6 +57,9 @@ type App struct {
 	// synchronous so the next request sees the write.
 	detach  func(task func())
 	pending sync.WaitGroup
+	// requestRetry is how a request handler retries a failing outbound fetch;
+	// tests shorten it so an unreachable URL does not wait out the backoff.
+	requestRetry fetch.RetryConfig
 }
 
 // NewApp wires the shared dependencies from options.
@@ -110,6 +113,7 @@ func NewApp(options Options) *App {
 	}
 	app.webauthn, app.webauthnErr = auth.NewWebAuthn(options.Config)
 	app.detach = app.goDetached
+	app.requestRetry = fetch.DefaultRetry()
 	return app
 }
 

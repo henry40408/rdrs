@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
@@ -73,6 +74,9 @@ func newITestAppWith(t testing.TB, options Options) *itestApp {
 	}
 	options.SkipSetupToken = options.SetupToken == ""
 	app := NewApp(options)
+	// Unreachable hosts in tests must fail in milliseconds, not wait out the
+	// production backoff; one retry still exercises the retry path.
+	app.requestRetry = fetch.RetryConfig{MaxRetries: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
 	// Detached writes (mark-read on a fragment fetch) must land before the
 	// database directory is removed, or its cleanup races them.
 	t.Cleanup(app.Wait)

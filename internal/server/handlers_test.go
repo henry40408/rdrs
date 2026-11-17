@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
+	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/imageproxy"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/models/entry"
@@ -1314,12 +1316,32 @@ func TestSubscriptionListWithFeeds(t *testing.T) {
 	}
 }
 
+// closedLocalURL is a loopback origin nothing listens on.
+func closedLocalURL(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return "http://" + address
+}
+
 // ac=subscribe performs feed discovery before inserting; an unreachable URL is
 // a 502 from discovery.
 func TestSubscriptionEditSubscribeUnreachableUrl(t *testing.T) {
 	app := authedApp(t)
+	// A closed local port refuses at once, with no DNS lookup.
+	policy, err := fetch.ParsePolicy("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.App.Fetcher = fetch.NewFetcher(policy)
 
-	response := app.postPairs("/reader/api/0/subscription/edit", "ac", "subscribe", "s", "feed/https://unreachable.example.com/feed.xml")
+	response := app.postPairs("/reader/api/0/subscription/edit", "ac", "subscribe", "s", "feed/"+closedLocalURL(t)+"/feed.xml")
 
 	wantStatus(t, response, http.StatusBadGateway)
 }
