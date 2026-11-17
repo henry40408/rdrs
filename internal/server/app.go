@@ -31,6 +31,8 @@ type App struct {
 	Sidebar *cache.Sidebar
 	// AdminDBStats holds the site-wide database figures of /statistics.
 	AdminDBStats *cache.AdminDBStats
+	// summarizerInflight limits /summarizer/item to one Kagi call per user.
+	summarizerInflight inflightUsers
 	// Fetcher and Syncer reach the network for discovery, import and refresh.
 	Fetcher *fetch.Fetcher
 	Syncer  *feedsync.Syncer

@@ -90,6 +90,7 @@ var goldenPaths = map[string]bool{
 	"/no/such/page":                    true,
 	"/api/offline/manifest":            true,
 	"/statistics":                      true,
+	"/summarizer":                      true,
 	"/search":                          true,
 	"/search?q=alpha":                  true,
 	"/search?q=zzzznothing":            true,
