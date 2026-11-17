@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -278,4 +279,27 @@ func (a *itestApp) SeedUserWithEntry(username, password string) (userID, entryID
 		a.t.Fatal(err)
 	}
 	return user.ID, result.ID
+}
+
+// flashText is the text of the flash cookie a response set: the signature is
+// stripped, then the base64 and percent encoding undone.
+func flashText(t testing.TB, response itestResponse) string {
+	t.Helper()
+	cookie := response.Cookie("flash")
+	if cookie == nil {
+		t.Fatal("response set no flash cookie")
+	}
+	value := cookie.Value
+	if dot := strings.LastIndex(value, "."); dot >= 0 {
+		value = value[:dot]
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		t.Fatalf("flash cookie is not base64: %v", err)
+	}
+	text, err := url.QueryUnescape(string(decoded))
+	if err != nil {
+		t.Fatalf("flash cookie is not percent-encoded: %v", err)
+	}
+	return text
 }

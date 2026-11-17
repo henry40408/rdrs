@@ -11,7 +11,7 @@ import (
 
 // minimumMappedTests is the number of Rust tests ported so far; raise it with
 // every ported file. The goal is the Rust count (about 615).
-const minimumMappedTests = 109
+const minimumMappedTests = 130
 
 // TestEveryMappedGoTestExists keeps testdata/test_map.txt honest: each Go test
 // it names must be declared in its package, and the map may not shrink.
