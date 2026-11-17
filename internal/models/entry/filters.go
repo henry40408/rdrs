@@ -96,12 +96,12 @@ func (q *query) applyFilter(f *Filter) {
 			q.dialect.LikeCI("e.title", index), q.dialect.LikeCI("e.content_text", index)))
 	}
 	if f.PublishedBetween != nil {
-		start := q.bind(db.FormatSpace(f.PublishedBetween.Start))
-		end := q.bind(db.FormatSpace(f.PublishedBetween.End))
+		start := q.bind(q.dialect.TimeBound(f.PublishedBetween.Start))
+		end := q.bind(q.dialect.TimeBound(f.PublishedBetween.End))
 		q.where(fmt.Sprintf("(%s >= %s AND %s < %s)", publishedSortColumn, start, publishedSortColumn, end))
 	}
 	if f.StoredBefore != nil {
-		q.where("e.created_at < " + q.bind(db.FormatSpace(*f.StoredBefore)))
+		q.where("e.created_at < " + q.bind(q.dialect.TimeBound(*f.StoredBefore)))
 	}
 	if f.HasSummary != nil {
 		q.where(summaryExists(*f.HasSummary))

@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/config"
 )
@@ -23,6 +24,17 @@ func DialectFor(backend config.Backend) Dialect {
 		return DialectPostgres
 	}
 	return DialectSQLite
+}
+
+// TimeBound renders t for comparison against a stored entry timestamp. SQLite
+// keeps those at second precision in the space form, so the sub-second part
+// would only break the text comparison; PostgreSQL stores full precision, so
+// it keeps the fraction.
+func (d Dialect) TimeBound(t time.Time) string {
+	if d == DialectPostgres {
+		return FormatRustRFC3339(t)
+	}
+	return FormatSpace(t)
 }
 
 // Rewrite turns SQLite-only SQL into its PostgreSQL form: datetime('now')

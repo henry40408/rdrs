@@ -110,12 +110,12 @@ func TestParseErrors(t *testing.T) {
 }
 
 func TestParseDateEdges(t *testing.T) {
-	for _, value := range []string{"+12345-01-01", "0001-01-01", "2024-02-29", " 2026-01-01"} {
+	for _, value := range []string{"+12345-01-01", "0001-01-01", "2024-02-29", " 2026-01-01", "+262142-01-01", "-262143-01-01"} {
 		if _, ok := parseChronoDate(value); !ok {
 			t.Errorf("%q should parse", value)
 		}
 	}
-	for _, value := range []string{"2023-02-29", "2026-001-01", "2026/01/01", ""} {
+	for _, value := range []string{"2023-02-29", "2026-001-01", "2026/01/01", "", "+ 2026-01-01", "- 2026-01-01", "+262143-01-01", "-262144-01-01"} {
 		if _, ok := parseChronoDate(value); ok {
 			t.Errorf("%q should not parse", value)
 		}

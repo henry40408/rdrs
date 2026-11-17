@@ -9,8 +9,8 @@ import (
 
 // Year bounds of chrono's NaiveDate, which the Rust build parses with.
 const (
-	minYear = -262144
-	maxYear = 262143
+	minYear = -262143
+	maxYear = 262142
 )
 
 // parseChronoDate accepts what chrono's parse_from_str(value, "%Y-%m-%d")
@@ -49,7 +49,7 @@ func scanYear(s string) (year int, rest string, ok bool) {
 	s = strings.TrimLeftFunc(s, unicode.IsSpace)
 	negative := strings.HasPrefix(s, "-")
 	if negative || strings.HasPrefix(s, "+") {
-		year, rest, ok = scanNumber(s[1:], -1)
+		year, rest, ok = scanDigits(s[1:], -1)
 		if negative {
 			year = -year
 		}
@@ -61,7 +61,12 @@ func scanYear(s string) (year int, rest string, ok bool) {
 // scanNumber reads one or more ASCII digits, at most maxDigits of them when
 // maxDigits is positive. It skips leading whitespace first.
 func scanNumber(s string, maxDigits int) (value int, rest string, ok bool) {
-	s = strings.TrimLeftFunc(s, unicode.IsSpace)
+	return scanDigits(strings.TrimLeftFunc(s, unicode.IsSpace), maxDigits)
+}
+
+// scanDigits is scanNumber without the whitespace skip: chrono does not skip
+// whitespace between a year sign and its digits.
+func scanDigits(s string, maxDigits int) (value int, rest string, ok bool) {
 	end := 0
 	for end < len(s) && s[end] >= '0' && s[end] <= '9' && (maxDigits < 0 || end < maxDigits) {
 		end++

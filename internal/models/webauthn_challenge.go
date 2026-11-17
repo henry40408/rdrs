@@ -84,7 +84,7 @@ func CreateChallenge(ctx context.Context, e db.Executor, in NewChallenge) (*Weba
 // anonymous ceremony) and type, and deletes it so it is single-use. It fails
 // with ErrChallengeNotFound when there is none.
 //
-// Run it inside a transaction when two requests could race for one challenge.
+// Of two concurrent takers of one challenge, exactly one succeeds.
 func TakeChallenge(ctx context.Context, e db.Executor, userID *int64, kind ChallengeType) (*WebauthnChallenge, error) {
 	owner, args := "user_id IS NULL", []any{string(kind), stamp(time.Now())}
 	if userID != nil {
@@ -100,8 +100,18 @@ func TakeChallenge(ctx context.Context, e db.Executor, userID *int64, kind Chall
 	if err != nil {
 		return nil, err
 	}
-	if _, err := e.ExecContext(ctx, `DELETE FROM webauthn_challenge WHERE id = $1`, found.ID); err != nil {
+	deleted, err := e.ExecContext(ctx, `DELETE FROM webauthn_challenge WHERE id = $1`, found.ID)
+	if err != nil {
 		return nil, err
+	}
+	// A concurrent taker may have deleted the row between our read and delete;
+	// only the one whose delete removed it owns the challenge.
+	affected, err := deleted.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if affected == 0 {
+		return nil, ErrChallengeNotFound
 	}
 	return &found, nil
 }

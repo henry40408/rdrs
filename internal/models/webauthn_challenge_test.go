@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,4 +106,41 @@ func TestParseChallengeType(t *testing.T) {
 	if _, ok := ParseChallengeType("invalid"); ok {
 		t.Error("invalid must not parse")
 	}
+}
+
+func TestConcurrentTakeChallengeHasOneWinner(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		ctx := context.Background()
+		user := mustUser(t, database, "alice")
+		if _, err := CreateChallenge(ctx, database, NewChallenge{
+			Challenge: []byte{9}, UserID: &user.ID, ChallengeType: ChallengeRegistration, StateData: "{}",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		const takers = 8
+		var wins, notFound int
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for range takers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := TakeChallenge(ctx, database, &user.ID, ChallengeRegistration)
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					wins++
+				case errors.Is(err, ErrChallengeNotFound):
+					notFound++
+				default:
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		if wins != 1 || notFound != takers-1 {
+			t.Errorf("wins = %d, not found = %d", wins, notFound)
+		}
+	})
 }

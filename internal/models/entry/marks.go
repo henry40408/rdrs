@@ -167,7 +167,7 @@ func (m MarkAllRead) conditions(q *query) string {
 		extra.WriteString(" AND COALESCE(published_at, created_at) < " + cutoff)
 	}
 	if m.StoredBy != nil {
-		extra.WriteString(" AND created_at < " + q.bind(db.FormatSpace(*m.StoredBy)))
+		extra.WriteString(" AND created_at < " + q.bind(q.dialect.TimeBound(*m.StoredBy)))
 	}
 	return extra.String()
 }

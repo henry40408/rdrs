@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/config"
 )
@@ -54,5 +55,15 @@ func TestRewriteOnlyTouchesPostgres(t *testing.T) {
 	want := "UPDATE t SET read_at = now(), x = datetime('now', '-1 days')"
 	if got := DialectPostgres.Rewrite(sql); got != want {
 		t.Errorf("Rewrite = %q, want %q", got, want)
+	}
+}
+
+func TestTimeBoundKeepsFractionOnlyOnPostgres(t *testing.T) {
+	at := time.Date(2026, 3, 4, 5, 6, 7, 123_000_000, time.UTC)
+	if got := DialectSQLite.TimeBound(at); got != "2026-03-04 05:06:07" {
+		t.Errorf("sqlite = %q", got)
+	}
+	if got := DialectPostgres.TimeBound(at); got != "2026-03-04T05:06:07.123+00:00" {
+		t.Errorf("postgres = %q", got)
 	}
 }
