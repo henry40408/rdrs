@@ -141,18 +141,31 @@ func (w *Worker) Run(ctx context.Context, jobs <-chan Job) {
 		select {
 		case <-ctx.Done():
 			slog.Info("summary worker stopping, draining remaining jobs", "event", "summary.worker_stopping")
-			w.drain(work, jobs)
+			drainCtx, cancel := context.WithTimeout(work, DrainTimeout)
+			w.drain(drainCtx, jobs)
+			cancel()
 			return
-		case job := <-jobs:
+		case job, open := <-jobs:
+			if !open {
+				return
+			}
 			w.process(work, job)
 		}
 	}
 }
 
+// DrainTimeout bounds how long shutdown waits for queued jobs, like the 30
+// second join timeout of the Rust server. Rows left unfinished are picked up by
+// RecoverIncomplete on the next start.
+const DrainTimeout = 30 * time.Second
+
 func (w *Worker) drain(ctx context.Context, jobs <-chan Job) {
-	for {
+	for ctx.Err() == nil {
 		select {
-		case job := <-jobs:
+		case job, open := <-jobs:
+			if !open {
+				return
+			}
 			w.process(ctx, job)
 		default:
 			return

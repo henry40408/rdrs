@@ -391,6 +391,22 @@ func TestRunDrainsQueuedJobsOnShutdown(t *testing.T) {
 	}
 }
 
+func TestRunStopsWhenTheQueueIsClosed(t *testing.T) {
+	f := newWorkerFixture(t, kagiSettings, answer("body"))
+	queue := make(chan Job)
+	close(queue)
+	finished := make(chan struct{})
+	go func() {
+		f.worker.Run(context.Background(), queue)
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run spins on a closed queue")
+	}
+}
+
 func TestRunProcessesJobsWhileRunning(t *testing.T) {
 	f := newWorkerFixture(t, kagiSettings, answer("body"))
 	queue := NewQueue()
