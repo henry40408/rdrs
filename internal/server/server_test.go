@@ -66,10 +66,6 @@ func TestRegisteredRoutesAreAllInTheRustRouteList(t *testing.T) {
 	}
 }
 
-// allRoutesPending is removed by the step that mounts the last handler; from
-// then on a route missing from the registry fails this test.
-const allRoutesPending = true
-
 func TestEveryRustRouteIsRegistered(t *testing.T) {
 	data, err := os.ReadFile("testdata/routes.txt")
 	if err != nil {
@@ -86,9 +82,6 @@ func TestEveryRustRouteIsRegistered(t *testing.T) {
 		}
 	}
 	sort.Strings(missing)
-	if len(missing) > 0 && allRoutesPending {
-		t.Skipf("%d routes not ported yet", len(missing))
-	}
 	if len(missing) > 0 {
 		t.Errorf("routes missing from the registry:\n%s", strings.Join(missing, "\n"))
 	}
