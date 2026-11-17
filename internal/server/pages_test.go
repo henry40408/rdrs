@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/models"
@@ -986,4 +989,200 @@ func TestFeedEntriesPageMarksActiveFeed(t *testing.T) {
 	wantContains(t, html, fmt.Sprintf(`active-feed-id="%d"`, feedID), fmt.Sprintf(`active-category-id="%d"`, catID))
 
 	wantAbsent(t, owner.app.Get(fmt.Sprintf("/categories/%d/entries", catID)).Text(), "active-feed-id")
+}
+
+// afterTheSeed is a render time after anything the test seeded, as a list
+// page would post it.
+func afterTheSeed() string {
+	return time.Now().UTC().Add(30 * time.Second).Format("2006-01-02 15:04:05")
+}
+
+// backdateStoredEntries moves every entry out of the render's own second,
+// which a snapshot would leave out.
+func backdateStoredEntries(t *testing.T, app *itestApp) {
+	t.Helper()
+	execStatistics(t, app, "UPDATE entry SET created_at = '2000-01-01 00:00:00'")
+}
+
+func readAt(t *testing.T, app *itestApp, entryID int64) sql.NullString {
+	t.Helper()
+	var value sql.NullString
+	if err := app.DB.QueryRowContext(context.Background(), "SELECT read_at FROM entry WHERE id = $1", entryID).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func postMarkRead(t *testing.T, app *itestApp, path string, fields map[string]string) itestResponse {
+	t.Helper()
+	form := url.Values{"snapshot": {afterTheSeed()}}
+	for name, value := range fields {
+		form.Set(name, value)
+	}
+	response := app.PostForm(path, form)
+	wantStatus(t, response, http.StatusSeeOther)
+	return response
+}
+
+// POST /categories/{id}/entries/mark-read marks only the entries matching the
+// scoped search, and redirects back preserving ?q=.
+func TestCategoryMarkReadScopedSearch(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_mr")
+	catID := owner.category(t, "MarkReadCat")
+	feedID := owner.feed(t, catID, "https://x/mr-feed", "MR Feed")
+	matching := owner.entry(t, feedID, "guid-mr-match", "Widget Roundup", "https://x/mr/match")
+	other := owner.entry(t, feedID, "guid-mr-other", "Something Else", "https://x/mr/other")
+
+	response := postMarkRead(t, owner.app, fmt.Sprintf("/categories/%d/entries/mark-read", catID), map[string]string{"q": "Widget"})
+
+	if got, want := response.Header().Get("Location"), fmt.Sprintf("/categories/%d/entries?q=Widget", catID); got != want {
+		t.Errorf("redirect = %q, want %q (it must preserve the scoped-search keyword)", got, want)
+	}
+	if !readAt(t, owner.app, matching).Valid {
+		t.Error("entry matching the scoped search must be marked read")
+	}
+	if readAt(t, owner.app, other).Valid {
+		t.Error("entry not matching the scoped search must remain unread")
+	}
+}
+
+// "Mark matching as read" takes the search syntax, and a query that does not
+// parse marks nothing rather than the whole category.
+func TestCategoryMarkReadScopedSearchSyntax(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_ms")
+	catID := owner.category(t, "MarkSyntaxCat")
+	feedID := owner.feed(t, catID, "https://x/ms-feed", "MS Feed")
+	widget := owner.entry(t, feedID, "guid-ms-a", "Widget Roundup", "https://x/ms/guid-ms-a")
+	other := owner.entry(t, feedID, "guid-ms-b", "Something Else", "https://x/ms/guid-ms-b")
+	path := fmt.Sprintf("/categories/%d/entries/mark-read", catID)
+
+	// Unparseable: nothing is marked.
+	postMarkRead(t, owner.app, path, map[string]string{"q": "(Widget"})
+	expect(t, "unparseable query marked the widget entry", !readAt(t, owner.app, widget).Valid)
+	expect(t, "unparseable query marked the other entry", !readAt(t, owner.app, other).Valid)
+
+	// An empty quoted phrase is a syntax error too, not "match everything".
+	postMarkRead(t, owner.app, path, map[string]string{"q": `""`})
+	expect(t, "empty phrase marked the widget entry", !readAt(t, owner.app, widget).Valid)
+	expect(t, "empty phrase marked the other entry", !readAt(t, owner.app, other).Valid)
+
+	// The syntax is honoured: only the entry that is not "Widget" is marked.
+	postMarkRead(t, owner.app, path, map[string]string{"q": "-Widget"})
+	expect(t, "-Widget marked the widget entry", !readAt(t, owner.app, widget).Valid)
+	expect(t, "-Widget left the other entry unread", readAt(t, owner.app, other).Valid)
+}
+
+// The lazily-loaded feed list under the open category, with per-feed unread
+// counts. Another account's category must 404 rather than leak its feeds.
+func TestSidebarCategoryFeedsEndpoint(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_sf")
+	catID := owner.category(t, "SFCat")
+	otherCatID := owner.category(t, "SFOther")
+	feedID := owner.feed(t, catID, "https://x/sf-feed", "SF Feed")
+	otherFeedID := owner.feed(t, otherCatID, "https://x/sf-other-feed", "SF Other Feed")
+	for i := 0; i < 2; i++ {
+		owner.entry(t, feedID, fmt.Sprintf("guid-sf-%d", i), fmt.Sprintf("SF Entry %d", i), fmt.Sprintf("https://x/sf/%d", i))
+	}
+	owner.entry(t, otherFeedID, "guid-sf-other", "Other Entry", "https://x/sf/other")
+	path := fmt.Sprintf("/api/sidebar/categories/%d/feeds", catID)
+
+	response := owner.app.Get(path)
+	wantStatus(t, response, http.StatusOK)
+	var body struct {
+		CategoryID int64 `json:"category_id"`
+		Feeds      []struct {
+			ID          int64  `json:"id"`
+			Title       string `json:"title"`
+			UnreadCount int64  `json:"unread_count"`
+			HasIcon     bool   `json:"has_icon"`
+		} `json:"feeds"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.CategoryID != catID {
+		t.Errorf("category_id = %d, want %d", body.CategoryID, catID)
+	}
+	if len(body.Feeds) != 1 {
+		t.Fatalf("only the requested category's feeds may be listed, got %d", len(body.Feeds))
+	}
+	feed := body.Feeds[0]
+	if feed.ID != feedID || feed.Title != "SF Feed" {
+		t.Errorf("feed = %+v", feed)
+	}
+	if feed.UnreadCount != 2 {
+		t.Errorf("unread_count = %d, want 2 (scoped to the feed)", feed.UnreadCount)
+	}
+	if feed.HasIcon {
+		t.Error("a feed with no stored icon must say so, or the sidebar renders a broken image")
+	}
+
+	sourceURL := "https://x/icon.png"
+	if err := models.UpsertImage(context.Background(), owner.app.DB, models.ImageUpsert{
+		EntityType: models.EntityFeed, EntityID: feedID, Data: []byte{1, 2, 3}, ContentType: "image/png", SourceURL: &sourceURL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	withIcon := owner.app.Get(path)
+	if !strings.Contains(strings.ReplaceAll(withIcon.Text(), " ", ""), `"has_icon":true`) {
+		t.Errorf("a stored icon must be reported so the sidebar renders it: %s", withIcon.Text())
+	}
+
+	wantStatus(t, owner.app.Get("/api/sidebar/categories/999999/feeds"), http.StatusNotFound)
+}
+
+// "Mark Above as Read" is dropped from a scoped-search render: under a search
+// it would mean the matches, too close to "Mark N matching as Read".
+func TestCategoryEntriesHidesMarkAboveWhileSearching(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_ma")
+	catID := owner.category(t, "MACat")
+	feedID := owner.feed(t, catID, "https://x/ma-feed", "MA Feed")
+	owner.entry(t, feedID, "guid-ma-0", "Widget News", "https://x/ma/0")
+
+	plain := owner.app.Get(fmt.Sprintf("/categories/%d/entries", catID))
+	wantContains(t, plain.Text(), "mark-above-read")
+
+	searched := owner.app.Get(fmt.Sprintf("/categories/%d/entries?q=Widget", catID)).Text()
+	wantContains(t, searched, "data-entry-row")
+	wantAbsent(t, searched, "mark-above-read")
+}
+
+// The feed-scoped twin of the category test, guarding against an argument-order
+// bug between the two form handlers and the shared scoped helper.
+func TestFeedMarkReadScopedSearch(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_fmr")
+	catID := owner.category(t, "FeedMarkReadCat")
+	feedID := owner.feed(t, catID, "https://x/fmr-feed", "FMR Feed")
+	matching := owner.entry(t, feedID, "guid-fmr-match", "Widget Roundup", "https://x/fmr/match")
+	other := owner.entry(t, feedID, "guid-fmr-other", "Something Else", "https://x/fmr/other")
+
+	response := postMarkRead(t, owner.app, fmt.Sprintf("/feeds/%d/entries/mark-read", feedID), map[string]string{"q": "Widget"})
+
+	if got, want := response.Header().Get("Location"), fmt.Sprintf("/feeds/%d/entries?q=Widget", feedID); got != want {
+		t.Errorf("redirect = %q, want %q (it must preserve the scoped-search keyword)", got, want)
+	}
+	expect(t, "entry matching the scoped search must be marked read", readAt(t, owner.app, matching).Valid)
+	expect(t, "entry not matching the scoped search must remain unread", !readAt(t, owner.app, other).Valid)
+}
+
+// On the ?status=all tab matching_count must equal what the action will mark
+// (unread and matching), not what the tab lists.
+func TestCategoryMatchingCountReflectsUnreadOnlyOnAllTab(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_mc")
+	catID := owner.category(t, "MatchCountCat")
+	feedID := owner.feed(t, catID, "https://x/mc-feed", "MC Feed")
+	matchingUnread := owner.entry(t, feedID, "guid-mc-unread", "Widget Roundup Unread", "https://x/mc/unread")
+	matchingRead := owner.entry(t, feedID, "guid-mc-read", "Widget Roundup Read", "https://x/mc/read")
+	execStatistics(t, owner.app, "UPDATE entry SET read_at = CURRENT_TIMESTAMP WHERE id = $1", matchingRead)
+	backdateStoredEntries(t, owner.app)
+
+	html := owner.app.GetOK(fmt.Sprintf("/categories/%d/entries?status=all&q=Widget", catID))
+	if !strings.Contains(html, "Mark 1 matching as Read") {
+		t.Errorf("the count must reflect only the unread match:\n%s", html)
+	}
+
+	postMarkRead(t, owner.app, fmt.Sprintf("/categories/%d/entries/mark-read", catID), map[string]string{"q": "Widget", "status": "all"})
+
+	expect(t, "the previously-unread match must now be marked read", readAt(t, owner.app, matchingUnread).Valid)
+	expect(t, "the already-read match must stay read", readAt(t, owner.app, matchingRead).Valid)
 }
