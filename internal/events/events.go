@@ -88,16 +88,29 @@ func (b *Bus) Subscribe() *Subscription {
 }
 
 // Emit delivers the event to every subscriber. A subscriber whose buffer is
-// full misses it and is marked lagged, so its next read is a resync nudge. With
-// no subscribers (no open tabs) it does nothing.
+// full loses its oldest event, as with tokio's broadcast channel, and is marked
+// lagged, so its next read is a resync nudge and the newest event survives.
+// With no subscribers (no open tabs) it does nothing.
 func (b *Bus) Emit(event Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for sub := range b.subscribers {
+		sub.push(event)
+	}
+}
+
+// push is called with the bus lock held, which makes Emit the only sender.
+func (s *Subscription) push(event Event) {
+	for {
 		select {
-		case sub.events <- event:
+		case s.events <- event:
+			return
 		default:
-			sub.lagged.Store(true)
+		}
+		select {
+		case <-s.events:
+			s.lagged.Store(true)
+		default:
 		}
 	}
 }

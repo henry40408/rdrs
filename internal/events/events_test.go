@@ -81,6 +81,26 @@ func TestSlowSubscriberIsMarkedLaggedAndResyncs(t *testing.T) {
 	}
 }
 
+func TestLagKeepsTheNewestEventNotTheOldest(t *testing.T) {
+	bus := NewBus()
+	slow := bus.Subscribe()
+	for range Capacity {
+		bus.EmitSidebar(1)
+	}
+	done := models.SummaryCompleted
+	bus.EmitSummary(1, 42, &done)
+	if e := next(t, slow); !e.IsResync() {
+		t.Fatalf("first read = %+v, want resync", e)
+	}
+	var last Event
+	for range Capacity {
+		last = next(t, slow)
+	}
+	if last.Kind != Summary || last.EntryID != 42 {
+		t.Fatalf("newest event lost: last = %+v", last)
+	}
+}
+
 func TestExactlyCapacityDoesNotLag(t *testing.T) {
 	bus := NewBus()
 	sub := bus.Subscribe()
