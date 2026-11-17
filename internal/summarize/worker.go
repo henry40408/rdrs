@@ -126,7 +126,7 @@ type Worker struct {
 // NewWorker fills in the HTTP client and retry policy the application uses.
 func NewWorker(worker Worker) *Worker {
 	worker.DB = worker.DB.Background()
-	worker.Client = &http.Client{Timeout: fetch.ExternalAPITimeout}
+	worker.Client = fetch.NewExternalAPIClient()
 	worker.Retry = fetch.DefaultRetry()
 	return &worker
 }

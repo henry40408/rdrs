@@ -78,8 +78,11 @@ func postBookmark(ctx context.Context, request LinkdingRequest) (*http.Response,
 		return nil, err
 	}
 	apiURL := NormalizeAPIURL(request.Config.APIURL)
+	// The caller's client may follow redirects with the token attached.
+	client := *request.Client
+	client.CheckRedirect = fetch.DropAuthorizationOnOriginChange
 	return fetch.SendWithRetry(ctx, fetch.SendParams{
-		Client: request.Client,
+		Client: &client,
 		Config: request.Retry,
 		Build: func(ctx context.Context) (*http.Request, error) {
 			built, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
