@@ -1,0 +1,22 @@
+[
+  {
+    "bucket": 19,
+    "url": ""
+  },
+  {
+    "bucket": 17,
+    "url": "https://example.com/feed.xml"
+  },
+  {
+    "bucket": 42,
+    "url": "https://example.org/rss"
+  },
+  {
+    "bucket": 6,
+    "url": "http://blog.example.net/atom?x=1"
+  },
+  {
+    "bucket": 45,
+    "url": "https://日本語.example/フィード"
+  }
+]
