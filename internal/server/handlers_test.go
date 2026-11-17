@@ -3,16 +3,19 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/png"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/secret"
@@ -1317,4 +1320,610 @@ func TestSubscriptionEditUnknownAction(t *testing.T) {
 	response := app.postPairs("/reader/api/0/subscription/edit", "ac", "invalid", "s", "feed/https://example.com/feed.xml")
 
 	wantStatus(t, response, http.StatusBadRequest)
+}
+
+func TestQuickaddEmptyUrl(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.postPairs("/reader/api/0/subscription/quickadd", "quickadd", "")
+
+	wantStatus(t, response, http.StatusBadRequest)
+}
+
+func TestSubscribedTrue(t *testing.T) {
+	app := authedApp(t)
+	grImport(t, app, opmlOf("SubdTrueCat", "https://subdtrue.example.com/feed.xml"))
+
+	response := app.Get("/reader/api/0/subscribed?s=feed/https://subdtrue.example.com/feed.xml")
+
+	wantStatus(t, response, http.StatusOK)
+	if response.Text() != "true" {
+		t.Errorf("body = %q, want true", response.Text())
+	}
+}
+
+func TestSubscribedFalse(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.Get("/reader/api/0/subscribed?s=feed/https://nonexistent.com/feed.xml")
+
+	wantStatus(t, response, http.StatusOK)
+	if response.Text() != "false" {
+		t.Errorf("body = %q, want false", response.Text())
+	}
+}
+
+func TestSubscribedInvalidStream(t *testing.T) {
+	app := authedApp(t)
+
+	// "invalid" does not start with "feed/" so it fails validation.
+	wantStatus(t, app.Get("/reader/api/0/subscribed?s=invalid"), http.StatusBadRequest)
+}
+
+func TestExportOpmlContentType(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.Get("/reader/api/0/subscription/export")
+
+	wantStatus(t, response, http.StatusOK)
+	if contentType := response.Header().Get("Content-Type"); !strings.Contains(contentType, "application/xml") {
+		t.Errorf("Content-Type should be application/xml, got: %s", contentType)
+	}
+	disposition := response.Header().Get("Content-Disposition")
+	if !strings.Contains(disposition, "attachment") || !strings.Contains(disposition, "subscriptions.opml") {
+		t.Errorf("Content-Disposition should name the attachment subscriptions.opml, got: %s", disposition)
+	}
+}
+
+func TestImportOpmlWithExistingCategory(t *testing.T) {
+	app := authedApp(t)
+	grCreateCategory(t, app, "PreExistingCat")
+
+	grImport(t, app, opmlOf("PreExistingCat", "https://existingcat.example.com/feed.xml"))
+
+	// No duplicate category: still exactly one folder tag with this name.
+	matching := 0
+	for _, name := range grFolderTagNames(t, app) {
+		if name == "PreExistingCat" {
+			matching++
+		}
+	}
+	if matching != 1 {
+		t.Errorf("want exactly 1 PreExistingCat category, got %d", matching)
+	}
+	subscriptions := grSubscriptions(t, app)
+	if len(subscriptions) != 1 {
+		t.Fatalf("subscriptions = %d, want 1", len(subscriptions))
+	}
+	categories := subscriptions[0].(map[string]any)["categories"].([]any)
+	if categories[0].(map[string]any)["label"] != "PreExistingCat" {
+		t.Errorf("categories = %v", categories)
+	}
+}
+
+func TestSubscriptionEditEditTitle(t *testing.T) {
+	app := authedApp(t)
+	grImport(t, app, opmlOf("EditTitleCat", "https://edittitle.example.com/feed.xml"))
+
+	response := app.postPairs("/reader/api/0/subscription/edit",
+		"ac", "edit", "s", "feed/https://edittitle.example.com/feed.xml", "t", "NewTitle")
+
+	wantStatus(t, response, http.StatusOK)
+	subscriptions := grSubscriptions(t, app)
+	if len(subscriptions) != 1 {
+		t.Fatalf("subscriptions = %d, want 1", len(subscriptions))
+	}
+	if title := subscriptions[0].(map[string]any)["title"]; title != "NewTitle" {
+		t.Errorf("title = %v, want NewTitle", title)
+	}
+}
+
+// --- Auth handler coverage (ClientLogin, token, preference, friend) ---
+
+func clientLogin(app *itestApp, email, password string) itestResponse {
+	return app.postPairs("/accounts/ClientLogin", "Email", email, "Passwd", password)
+}
+
+func TestClientLoginSuccess(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("testuser", nil), http.StatusCreated)
+
+	response := clientLogin(app, "testuser", fixturePassword)
+
+	wantStatus(t, response, http.StatusOK)
+	for _, want := range []string{"Auth=", "SID=", "LSID="} {
+		if !strings.Contains(response.Text(), want) {
+			t.Errorf("response should contain %s, got: %s", want, response.Text())
+		}
+	}
+}
+
+func TestClientLoginWrongPassword(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("testuser", nil), http.StatusCreated)
+
+	wantStatus(t, clientLogin(app, "testuser", "wrongpassword"), http.StatusUnauthorized)
+}
+
+func TestClientLoginNonexistentUser(t *testing.T) {
+	app := defaultITestApp(t)
+
+	wantStatus(t, clientLogin(app, "nouser", fixturePassword), http.StatusUnauthorized)
+}
+
+func TestGreaderAuthHeader(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("testuser", nil), http.StatusCreated)
+	login := clientLogin(app, "testuser", fixturePassword)
+	wantStatus(t, login, http.StatusOK)
+	var authToken string
+	for _, line := range strings.Split(login.Text(), "\n") {
+		if token, found := strings.CutPrefix(line, "Auth="); found {
+			authToken = token
+		}
+	}
+	if authToken == "" {
+		t.Fatalf("no Auth= line in %q", login.Text())
+	}
+
+	response := app.Do(itestRequest{
+		Path:    "/reader/api/0/user-info",
+		Headers: map[string]string{"Authorization": "GoogleLogin auth=" + authToken},
+	})
+
+	wantStatus(t, response, http.StatusOK)
+	if name := jsonOf(t, response.ResponseRecorder)["userName"]; name != "testuser" {
+		t.Errorf("userName = %v", name)
+	}
+}
+
+func TestGreaderInvalidAuthHeader(t *testing.T) {
+	app := defaultITestApp(t)
+
+	response := app.Do(itestRequest{
+		Path:    "/reader/api/0/user-info",
+		Headers: map[string]string{"Authorization": "GoogleLogin auth=invalidtoken"},
+	})
+
+	wantStatus(t, response, http.StatusUnauthorized)
+}
+
+func TestGetPostToken(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.Get("/reader/api/0/token")
+
+	wantStatus(t, response, http.StatusOK)
+	// The token format is "<timestamp>/<hmac_hex>".
+	if token := response.Text(); token == "" || !strings.Contains(token, "/") {
+		t.Errorf("POST token should be non-empty with a '/' separator, got: %q", token)
+	}
+}
+
+func TestGreaderStubListsAreEmpty(t *testing.T) {
+	app := authedApp(t)
+	for path, want := range map[string]string{
+		"preference/list":        `{"prefs":[]}`,
+		"preference/stream/list": `{"streamprefs":{}}`,
+		"friend/list":            `{"friends":[]}`,
+	} {
+		response := app.Get("/reader/api/0/" + path)
+
+		wantStatus(t, response, http.StatusOK)
+		if !jsonEqual(t, response.Text(), want) {
+			t.Errorf("%s = %s, want %s", path, response.Text(), want)
+		}
+	}
+}
+
+// jsonEqual compares two JSON documents by value.
+func jsonEqual(t *testing.T, got, want string) bool {
+	t.Helper()
+	var gotValue, wantValue any
+	if err := json.Unmarshal([]byte(got), &gotValue); err != nil {
+		t.Fatalf("not JSON: %s", got)
+	}
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatal(err)
+	}
+	return reflect.DeepEqual(gotValue, wantValue)
+}
+
+// --- Form-action handlers for the SSR /user-settings page. Each accepts a
+// urlencoded body and answers 303 with a flash cookie plus Location. ---
+
+func wantSeeOther(t *testing.T, response itestResponse, location string) {
+	t.Helper()
+	wantStatus(t, response, http.StatusSeeOther)
+	if got := response.Header().Get("Location"); got != location {
+		t.Errorf("Location = %q, want %q", got, location)
+	}
+}
+
+func passwordChangeForm(app *itestApp, current, confirm string) itestResponse {
+	return app.postPairs("/user-settings/password",
+		"current_password", current, "new_password", "heron-lantern-53-drift", "confirm_password", confirm)
+}
+
+func TestChangePasswordForm(t *testing.T) {
+	app := authedApp(t)
+
+	// A mismatch changes nothing and stays on the page; the real change signs
+	// the session out. In that order, so the first leaves the second something
+	// to change.
+	wantSeeOther(t, passwordChangeForm(app, fixturePassword, "differentvalue"), "/user-settings")
+	wantSeeOther(t, passwordChangeForm(app, fixturePassword, "heron-lantern-53-drift"), "/login")
+}
+
+// Settings forms answer 303 back to /user-settings whether they saved or, as
+// with entries_per_page=5 (below the minimum of 10), refused.
+func TestSettingsFormsRedirectBackToThePage(t *testing.T) {
+	app := authedApp(t)
+	for _, form := range []struct {
+		path  string
+		pairs []string
+	}{
+		{"preferences", []string{"theme", "dark", "entries_per_page", "50", "retention_read_days", "0"}},
+		{"preferences", []string{"theme", "system", "entries_per_page", "5", "retention_read_days", "0"}},
+		{"linkding", []string{"api_url", "https://linkding.example.com", "api_token", "secret-token"}},
+		{"kagi", []string{"session_link", "https://kagi.com/search?token=mysessiontoken", "language", "EN"}},
+	} {
+		wantSeeOther(t, app.postPairs("/user-settings/"+form.path, form.pairs...), "/user-settings")
+	}
+}
+
+func postPreferences(app *itestApp, extra ...string) itestResponse {
+	pairs := []string{"entries_per_page", "30", "retention_read_days", "0"}
+	return app.postPairs("/user-settings/preferences", append(pairs, extra...)...)
+}
+
+func TestUpdatePreferencesFormStoresOnlyLightOrDarkTheme(t *testing.T) {
+	app := authedApp(t)
+	for _, c := range []struct{ submitted, stored string }{
+		{"light", "light"}, {"dark", "dark"}, {"system", ""}, {"neon", ""},
+	} {
+		wantSeeOther(t, app.postPairs("/user-settings/preferences",
+			"theme", c.submitted, "entries_per_page", "50", "retention_read_days", "0"), "/user-settings")
+
+		// The layout renders the stored theme as a data-theme override.
+		page := app.GetOK("/user-settings")
+		rendered := ""
+		for _, theme := range []string{"light", "dark"} {
+			if strings.Contains(page, ` data-theme="`+theme+`"`) {
+				rendered = theme
+				break
+			}
+		}
+		if rendered != c.stored {
+			t.Errorf("%s: rendered theme %q, want %q", c.submitted, rendered, c.stored)
+		}
+	}
+}
+
+func TestUpdatePreferencesFormSetsTheTimezone(t *testing.T) {
+	app := authedApp(t)
+	shows := func(page, name string) bool {
+		return strings.Contains(page, `name="timezone" value="`+name+`"`)
+	}
+
+	if !shows(app.GetOK("/user-settings"), "UTC") {
+		t.Error("want UTC until the user chooses")
+	}
+
+	wantSeeOther(t, postPreferences(app, "theme", "system", "timezone", "Asia/Taipei"), "/user-settings")
+	if !shows(app.GetOK("/user-settings"), "Asia/Taipei") {
+		t.Error("want Asia/Taipei after choosing it")
+	}
+
+	// A form that omits the field leaves it alone.
+	wantSeeOther(t, postPreferences(app, "theme", "system"), "/user-settings")
+	if !shows(app.GetOK("/user-settings"), "Asia/Taipei") {
+		t.Error("omitting the field changed the timezone")
+	}
+
+	// A name that is not a zone is refused, and the old choice survives.
+	wantSeeOther(t, postPreferences(app, "theme", "system", "timezone", "Mars/Olympus_Mons"), "/user-settings")
+	page := app.GetOK("/user-settings")
+	if !shows(page, "Asia/Taipei") {
+		t.Error("a refused zone replaced the old choice")
+	}
+	if !strings.Contains(page, "is not a timezone name") {
+		t.Error("the refusal should be reported")
+	}
+
+	// The refusal comes before any write: other fields stay as they were.
+	wantSeeOther(t, app.postPairs("/user-settings/preferences", "theme", "system", "entries_per_page", "55",
+		"retention_read_days", "0", "timezone", "Mars/Olympus_Mons"), "/user-settings")
+	if strings.Contains(app.GetOK("/user-settings"), `name="entries_per_page" value="55"`) {
+		t.Error("a refused form still wrote entries_per_page")
+	}
+}
+
+func TestUpdatePreferencesFormSetsSidebarPrefs(t *testing.T) {
+	app := authedApp(t)
+	sidebar := func() map[string]any {
+		return jsonOf(t, app.Get("/api/sidebar").ResponseRecorder)
+	}
+
+	// Defaults before anything is submitted.
+	if got := sidebar(); got["sidebar_sort"] != "name" || got["sidebar_hide_read"] != false {
+		t.Errorf("defaults = %v", got)
+	}
+
+	wantSeeOther(t, postPreferences(app, "theme", "system", "sidebar_sort", "unread", "sidebar_hide_read", "1"), "/user-settings")
+	if got := sidebar(); got["sidebar_sort"] != "unread" || got["sidebar_hide_read"] != true {
+		t.Errorf("after submit = %v", got)
+	}
+
+	// An unchecked checkbox sends nothing, which must clear the flag rather
+	// than leave it on, and an unknown sort falls back to the default.
+	wantSeeOther(t, postPreferences(app, "theme", "system", "sidebar_sort", "nonsense"), "/user-settings")
+	if got := sidebar(); got["sidebar_sort"] != "name" || got["sidebar_hide_read"] != false {
+		t.Errorf("after unchecked = %v", got)
+	}
+}
+
+// End to end for the credential-at-rest fix: what the form stores must not be
+// legible in the database, and must still come back out through the app.
+func TestASavedLinkdingTokenIsEncryptedInTheDatabase(t *testing.T) {
+	app := authedApp(t)
+
+	wantSeeOther(t, app.postPairs("/user-settings/linkding",
+		"api_url", "https://linkding.example.com", "api_token", "SUPERSECRETTOKEN123"), "/user-settings")
+
+	var stored string
+	if err := app.DB.QueryRowContext(context.Background(), "SELECT save_services FROM user_settings LIMIT 1").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, "SUPERSECRETTOKEN123") {
+		t.Errorf("the token must not be legible in the column, got: %s", stored)
+	}
+	// And the page still reports it as configured: the value round-trips.
+	if !strings.Contains(app.GetOK("/user-settings"), "linkding.example.com") {
+		t.Error("the page lost the linkding URL")
+	}
+}
+
+// --- session and API-token helpers ---
+
+func userNamed(t *testing.T, app *itestApp, username string) *models.User {
+	t.Helper()
+	user, err := models.FindUserByUsername(context.Background(), app.DB, username)
+	if err != nil || user == nil {
+		t.Fatalf("user %s: %v, %v", username, user, err)
+	}
+	return user
+}
+
+func newSessionFor(t *testing.T, app *itestApp, userID int64, userAgent string) *models.Session {
+	t.Helper()
+	session, err := models.CreateSession(context.Background(), app.DB, models.NewSession{UserID: userID, UserAgent: userAgent, IPAddress: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+func sessionExists(t *testing.T, app *itestApp, token string) bool {
+	t.Helper()
+	session, err := models.FindSessionByToken(context.Background(), app.DB, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session != nil
+}
+
+func newGreaderToken(t *testing.T, app *itestApp, userID int64, label string) *models.APIToken {
+	t.Helper()
+	token, err := models.CreateAPIToken(context.Background(), app.DB, models.NewAPIToken{
+		UserID: userID, Kind: "greader", Label: label, UserAgent: "test-agent", IPAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+func apiTokenExists(t *testing.T, app *itestApp, token string) bool {
+	t.Helper()
+	found, err := models.FindAPIToken(context.Background(), app.DB, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found != nil
+}
+
+// adminApp is setup_admin_user: the first account ("admin", id 1) signed in.
+func adminApp(t *testing.T) *itestApp {
+	t.Helper()
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("admin", nil), http.StatusCreated)
+	app.Login("admin")
+	return app
+}
+
+// seedTarget is register_target_user: "target" (id 2), straight in the database.
+func seedTarget(app *itestApp) {
+	app.SeedAccount("target", fixturePassword, models.RoleUser)
+}
+
+func TestRevokeOtherSessionsFormKeepsCurrentDeletesOthers(t *testing.T) {
+	app := authedApp(t)
+	other := newSessionFor(t, app, userNamed(t, app, "testuser").ID, "test-agent")
+
+	wantSeeOther(t, app.request(http.MethodPost, "/user-settings/sessions/revoke-others"), "/user-settings")
+
+	if sessionExists(t, app, other.SessionToken) {
+		t.Error("other session should be deleted")
+	}
+	wantStatus(t, app.Get("/api/user"), http.StatusOK)
+}
+
+// /user-settings/* is not under the CSRF skip prefixes, so a bare POST is
+// refused for its missing CSRF token before the auth check would answer 401.
+func TestRevokeOtherSessionsFormUnauthenticatedRejected(t *testing.T) {
+	app := defaultITestApp(t)
+
+	wantStatus(t, app.request(http.MethodPost, "/user-settings/sessions/revoke-others"), http.StatusForbidden)
+}
+
+// While masquerading the effective session belongs to the target, so
+// revoke-others must refuse or an admin would delete the target's real
+// sessions on their own devices.
+func TestRevokeOtherSessionsFormBlockedWhileMasquerading(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+	targetSession := newSessionFor(t, app, 2, "test-agent")
+	started := app.request(http.MethodPost, "/admin/users/2/masquerade")
+	wantStatus(t, started, http.StatusSeeOther)
+	// The privilege change rotates the session token, so the CSRF header has
+	// to follow the cookies this response sets.
+	app.ApplyCSRF(started)
+
+	wantSeeOther(t, app.request(http.MethodPost, "/user-settings/sessions/revoke-others"), "/user-settings")
+
+	if !sessionExists(t, app, targetSession.SessionToken) {
+		t.Error("masquerade must not delete the target's real sessions")
+	}
+}
+
+func TestRevokeSessionFormDeletesOnlyTheNamedSession(t *testing.T) {
+	app := authedApp(t)
+	userID := userNamed(t, app, "testuser").ID
+	doomed := newSessionFor(t, app, userID, "phone")
+	bystander := newSessionFor(t, app, userID, "laptop")
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/user-settings/sessions/%d/revoke", doomed.ID)), "/user-settings")
+
+	if sessionExists(t, app, doomed.SessionToken) {
+		t.Error("the named session should be deleted")
+	}
+	if !sessionExists(t, app, bystander.SessionToken) {
+		t.Error("revoking one session must not touch the user's other sessions")
+	}
+	wantStatus(t, app.Get("/api/user"), http.StatusOK)
+}
+
+// The settings page renders no Revoke control for the caller's own session,
+// but that is a UI affordance, so a hand-crafted POST naming it must be refused.
+func TestRevokeSessionFormRefusesTheCurrentSession(t *testing.T) {
+	app := authedApp(t)
+	sessions, err := models.ListUserSessions(context.Background(), app.DB, userNamed(t, app, "testuser").ID)
+	if err != nil || len(sessions) == 0 {
+		t.Fatalf("the authenticated caller has a session: %v, %v", sessions, err)
+	}
+	current := sessions[0]
+
+	wantStatus(t, app.request(http.MethodPost, fmt.Sprintf("/user-settings/sessions/%d/revoke", current.ID)), http.StatusSeeOther)
+
+	if !sessionExists(t, app, current.SessionToken) {
+		t.Error("the caller's own session must survive")
+	}
+	wantStatus(t, app.Get("/api/user"), http.StatusOK)
+}
+
+func TestRevokeSessionFormBlockedWhileMasquerading(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+	targetSession := newSessionFor(t, app, 2, "test-agent")
+	started := app.request(http.MethodPost, "/admin/users/2/masquerade")
+	wantStatus(t, started, http.StatusSeeOther)
+	app.ApplyCSRF(started)
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/user-settings/sessions/%d/revoke", targetSession.ID)), "/user-settings")
+
+	if !sessionExists(t, app, targetSession.SessionToken) {
+		t.Error("masquerade must not delete the target's real sessions")
+	}
+}
+
+func TestPasswordChangeRevokesApiTokens(t *testing.T) {
+	app := authedApp(t)
+	token := newGreaderToken(t, app, userNamed(t, app, "testuser").ID, "test-client")
+
+	wantStatus(t, passwordChangeForm(app, fixturePassword, "heron-lantern-53-drift"), http.StatusSeeOther)
+
+	if apiTokenExists(t, app, token.Token) {
+		t.Error("a password change must revoke API tokens too, not just browser sessions")
+	}
+}
+
+// Changing a password verifies the current one with Argon2. Once the budget is
+// spent even the CORRECT password is refused, which holds only if the limiter
+// runs before the verification.
+func TestPasswordChangeIsRateLimited(t *testing.T) {
+	app := authedApp(t)
+	for range 5 {
+		passwordChangeForm(app, "wrongpassword", "heron-lantern-53-drift")
+	}
+
+	passwordChangeForm(app, fixturePassword, "heron-lantern-53-drift")
+
+	user := userNamed(t, app, "testuser")
+	if !auth.VerifyPassword(fixturePassword, user.PasswordHash) {
+		t.Error("a throttled request must not have changed the password")
+	}
+	// The change-password budget is its own: it must not spend the login budget.
+	login := app.PostJSON("/api/session", map[string]string{"username": "testuser", "password": fixturePassword})
+	if login.Code == http.StatusTooManyRequests {
+		t.Error("the password-change bucket must not spend the login budget")
+	}
+}
+
+// "Sign out other sessions" means browser sessions: a GReader client's token
+// must survive it.
+func TestRevokeOthersDoesNotTouchApiTokens(t *testing.T) {
+	app := authedApp(t)
+	token := newGreaderToken(t, app, userNamed(t, app, "testuser").ID, "test-client")
+
+	wantStatus(t, app.request(http.MethodPost, "/user-settings/sessions/revoke-others"), http.StatusSeeOther)
+
+	if !apiTokenExists(t, app, token.Token) {
+		t.Error("revoke-other-sessions must not touch API tokens")
+	}
+}
+
+// A bulk revocation has to say how much it revoked: "Signed out all other
+// sessions." reads the same whether it ended six sessions or none.
+func TestRevokeOthersFlashCountsTheSessionsItEnded(t *testing.T) {
+	app := authedApp(t)
+	userID := userNamed(t, app, "testuser").ID
+	revokeOthers := func() string {
+		response := app.request(http.MethodPost, "/user-settings/sessions/revoke-others")
+		wantStatus(t, response, http.StatusSeeOther)
+		return flashText(t, response)
+	}
+
+	if text := revokeOthers(); !strings.Contains(text, "No other sessions were signed in") {
+		t.Errorf("revoking nothing must say so, got: %s", text)
+	}
+	for range 2 {
+		newSessionFor(t, app, userID, "other-agent")
+	}
+	if text := revokeOthers(); !strings.Contains(text, "Signed out 2 other sessions.") {
+		t.Errorf("flash must carry the affected-row count, got: %s", text)
+	}
+	// The caller's own session survives, so a repeat is back to the zero case.
+	if text := revokeOthers(); !strings.Contains(text, "No other sessions were signed in") {
+		t.Errorf("repeat = %s", text)
+	}
+}
+
+// Singular wording, and the same count-or-say-nothing rule as sessions.
+func TestRevokeAllApiTokensFlashCountsTheTokens(t *testing.T) {
+	app := authedApp(t)
+	userID := userNamed(t, app, "testuser").ID
+	revokeAll := func() string {
+		response := app.request(http.MethodPost, "/user-settings/api-tokens/revoke-all")
+		wantStatus(t, response, http.StatusSeeOther)
+		return flashText(t, response)
+	}
+
+	if text := revokeAll(); !strings.Contains(text, "There were no API tokens to revoke.") {
+		t.Errorf("got: %s", text)
+	}
+	newGreaderToken(t, app, userID, "only-client")
+	if text := revokeAll(); !strings.Contains(text, "Revoked 1 API token.") {
+		t.Errorf("one token must read as singular, got: %s", text)
+	}
 }
