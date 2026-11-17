@@ -211,6 +211,9 @@ func TestDailyReadCountsEmptyAndFilled(t *testing.T) {
 		if got := f.dailyCounts("2024-01-01", "2024-01-04", time.UTC); !slices.Equal(got, []int64{0, 0, 0}) {
 			t.Errorf("empty = %v", got)
 		}
+		if got := f.dailyCounts("2024-01-01", "2024-01-04", nil); !slices.Equal(got, []int64{0, 0, 0}) {
+			t.Errorf("nil zone = %v", got)
+		}
 		for i, day := range []string{"2024-01-01", "2024-01-01", "2024-01-03"} {
 			f.markRead(f.insertEntry(f.feedID, "g"+string(rune('0'+i)), "2023-12-01"), day+" 09:00:00")
 		}

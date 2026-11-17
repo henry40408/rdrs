@@ -33,7 +33,7 @@ var Suggestions = []string{
 func Parse(name string) (*time.Location, bool) {
 	// LoadLocation maps "" to UTC and "Local" to the host zone; neither is an
 	// IANA name.
-	if name == "" || name == "Local" || hasLowercaseSegment(name) {
+	if name == "" || name == "Local" || hasLowercaseSegment(name) || !hasExactCase(name) {
 		return nil, false
 	}
 	loc, err := time.LoadLocation(name)

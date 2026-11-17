@@ -239,6 +239,9 @@ type DailyReadQuery struct {
 // GetDailyReadCounts counts reads per local day; days with no reads are
 // zero-filled.
 func GetDailyReadCounts(ctx context.Context, e db.Executor, query DailyReadQuery) ([]DailyReadCount, error) {
+	if query.Loc == nil {
+		query.Loc = time.UTC
+	}
 	rows, err := e.QueryContext(ctx, readInstantsSQL(e.Dialect()), query.UserID,
 		bound(e, UTCBound(query.From, query.Loc)), bound(e, UTCBound(query.To, query.Loc)))
 	instants, err := collect(rows, err, func(row scanner) (string, error) {

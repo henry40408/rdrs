@@ -126,7 +126,7 @@ var naiveLayouts = sync.OnceValue(func() []string {
 		"2 Jan 2006", "2 January 2006", "Jan 2, 2006", "Jan 2 2006", "Jan. 2, 2006",
 		"January 2, 2006", "Jan 2, 06", "Mon, 2 Jan 2006", "Monday, 2 Jan 2006",
 		"Mon, 2 January 2006", "Mon, Jan 2, 2006", "Monday, January 2, 2006",
-		"2006年1月2日", "060102",
+		"2006年1月2日",
 	}
 	clocks := []string{
 		"15:04:05", "15:04", "3:04:05 PM", "3:04 PM", "15时04分05秒", "15时04分",
@@ -141,5 +141,6 @@ var naiveLayouts = sync.OnceValue(func() []string {
 			}
 		}
 	}
-	return layouts
+	// mysql_log "171113 14:14:20" needs its clock: alone, six digits are noise.
+	return append(layouts, "060102 15:04:05", "060102 15:04")
 })

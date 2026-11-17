@@ -148,5 +148,12 @@ func (f *Fetcher) lookup(ctx context.Context, host string) ([]netip.Addr, error)
 	if ip, err := netip.ParseAddr(host); err == nil {
 		return []netip.Addr{ip}, nil
 	}
+	// A numeric form such as 1572395042 was validated as the IP it means, and
+	// the pure-Go resolver would not understand it.
+	if normalized, err := hostOf(&url.URL{Host: host}); err == nil && normalized != host {
+		if ip, err := netip.ParseAddr(normalized); err == nil {
+			return []netip.Addr{ip}, nil
+		}
+	}
 	return f.resolver.LookupNetIP(ctx, "ip", host)
 }
