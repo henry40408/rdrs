@@ -58,29 +58,52 @@ func newRequest(ctx context.Context, feed *models.Feed, userAgent string) (*http
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	if feed.ETag != nil {
+	// A stored validator that is not valid now is skipped, as in Rust.
+	if feed.ETag != nil && visibleASCII(*feed.ETag) {
 		req.Header.Set("If-None-Match", *feed.ETag)
 	}
-	if feed.LastModified != nil {
+	if feed.LastModified != nil && visibleASCII(*feed.LastModified) {
 		req.Header.Set("If-Modified-Since", *feed.LastModified)
 	}
 	return req, nil
 }
 
+// statusReasons are the three phrases where Go's names differ from the http
+// crate's, which Rust showed.
+var statusReasons = map[int]string{
+	http.StatusRequestEntityTooLarge:        "Payload Too Large",
+	http.StatusRequestURITooLong:            "URI Too Long",
+	http.StatusRequestedRangeNotSatisfiable: "Range Not Satisfiable",
+}
+
 func statusText(code int) string {
-	text := http.StatusText(code)
+	text, ok := statusReasons[code]
+	if !ok {
+		text = http.StatusText(code)
+	}
 	if text == "" {
 		text = "<unknown status code>"
 	}
 	return fmt.Sprintf("HTTP %d %s", code, text)
 }
 
+// headerPtr is nil for an absent header and for a value that is not visible
+// ASCII, as Rust's `to_str().ok()` gives.
 func headerPtr(h http.Header, name string) *string {
 	value := h.Get(name)
-	if value == "" {
+	if value == "" || !visibleASCII(value) {
 		return nil
 	}
 	return &value
+}
+
+func visibleASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if (s[i] < 0x20 && s[i] != '	') || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Syncer) send(ctx context.Context, feed *models.Feed) (*http.Response, error) {
@@ -143,10 +166,17 @@ func (s *Syncer) handle(ctx context.Context, feed *models.Feed, resp *http.Respo
 	})
 }
 
+// maxFeedBytes bounds the body: parsing builds a tree that takes many times
+// the body's size in memory, and Rust had no bound at all.
+const maxFeedBytes = 8 << 20
+
 func (s *Syncer) readFeed(ctx context.Context, feedID int64, resp *http.Response) (*feedparse.Feed, error) {
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes+1))
 	if err != nil {
 		return nil, s.fail(ctx, feedID, KindFetch, err.Error())
+	}
+	if len(body) > maxFeedBytes {
+		return nil, s.fail(ctx, feedID, KindFetch, "response body is larger than 8 MiB")
 	}
 	decoded, err := feedparse.Decode(body, resp.Header.Get("Content-Type"))
 	if err != nil {

@@ -305,6 +305,55 @@ func TestRefreshBucketReportsEachFeed(t *testing.T) {
 	})
 }
 
+func TestRefreshRejectsAnOversizedBody(t *testing.T) {
+	f := newFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", maxFeedBytes+1)))
+	})
+	_, err := f.syncer.Refresh(context.Background(), f.feed.ID)
+	var syncErr *Error
+	if !errors.As(err, &syncErr) || syncErr.Kind != KindFetch || !strings.Contains(err.Error(), "8 MiB") {
+		t.Fatalf("error = %v", err)
+	}
+	if feed := f.reload(t); feed.FetchError == nil {
+		t.Error("oversized body was not recorded")
+	}
+}
+
+func TestStatusTextUsesTheHTTPCratePhrases(t *testing.T) {
+	want := map[int]string{
+		404: "HTTP 404 Not Found", 413: "HTTP 413 Payload Too Large", 414: "HTTP 414 URI Too Long",
+		416: "HTTP 416 Range Not Satisfiable", 599: "HTTP 599 <unknown status code>",
+	}
+	for code, text := range want {
+		if got := statusText(code); got != text {
+			t.Errorf("statusText(%d) = %q, want %q", code, got, text)
+		}
+	}
+}
+
+func TestNonASCIIValidatorsAreNotStored(t *testing.T) {
+	f := newFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", "\"caf\xe9\"")
+		serveFeedBody(w, r)
+	})
+	if _, err := f.syncer.Refresh(context.Background(), f.feed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if feed := f.reload(t); feed.ETag != nil {
+		t.Errorf("etag = %q, want none", *feed.ETag)
+	}
+	header := make(http.Header)
+	header.Set("ETag", `"ok"`)
+	if got := headerPtr(header, "ETag"); got == nil || *got != `"ok"` {
+		t.Errorf("headerPtr = %v", got)
+	}
+}
+
+func serveFeedBody(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/rss+xml")
+	_, _ = w.Write([]byte(rssBody))
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return "<nil>"

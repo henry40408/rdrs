@@ -175,7 +175,7 @@ func parseTree(data []byte) (*element, error) {
 	dec.Strict = false
 	// The caller has already converted the text to UTF-8.
 	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) { return input, nil }
-	b := treeBuilder{dec: dec}
+	b := treeBuilder{dec: dec, bindings: map[string]string{}}
 	for {
 		tok, err := dec.RawToken()
 		if err == io.EOF {
@@ -205,8 +205,36 @@ type treeBuilder struct {
 	dec   *xml.Decoder
 	root  *element
 	stack []*element
-	// scopes holds the namespace declarations of each open element.
-	scopes []map[string]string
+	count int
+	// bindings is the namespace URI each prefix has right now, so a lookup
+	// costs the same at any depth.
+	bindings map[string]string
+	// undo holds, per open element, what its declarations replaced.
+	undo [][]binding
+}
+
+// binding is a prefix's value before an element declared it.
+type binding struct {
+	prefix   string
+	previous string
+	existed  bool
+}
+
+func (b *treeBuilder) declare(prefix, uri string, undo []binding) []binding {
+	previous, existed := b.bindings[prefix]
+	b.bindings[prefix] = uri
+	return append(undo, binding{prefix: prefix, previous: previous, existed: existed})
+}
+
+func (b *treeBuilder) restore(undo []binding) {
+	for i := len(undo) - 1; i >= 0; i-- {
+		u := undo[i]
+		if u.existed {
+			b.bindings[u.prefix] = u.previous
+		} else {
+			delete(b.bindings, u.prefix)
+		}
+	}
 }
 
 func (b *treeBuilder) handle(tok xml.Token) (done bool, err error) {
@@ -233,8 +261,15 @@ func (b *treeBuilder) text(s string) {
 	parent.nodes = append(parent.nodes, node{text: s})
 }
 
+// maxElements keeps a hostile document from using memory out of proportion to
+// its size: each element costs far more than its start tag's bytes.
+const maxElements = 200_000
+
 func (b *treeBuilder) start(t xml.StartElement) error {
-	scope := map[string]string{}
+	if b.count++; b.count > maxElements {
+		return xmlError("too many elements")
+	}
+	var undo []binding
 	attrs := make([]attr, 0, len(t.Attr))
 	for _, a := range t.Attr {
 		name := a.Name.Local
@@ -243,13 +278,13 @@ func (b *treeBuilder) start(t xml.StartElement) error {
 		}
 		switch {
 		case a.Name.Space == "" && a.Name.Local == "xmlns":
-			scope[""] = a.Value
+			undo = b.declare("", a.Value, undo)
 		case a.Name.Space == "xmlns":
-			scope[a.Name.Local] = a.Value
+			undo = b.declare(a.Name.Local, a.Value, undo)
 		}
 		attrs = append(attrs, attr{name: name, value: a.Value})
 	}
-	b.scopes = append(b.scopes, scope)
+	b.undo = append(b.undo, undo)
 	el := &element{name: lastSegment(t.Name.Local), attrs: attrs, offset: b.dec.InputOffset()}
 	el.space, el.declared = b.resolve(t.Name.Space)
 	if len(b.stack) > 0 {
@@ -274,22 +309,19 @@ func (b *treeBuilder) end(t xml.EndElement) (bool, error) {
 		return false, xmlError("mismatched end tag " + t.Name.Local)
 	}
 	b.stack = b.stack[:len(b.stack)-1]
-	b.scopes = b.scopes[:len(b.scopes)-1]
+	b.restore(b.undo[len(b.undo)-1])
+	b.undo = b.undo[:len(b.undo)-1]
 	return len(b.stack) == 0, nil
 }
 
 // resolve maps a prefix to a namespace. An unbound or undeclared prefix is
 // not declared, so the feed's default namespace applies to the element.
 func (b *treeBuilder) resolve(prefix string) (namespace, bool) {
-	for i := len(b.scopes) - 1; i >= 0; i-- {
-		if uri, ok := b.scopes[i][prefix]; ok {
-			if uri == "" {
-				return nsUnknown, false
-			}
-			return namespaceByURI[uri], true
-		}
+	uri, ok := b.bindings[prefix]
+	if !ok || uri == "" {
+		return nsUnknown, false
 	}
-	return nsUnknown, false
+	return namespaceByURI[uri], true
 }
 
 func lastSegment(name string) string {

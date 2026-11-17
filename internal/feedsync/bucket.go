@@ -75,7 +75,7 @@ func (s *Syncer) refreshOne(ctx context.Context, feedID int64) (result *BucketRe
 	defer cancel()
 	synced, err := s.Refresh(ctx, feedID)
 	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		slog.Warn("feed sync timed out", "event", "feed.sync_timeout", "feed_id", feedID,
 			"timeout_s", int(fetch.FeedSyncTimeout.Seconds()))
 		return &BucketResult{FeedID: feedID, Err: fmt.Sprintf("Feed sync timed out after %ds", int(fetch.FeedSyncTimeout.Seconds()))}

@@ -105,3 +105,10 @@ with reading pane and the keyboard-help overlay, light and dark.
   emit an audit event.**
 - **GitHub Actions are pinned by commit SHA**, with the tag as a trailing
   comment (`uses: owner/action@<sha> # vX.Y.Z`).
+
+## Accepted differences from the Rust server (Go rewrite)
+
+- Non-UTF-8 feeds are decoded once (header, BOM or XML declaration). Rust
+  decoded twice and produced mojibake, so the title, and with it the ID, of an
+  entry without a guid changes once after migration: those entries are
+  duplicated one time.

@@ -10,8 +10,10 @@ import (
 
 // Decode converts a feed body to UTF-8. The character set comes from the
 // Content-Type header, else a byte order mark, else the XML declaration, and
-// is UTF-8 when none says otherwise. The Rust build assumed UTF-8 and showed
-// mojibake for GBK or Big5 feeds; this is a deliberate difference.
+// is UTF-8 when none says otherwise; HTML meta tags are never consulted. Rust
+// decoded a non-UTF-8 body twice (the header, then the XML declaration) and
+// produced mojibake, which also changed the IDs of entries without a guid.
+// Decoding once is a deliberate difference.
 func Decode(body []byte, contentType string) ([]byte, error) {
 	contentType = withDeclaredCharset(body, contentType)
 	reader, err := charset.NewReader(bytes.NewReader(body), contentType)
@@ -35,11 +37,12 @@ func withDeclaredCharset(body []byte, contentType string) string {
 		return contentType
 	}
 	match := xmlDeclaration.FindSubmatch(body[:min(len(body), 256)])
-	if match == nil {
-		return contentType
+	label := "utf-8"
+	if match != nil {
+		label = string(match[1])
 	}
 	if contentType == "" {
 		contentType = "text/xml"
 	}
-	return contentType + "; charset=" + string(match[1])
+	return contentType + "; charset=" + label
 }
