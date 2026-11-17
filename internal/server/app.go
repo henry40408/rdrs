@@ -29,6 +29,8 @@ type App struct {
 	Limiter *auth.RateLimiter
 	// Sidebar caches the per-user chrome around every page.
 	Sidebar *cache.Sidebar
+	// AdminDBStats holds the site-wide database figures of /statistics.
+	AdminDBStats *cache.AdminDBStats
 	// Fetcher and Syncer reach the network for discovery, import and refresh.
 	Fetcher *fetch.Fetcher
 	Syncer  *feedsync.Syncer
@@ -95,6 +97,7 @@ func NewApp(options Options) *App {
 		Auth:           authenticator,
 		Limiter:        options.Limiter,
 		Sidebar:        cache.DefaultSidebar(),
+		AdminDBStats:   cache.NewAdminDBStats(),
 		cookies:        authenticator.Cookies(),
 		externalClient: fetch.NewExternalAPIClient(),
 	}

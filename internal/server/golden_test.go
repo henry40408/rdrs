@@ -89,6 +89,7 @@ var goldenPaths = map[string]bool{
 	"/offline":                         true,
 	"/no/such/page":                    true,
 	"/api/offline/manifest":            true,
+	"/statistics":                      true,
 	"/search":                          true,
 	"/search?q=alpha":                  true,
 	"/search?q=zzzznothing":            true,
@@ -99,6 +100,8 @@ var goldenPaths = map[string]bool{
 
 var (
 	hex64Pattern = regexp.MustCompile(`[0-9a-f]{64}`)
+	// The file size depends on the page layout the engine writes, not on the app.
+	databaseSize = regexp.MustCompile(`(stats-card-value">)[0-9.]+ [KMG]?B(</div><div class="stats-card-label">Database Size)`)
 	csrfField    = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 )
 
@@ -239,8 +242,9 @@ func (f *goldenFixture) check(t *testing.T, page goldenPage) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := f.normalise(page, rec.Body.String()); got != string(want) {
-		t.Errorf("body differs from %s\n got: %.400s\nwant: %.400s", *page.File, firstDifference(got, string(want)), firstDifference(string(want), got))
+	got, wanted := databaseSize.ReplaceAllString(f.normalise(page, rec.Body.String()), "${1}@SIZE@${2}"), databaseSize.ReplaceAllString(string(want), "${1}@SIZE@${2}")
+	if got != wanted {
+		t.Errorf("body differs from %s\n got: %.400s\nwant: %.400s", *page.File, firstDifference(got, wanted), firstDifference(wanted, got))
 	}
 }
 
