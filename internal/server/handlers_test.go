@@ -1190,3 +1190,131 @@ func TestManifestIsServedAsAManifest(t *testing.T) {
 	}
 	wantNoSetCookie(t, response, "the manifest is publicly cacheable")
 }
+
+func TestPwaIconsAreServedAsPng(t *testing.T) {
+	app := defaultITestApp(t)
+
+	for _, path := range []string{"/static/icons/icon-192.png", "/static/icons/icon-512.png", "/static/icons/maskable-icon-512.png"} {
+		response := app.Get(path)
+		wantStatus(t, response, http.StatusOK)
+		if got := response.Header().Get("Content-Type"); got != "image/png" {
+			t.Errorf("%s Content-Type = %q", path, got)
+		}
+		// PNG magic proves the build rendered these rather than embedding
+		// something the manifest would then fail to decode.
+		if body := response.Body.Bytes(); len(body) < 4 || string(body[1:4]) != "PNG" {
+			t.Errorf("%s must be a real PNG", path)
+		}
+	}
+}
+
+// The worker is served from the root, not /static/js/: a worker's scope is the
+// directory it came from, and only a root-scoped one sees the navigations it
+// exists to catch.
+func TestServiceWorkerIsServedFromTheRootWithoutCookies(t *testing.T) {
+	response := defaultITestApp(t).Get("/sw.js")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Content-Type"); got != "application/javascript" {
+		t.Errorf("Content-Type = %q", got)
+	}
+	// The URL carries no ?v= stamp, so immutable would pin one build's worker
+	// for a year with nothing left to invalidate.
+	if got := response.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	wantNoSetCookie(t, response, "the worker script must stay cookie-free to be publicly cacheable")
+}
+
+func TestOfflinePageIsPublicAndNeedsNoAuth(t *testing.T) {
+	response := defaultITestApp(t).Get("/offline")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Cache-Control"); got != "public, max-age=3600" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	wantNoSetCookie(t, response, "the offline page is publicly cacheable")
+	wantContains(t, response.Text(), "You are offline")
+}
+
+// The worker precaches this page from inside a signed-in session, and the
+// Cache API honours no Cache-Control: a no-store response with a session cookie
+// riding along would be stored on disk and replayed to the next person.
+func TestOfflinePageStaysPublicForASignedInReader(t *testing.T) {
+	response := authedApp(t).Get("/offline")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := response.Header().Get("Cache-Control"); got != "public, max-age=3600" {
+		t.Errorf("a signed-in request must not make the offline page private, Cache-Control = %q", got)
+	}
+	wantNoSetCookie(t, response, "no session cookie may ride on a response the worker will cache")
+}
+
+func TestHealthCheck(t *testing.T) {
+	response := defaultITestApp(t).Get("/health")
+
+	wantStatus(t, response, http.StatusOK)
+	if got := jsonField(t, response, "status"); got != "ok" {
+		t.Errorf("status = %v", got)
+	}
+	if _, ok := jsonField(t, response, "git_version").(string); !ok {
+		t.Error("git_version is not a string")
+	}
+}
+
+func TestHealthCheckNoAuthRequired(t *testing.T) {
+	wantStatus(t, defaultITestApp(t).Get("/health"), http.StatusOK)
+}
+
+// --- Subscription handler coverage ---
+
+func TestSubscriptionListWithFeeds(t *testing.T) {
+	app := authedApp(t)
+	grImport(t, app, `<?xml version="1.0" encoding="UTF-8"?><opml version="2.0"><body><outline text="SubListCat">`+
+		`<outline type="rss" text="SubList Feed" xmlUrl="https://sublist.example.com/feed.xml" htmlUrl="https://sublist.example.com"/>`+
+		`</outline></body></opml>`)
+
+	subscriptions := grSubscriptions(t, app)
+
+	if len(subscriptions) != 1 {
+		t.Fatalf("subscriptions = %d, want 1", len(subscriptions))
+	}
+	sub := subscriptions[0].(map[string]any)
+	if sub["id"] != "feed/https://sublist.example.com/feed.xml" || sub["url"] != "https://sublist.example.com/feed.xml" {
+		t.Errorf("id/url = %v / %v", sub["id"], sub["url"])
+	}
+	for _, field := range []string{"title", "sortid"} {
+		if _, ok := sub[field].(string); !ok {
+			t.Errorf("%s should be a string", field)
+		}
+	}
+	if _, present := sub["iconUrl"]; !present {
+		t.Error("iconUrl field should be present")
+	}
+	categories, _ := sub["categories"].([]any)
+	if len(categories) != 1 {
+		t.Fatalf("categories = %v, want one", sub["categories"])
+	}
+	category := categories[0].(map[string]any)
+	if category["label"] != "SubListCat" || !strings.Contains(category["id"].(string), "SubListCat") {
+		t.Errorf("category = %v", category)
+	}
+}
+
+// ac=subscribe performs feed discovery before inserting; an unreachable URL is
+// a 502 from discovery.
+func TestSubscriptionEditSubscribeUnreachableUrl(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.postPairs("/reader/api/0/subscription/edit", "ac", "subscribe", "s", "feed/https://unreachable.example.com/feed.xml")
+
+	wantStatus(t, response, http.StatusBadGateway)
+}
+
+func TestSubscriptionEditUnknownAction(t *testing.T) {
+	app := authedApp(t)
+
+	response := app.postPairs("/reader/api/0/subscription/edit", "ac", "invalid", "s", "feed/https://example.com/feed.xml")
+
+	wantStatus(t, response, http.StatusBadRequest)
+}
