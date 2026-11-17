@@ -35,9 +35,8 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 		rejection(w, http.StatusUnsupportedMediaType, "Expected request with `Content-Type: application/json`")
 		return false
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		rejection(w, http.StatusRequestEntityTooLarge, "Failed to buffer the request body")
+	body, ok := readBody(w, r)
+	if !ok {
 		return false
 	}
 	if err := json.Unmarshal(body, out); err != nil {
@@ -45,6 +44,22 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 		return false
 	}
 	return true
+}
+
+// readBody buffers the capped body. Only exceeding the cap is a 413; a client
+// that hangs up or sends broken framing is a plain 400.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err == nil {
+		return body, true
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		rejection(w, http.StatusRequestEntityTooLarge, "Failed to buffer the request body")
+		return nil, false
+	}
+	rejection(w, http.StatusBadRequest, "Failed to buffer the request body")
+	return nil, false
 }
 
 // hasJSONSuffix accepts application/*+json like axum.
@@ -71,9 +86,8 @@ func parseForm(w http.ResponseWriter, r *http.Request) (url.Values, bool) {
 			"Form requests must have `Content-Type: application/x-www-form-urlencoded`")
 		return nil, false
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		rejection(w, http.StatusRequestEntityTooLarge, "Failed to buffer the request body")
+	body, ok := readBody(w, r)
+	if !ok {
 		return nil, false
 	}
 	values, err := url.ParseQuery(string(body))

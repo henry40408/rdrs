@@ -37,7 +37,6 @@ func Timeout(limit time.Duration) Middleware {
 			defer timer.Stop()
 			select {
 			case <-done:
-				tw.finish()
 			case <-timer.C:
 				if tw.expire() {
 					// The handler goroutine is abandoned: its context is cancelled
@@ -46,14 +45,15 @@ func Timeout(limit time.Duration) Middleware {
 					return
 				}
 				<-done
-				tw.finish()
 			}
 			select {
 			case p := <-panicked:
-				// Re-panic with the original value so http.ErrAbortHandler still
-				// aborts the connection silently.
+				// Before finish(), so the request log does not record a 200 for a
+				// connection that is about to be aborted. Re-panic with the
+				// original value so http.ErrAbortHandler still aborts silently.
 				panic(p)
 			default:
+				tw.finish()
 			}
 		})
 	}

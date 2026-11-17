@@ -91,6 +91,15 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, identityOf(user))
 }
 
+// setupTokenAccepted fails closed: with no configured token nothing matches.
+func (a *App) setupTokenAccepted(submitted string) bool {
+	if a.options.SkipSetupToken {
+		return true
+	}
+	token := a.options.SetupToken
+	return token != "" && secret.VerifySetupToken(a.Config.Secret, token, submitted)
+}
+
 // performSetup is shared by the JSON and form endpoints; endpoint only labels
 // logs.
 func (a *App) performSetup(r *http.Request, input setupInput, endpoint string) (*models.User, error) {
@@ -116,7 +125,7 @@ func (a *App) performSetup(r *http.Request, input setupInput, endpoint string) (
 	if !a.Config.CanSetup(count) {
 		return nil, ErrRegistrationNotAllowed
 	}
-	if token := a.options.SetupToken; token != "" && !secret.VerifySetupToken(a.Config.Secret, token, input.SetupToken) {
+	if !a.setupTokenAccepted(input.SetupToken) {
 		a.Audit.LoginFailed(utf8.RuneCountInString(input.Username), "bad_setup_token", a.request(r))
 		return nil, ErrInvalidSetupToken
 	}
@@ -408,15 +417,16 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 // hijacked session can neither brute-force the password here nor sidestep
 // that limit.
 func (a *App) reauthenticate(w http.ResponseWriter, r *http.Request) {
+	// Before the body, as axum's AuthUser extractor runs before Json.
+	principal, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		// Absent for a forward-auth session, which has no password to give.
 		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &body) {
-		return
-	}
-	principal, ok := a.requireUser(w, r)
-	if !ok {
 		return
 	}
 	if err := a.confirmCredentials(r, principal, body.Password); err != nil {
@@ -549,7 +559,7 @@ func (a *App) deleteSession(r *http.Request) (bool, error) {
 // server cannot know whether an earlier configuration wrote them.
 func (a *App) clearAuthCookies(w http.ResponseWriter, r *http.Request) {
 	for _, removal := range append(a.cookies.RemoveSession(), a.cookies.RemoveCSRF()...) {
-		if _, carried := r.Cookie(removal.Name); !removal.Secure && carried != nil {
+		if _, err := r.Cookie(removal.Name); !removal.Secure && err != nil {
 			continue
 		}
 		http.SetCookie(w, removal)

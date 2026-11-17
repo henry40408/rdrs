@@ -72,8 +72,11 @@ type Options struct {
 	// Limiter throttles credential attempts; nil builds one from Config.
 	Limiter *auth.RateLimiter
 	// SetupToken is the one-time code first-run setup demands, printed on
-	// stderr at startup; empty means none is required.
+	// stderr at startup. An empty value never means "no token": setup is then
+	// refused, so a wiring mistake cannot hand the first admin to anyone.
 	SetupToken string
+	// SkipSetupToken drops the token check; for tests only.
+	SkipSetupToken bool
 }
 
 // Handler mounts every registered route inside the middleware stack, outermost

@@ -19,7 +19,8 @@ func SafeReturnTo(raw string, allow func(path string) bool) (string, bool) {
 	beforeFragment, _, _ := strings.Cut(raw, "#")
 	rawPath, rawQuery, hasQuery := strings.Cut(beforeFragment, "?")
 	path := encodeURLPart(removeDotSegments(rawPath), pathEncodeSet)
-	if !allow(path) {
+	// "/.//evil" normalises to "//evil", which a browser reads as another host.
+	if strings.HasPrefix(path, "//") || !allow(path) {
 		return "", false
 	}
 	if !hasQuery {

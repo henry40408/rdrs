@@ -34,7 +34,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 	app := NewApp(Options{
 		Config: config.Config{Secret: key, MultiUser: true}, DB: database,
 		Audit:   audit.New(slog.New(slog.DiscardHandler), key),
-		Limiter: auth.NewRateLimiter(0, 60),
+		Limiter: auth.NewRateLimiter(0, 60), SkipSetupToken: true,
 	})
 	return &authFixture{handler: app.Handler(), database: database, secret: key}
 }

@@ -112,3 +112,8 @@ with reading pane and the keyboard-help overlay, light and dark.
   decoded twice and produced mojibake, so the title, and with it the ID, of an
   entry without a guid changes once after migration: those entries are
   duplicated one time.
+- Go is stricter than Rust on return-to paths: a path that normalises to
+  `//host` (`/.//evil.example`, `/a/..//evil.example`, `/%2e//evil.example`)
+  is refused. Rust accepted it, an open redirect.
+- First-run setup fails closed: an empty `Options.SetupToken` refuses setup
+  instead of skipping the token check (only `SkipSetupToken`, for tests, does).

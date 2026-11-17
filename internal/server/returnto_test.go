@@ -27,7 +27,8 @@ func TestSafeReturnToRejectsAnythingLeavingTheOriginOrTheAllowlist(t *testing.T)
 		"", "feeds", "//evil.example/feeds", "/\\evil.example/feeds", "/feeds\\..\\admin",
 		"https://evil.example/feeds", "javascript:alert(1)", "/feeds\r\nSet-Cookie: x=1", "/feeds\t",
 		"/admin", "/feeds/../admin", "/feeds/1/edit", "/feeds/%2e%2e/admin", "/feeds/%2E./admin",
-		"/x/../../admin",
+		"/x/../../admin", "/.//evil.example", "/a/..//evil.example", "/%2e//evil.example",
+		"/..//evil.example/x?y",
 	} {
 		if got, ok := SafeReturnTo(raw, feedsOnly); ok {
 			t.Errorf("%q accepted as %q", raw, got)
