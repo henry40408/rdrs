@@ -31,6 +31,10 @@ func (r Route) String() string { return r.Method + " " + r.Path }
 // method is a 405 with an Allow header, like axum.
 func (r Route) pattern() string {
 	path := r.Path
+	if path == "/" {
+		// A bare "/" would match every path.
+		path = "/{$}"
+	}
 	if start := strings.Index(path, "{*"); start >= 0 {
 		path = path[:start] + "{" + path[start+2:len(path)-1] + "...}"
 	}
@@ -52,6 +56,7 @@ func (a *App) routes() []Route {
 	table = append(table, a.chromeRoutes()...)
 	table = append(table, a.categoryRoutes()...)
 	table = append(table, a.feedRoutes()...)
+	table = append(table, a.mediaRoutes()...)
 	return table
 }
 
@@ -89,6 +94,9 @@ type Options struct {
 	Syncer *feedsync.Syncer
 	// Now is the clock of relative times; nil is time.Now. Tests pin it.
 	Now func() time.Time
+
+	// notFound answers a path no route serves; App.Handler sets it.
+	notFound http.HandlerFunc
 }
 
 // Handler mounts every registered route inside the middleware stack, outermost
@@ -100,7 +108,50 @@ func Handler(options Options) http.Handler {
 
 // Handler mounts the app's routes inside the middleware stack.
 func (a *App) Handler() http.Handler {
-	return buildHandler(a.options, a.routes())
+	options := a.options
+	options.notFound = a.notFoundPage
+	return buildHandler(options, a.routes())
+}
+
+// fallback answers what no route matched: 405 with Allow when another method
+// serves the path, like axum, else notFound (a bare 404 when it is nil).
+func fallback(mux *http.ServeMux, notFound http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if allowed := allowedMethods(mux, r); len(allowed) > 0 {
+			w.Header().Set("Allow", strings.Join(allowed, ","))
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if notFound == nil {
+			http.NotFound(w, r)
+			return
+		}
+		notFound(w, r)
+	}
+}
+
+// allowedMethods probes the mux with each method for a route other than the
+// fallback itself.
+func allowedMethods(mux *http.ServeMux, r *http.Request) []string {
+	var allowed []string
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
+		probe := r.Clone(r.Context())
+		probe.Method = method
+		if _, pattern := mux.Handler(probe); pattern != "" && pattern != "/" {
+			allowed = append(allowed, method)
+		}
+	}
+	return allowed
+}
+
+// notFoundPage is the router fallback: the 404 page when signed in, the login
+// redirect otherwise.
+func (a *App) notFoundPage(w http.ResponseWriter, r *http.Request) {
+	principal, ok := a.requirePage(w, r)
+	if !ok {
+		return
+	}
+	a.renderNotFound(w, r, principal, "Page not found", "The page you're looking for doesn't exist.")
 }
 
 // buildHandler takes the route table so tests can mount probe routes behind
@@ -110,6 +161,7 @@ func buildHandler(options Options, table []Route) http.Handler {
 	for _, route := range table {
 		mux.HandleFunc(route.pattern(), withRoute(route))
 	}
+	mux.HandleFunc("/", fallback(mux, options.notFound))
 	authenticator := &auth.Authenticator{DB: options.DB, Config: options.Config, Audit: options.Audit}
 	cookies := authenticator.Cookies()
 	core := middleware.Chain(mux,

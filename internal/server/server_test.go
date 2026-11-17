@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/henry40408/rdrs/internal/config"
+	"github.com/henry40408/rdrs/internal/testutil"
 	"github.com/henry40408/rdrs/internal/version"
 	"github.com/henry40408/rdrs/static"
 )
@@ -29,7 +31,7 @@ func do(t *testing.T, method, target string) *httptest.ResponseRecorder {
 }
 
 func TestEveryResponseCarriesTheOuterLayers(t *testing.T) {
-	handler := Handler(Options{HSTS: "max-age=1"})
+	handler := Handler(Options{HSTS: "max-age=1", DB: testutil.SQLite(t), Config: config.Config{Secret: []byte("layers-secret-0123456789abcdef")}})
 	for _, target := range []string{"/health", "/nope", "/static/missing.js"} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
