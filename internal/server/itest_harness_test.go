@@ -60,6 +60,9 @@ func newITestAppWith(t testing.TB, options Options) *itestApp {
 	options.Audit = audit.New(slog.New(slog.DiscardHandler), options.Config.Secret)
 	options.SkipSetupToken = options.SetupToken == ""
 	app := NewApp(options)
+	// Detached writes (mark-read on a fragment fetch) must land before the
+	// database directory is removed, or its cleanup races them.
+	t.Cleanup(app.Wait)
 	return &itestApp{
 		t: t, App: app, DB: options.DB, handler: app.Handler(),
 		cookies: map[string]string{}, headers: http.Header{},
