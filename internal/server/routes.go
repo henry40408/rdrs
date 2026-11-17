@@ -4,6 +4,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/henry40408/rdrs/internal/audit"
+	"github.com/henry40408/rdrs/internal/auth"
+	"github.com/henry40408/rdrs/internal/config"
+	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/server/middleware"
 	"github.com/henry40408/rdrs/internal/version"
 )
@@ -56,24 +60,35 @@ type Options struct {
 	// HSTS is the Strict-Transport-Security value; empty leaves it off, which
 	// is right for plain HTTP deployments.
 	HSTS string
+
+	// Config, DB and Audit feed the session layers.
+	Config config.Config
+	DB     *db.DB
+	Audit  *audit.Logger
 }
 
 // Handler mounts every registered route inside the middleware stack, outermost
-// first as in the Rust router. The session, flash, forward-auth and
-// synchronizer-token layers join the core stack with the auth step. The SSE
-// route will sit outside the core stack: Timeout, Compress and ETag buffer,
-// which would break a stream.
+// first as in the Rust router. The SSE route will sit outside the core stack:
+// Timeout, Compress and ETag buffer, which would break a stream.
 func Handler(options Options) http.Handler {
 	mux := http.NewServeMux()
 	for _, route := range routes() {
 		mux.HandleFunc(route.pattern(), withRoute(route))
 	}
+	authenticator := &auth.Authenticator{DB: options.DB, Config: options.Config, Audit: options.Audit}
+	cookies := authenticator.Cookies()
 	core := middleware.Chain(mux,
 		middleware.CrossSiteGuard,
+		middleware.SignFlashCookies(options.Config.Secret),
+		middleware.ForwardAuth(auth.ForwardLogin{DB: options.DB, Config: options.Config, Audit: options.Audit}),
+		middleware.SlideSession(authenticator),
+		middleware.AnonymousSession(cookies),
+		middleware.CSRFGuard(cookies),
 		middleware.Timeout(middleware.RequestTimeout),
 		middleware.Compress,
 		middleware.DateHeader,
 		middleware.ETag,
+		middleware.NoStoreForAuthenticated,
 	)
 	layers := []middleware.Middleware{middleware.RequestLog}
 	if options.HSTS != "" {
