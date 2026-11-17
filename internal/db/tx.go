@@ -17,6 +17,9 @@ type Tx struct {
 	done    sync.Once
 }
 
+// Dialect is the SQL dialect of the backend.
+func (t *Tx) Dialect() Dialect { return t.dialect }
+
 // ExecContext runs a statement that returns no rows.
 func (t *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return t.tx.ExecContext(ctx, t.dialect.Rewrite(query), args...)

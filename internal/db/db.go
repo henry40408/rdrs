@@ -241,6 +241,8 @@ type Executor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *Row
+	// Dialect lets dynamic SQL builders pick backend-specific fragments.
+	Dialect() Dialect
 }
 
 var (
