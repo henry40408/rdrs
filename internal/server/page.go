@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/henry40408/rdrs/internal/auth"
@@ -78,4 +79,10 @@ func userJSON(user *models.User) userView {
 		view.DisabledAt = &disabled
 	}
 	return view
+}
+
+// chronoRFC3339 renders t as chrono's to_rfc3339 does for UTC: "+00:00" for
+// the zone, with the same fraction rule as chronoUTC.
+func chronoRFC3339(t time.Time) string {
+	return strings.TrimSuffix(chronoUTC(t), "Z") + "+00:00"
 }

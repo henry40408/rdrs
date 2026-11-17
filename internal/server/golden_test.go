@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"regexp"
 	"strings"
@@ -97,13 +98,22 @@ var goldenPaths = map[string]bool{
 	"/search?q=%22unterminated":        true,
 	"/search?q=alpha&fragment=1":       true,
 	"/search?q=is%3Astarred+feed%3A1":  true,
+	"/user-settings":                   true,
+	"/settings":                        true,
+	"/admin":                           true,
+	"/api/passkeys":                    true,
 }
 
 var (
 	hex64Pattern = regexp.MustCompile(`[0-9a-f]{64}`)
 	// The file size depends on the page layout the engine writes, not on the app.
 	databaseSize = regexp.MustCompile(`(stats-card-value">)[0-9.]+ [KMG]?B(</div><div class="stats-card-label">Database Size)`)
-	csrfField    = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
+	// The invite expiry is the seeded time to the minute; capture.py left it as is.
+	inviteExpiry = regexp.MustCompile(`link expires \d{4}-\d\d-\d\d \d\d:\d\d`)
+	lastActive   = regexp.MustCompile(`(<dt>Last active</dt><dd><time datetime=")[^"]*(" data-local-text>)[^<]*`)
+	// capture.py ran against a scratch directory of the capturing machine.
+	capturedDatabase = regexp.MustCompile(`<code>[^<]*golden\.sqlite3</code>`)
+	csrfField        = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 )
 
 type goldenFixture struct {
@@ -118,7 +128,12 @@ func newGoldenFixture(t *testing.T) *goldenFixture {
 	t.Setenv("RDRS_FAST_HASH", "1")
 	database := testutil.SQLite(t)
 	app := NewApp(Options{
-		Config: config.Config{Secret: goldenSecret, MultiUser: true}, DB: database, SetupToken: "CCCCC-CCCCC",
+		Config: config.Config{
+			Secret: goldenSecret, MultiUser: true, DatabaseURL: "@DB@",
+			ServerBind:   netip.MustParseAddrPort("127.0.0.1:18931"),
+			WebAuthnRPID: "localhost", WebAuthnRPOrigin: "http://localhost:18931", WebAuthnRPName: "rdrs",
+			UserAgent: config.DefaultUserAgent(),
+		}, DB: database, SetupToken: "CCCCC-CCCCC",
 		Audit:   audit.New(slog.New(slog.DiscardHandler), goldenSecret),
 		Limiter: auth.NewRateLimiter(0, 60),
 		// Inside the window the Rust capture ran in, so relative times match.
@@ -128,7 +143,7 @@ func newGoldenFixture(t *testing.T) *goldenFixture {
 	app.detach = func(task func()) { task() }
 	return &goldenFixture{
 		handler: app.Handler(), database: database, version: gitVersion(),
-		expires: time.Now().UTC().Add(7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000+00:00"),
+		expires: time.Now().UTC().Add(7*24*time.Hour).Format("2006-01-02T15:04:05") + ".000000+00:00",
 	}
 }
 
@@ -194,7 +209,11 @@ func (f *goldenFixture) replay(t *testing.T, page goldenPage) *httptest.Response
 }
 
 func (f *goldenFixture) normalise(page goldenPage, body string) string {
-	body = strings.ReplaceAll(body, f.version, "@VERSION@")
+	// Only where the version is shown: the build has none ("unknown"), a word
+	// that also appears in page text.
+	for _, shown := range []string{"?v=", "<code>", "RDRS/"} {
+		body = strings.ReplaceAll(body, shown+f.version, shown+"@VERSION@")
+	}
 	body = strings.ReplaceAll(body, goldenNow.Format("2006-01-02 15:04:05"), "@NOW@")
 	if page.Anonymous {
 		body = hex64Pattern.ReplaceAllString(body, "@HEX64@")
@@ -203,6 +222,13 @@ func (f *goldenFixture) normalise(page goldenPage, body string) string {
 		body = strings.ReplaceAll(body, form, "@EXPIRES@")
 	}
 	return body
+}
+
+// scrubVolatile hides what differs between runs on both sides of a comparison.
+func scrubVolatile(body string) string {
+	body = inviteExpiry.ReplaceAllString(body, "link expires @EXPIRES@")
+	body = lastActive.ReplaceAllString(body, "${1}@NOW@${2}@NOW@")
+	return capturedDatabase.ReplaceAllString(body, "<code>@DB@</code>")
 }
 
 func TestHTMLGoldens(t *testing.T) {
@@ -243,7 +269,8 @@ func (f *goldenFixture) check(t *testing.T, page goldenPage) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, wanted := databaseSize.ReplaceAllString(f.normalise(page, rec.Body.String()), "${1}@SIZE@${2}"), databaseSize.ReplaceAllString(string(want), "${1}@SIZE@${2}")
+	got := databaseSize.ReplaceAllString(scrubVolatile(f.normalise(page, rec.Body.String())), "${1}@SIZE@${2}")
+	wanted := databaseSize.ReplaceAllString(scrubVolatile(string(want)), "${1}@SIZE@${2}")
 	if got != wanted {
 		t.Errorf("body differs from %s\n got: %.400s\nwant: %.400s", *page.File, firstDifference(got, wanted), firstDifference(wanted, got))
 	}
