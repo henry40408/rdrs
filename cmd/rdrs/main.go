@@ -8,18 +8,28 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/henry40408/rdrs/internal/config"
 )
 
 func main() {
-	os.Exit(run(context.Background(), os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, stop, os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
 // run is the testable entry point; it returns the process exit code. Stdout is
 // reserved for output that is safe to collect: the setup token goes to stderr.
-func run(_ context.Context, args []string, lookupEnv func(string) (string, bool), _, stderr io.Writer) int {
+//
+// ctx ends on the first SIGINT or SIGTERM, which starts the graceful shutdown;
+// releaseSignals then restores default signal handling, so a second signal
+// kills a shutdown that hangs.
+func run(ctx context.Context, releaseSignals func(), args []string, lookupEnv func(string) (string, bool), _, stderr io.Writer) int {
 	if err := ensureNoLegacyEnvVars(lookupEnv); err != nil {
 		fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 1
@@ -39,7 +49,32 @@ func run(_ context.Context, args []string, lookupEnv func(string) (string, bool)
 		fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 1
 	}
+	slog.SetDefault(logger)
 	warnAboutConfig(logger, cfg)
+	return serveUntilStopped(ctx, releaseSignals, cfg, logger, stderr)
+}
+
+func serveUntilStopped(ctx context.Context, releaseSignals func(), cfg config.Config, logger *slog.Logger, stderr io.Writer) int {
+	app, err := newApplication(ctx, cfg, logger, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Startup error: %v\n", err)
+		return 1
+	}
+	listener, err := net.Listen("tcp", cfg.ServerBind.String())
+	if err != nil {
+		_ = app.db.Shutdown(context.WithoutCancel(ctx))
+		fmt.Fprintf(stderr, "Startup error: bind %s: %v\n", cfg.ServerBind, err)
+		return 1
+	}
+	go func() {
+		<-ctx.Done()
+		logger.Info("received a stop signal, shutting down", "event", "shutdown.signal")
+		releaseSignals()
+	}()
+	if err := app.serve(ctx, listener); err != nil {
+		logger.Error("server failed", "event", "server.failed", "error", err)
+		return 1
+	}
 	return 0
 }
 
