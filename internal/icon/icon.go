@@ -57,8 +57,9 @@ func (f Fetcher) Fetch(ctx context.Context, c Candidates) *Image {
 	return nil
 }
 
-func rejected(reason, raw string, args ...any) {
-	slog.Debug("image rejected", append([]any{"event", "icon.rejected", "reason", reason, "url", raw}, args...)...)
+// rejected logs why an image was dropped. detail is one extra field, or nil.
+func rejected(reason, raw string, detail ...slog.Attr) {
+	slog.Debug("image rejected", "event", "icon.rejected", "reason", reason, "url", raw, "detail", slog.GroupValue(detail...))
 }
 
 // get sends one guarded GET bounded by the icon timeout; the caller closes the
@@ -101,28 +102,28 @@ func (f Fetcher) download(ctx context.Context, raw string) *Image {
 		return nil
 	}
 	if err := f.Fetcher.Validate(parsed); err != nil {
-		rejected("blocked_url", raw, "error", err)
+		rejected("blocked_url", raw, slog.Any("error", err))
 		return nil
 	}
 	resp, cancel, err := f.get(ctx, raw)
 	if err != nil {
-		slog.Debug("failed to fetch image", "event", "icon.fetch_failed", "url", raw, "error", err)
+		slog.Debug("failed to fetch image", "event", "icon.fetch_failed", "url", raw, slog.Any("error", err))
 		return nil
 	}
 	defer cancel()
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		rejected("status", raw, "status", resp.StatusCode)
+		rejected("status", raw, slog.Int("status", resp.StatusCode))
 		return nil
 	}
 	contentType := mediaType(resp.Header.Get("Content-Type"))
 	if !strings.HasPrefix(contentType, "image/") {
-		rejected("content_type", raw, "content_type", contentType)
+		rejected("content_type", raw, slog.String("content_type", contentType))
 		return nil
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxSize+1))
 	if err != nil {
-		slog.Debug("failed to read image body", "event", "icon.fetch_failed", "url", raw, "error", err)
+		slog.Debug("failed to read image body", "event", "icon.fetch_failed", "url", raw, slog.Any("error", err))
 		return nil
 	}
 	if len(data) > MaxSize {
@@ -148,7 +149,7 @@ func (f Fetcher) favicon(ctx context.Context, siteURL string) *Image {
 		return nil
 	}
 	if err := f.Fetcher.Validate(base); err != nil {
-		rejected("blocked_url", siteURL, "error", err)
+		rejected("blocked_url", siteURL, slog.Any("error", err))
 		return nil
 	}
 	ico, err := base.Parse("/favicon.ico")
