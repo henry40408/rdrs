@@ -1,7 +1,6 @@
 package sanitize
 
 import (
-	"net/url"
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/imageproxy"
@@ -24,14 +23,12 @@ type Context struct {
 // image through the signed proxy and adds link privacy attributes.
 type postPass struct {
 	ctx  Context
-	base *url.URL
+	base *specialURL
 }
 
 func newPostPass(ctx Context) postPass {
 	pp := postPass{ctx: ctx}
-	if base, err := url.Parse(trimURLInput(ctx.BaseURL)); err == nil && ctx.BaseURL != "" {
-		pp.base = base
-	}
+	pp.base = parseBase(ctx.BaseURL)
 	return pp
 }
 

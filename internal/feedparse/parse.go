@@ -3,7 +3,6 @@ package feedparse
 import (
 	"bytes"
 	"errors"
-	"net/url"
 	"strings"
 	"time"
 
@@ -104,7 +103,7 @@ func timestampOf(e *element) *time.Time {
 
 // newLink resolves href against the element's xml:base the way the url crate
 // does, falling back to the text as written.
-func newLink(href string, base *url.URL) Link {
+func newLink(href, base string) Link {
 	if resolved, ok := sanitize.ResolveLink(href, base); ok {
 		return Link{Href: strings.TrimSpace(resolved)}
 	}

@@ -77,7 +77,7 @@ func convertJSON(doc *jsonFeed) *Feed {
 	feed := &Feed{Type: TypeJSON, Title: ptr(newText(*doc.Title)), Logo: doc.Icon, Icon: doc.Favicon}
 	for _, uri := range []*string{doc.HomePageURL, doc.FeedURL} {
 		if uri != nil {
-			feed.Links = append(feed.Links, newLink(*uri, nil))
+			feed.Links = append(feed.Links, newLink(*uri, ""))
 		}
 	}
 	if doc.Description != nil {
@@ -101,7 +101,7 @@ func convertJSONItem(item jsonItem) Entry {
 	}
 	for _, uri := range []*string{item.URL, item.ExternalURL} {
 		if uri != nil {
-			entry.Links = append(entry.Links, newLink(*uri, nil))
+			entry.Links = append(entry.Links, newLink(*uri, ""))
 		}
 	}
 	if item.Title != nil {
@@ -116,7 +116,7 @@ func convertJSONItem(item jsonItem) Entry {
 	}
 	entry.Authors = jsonAuthors(nil, item.Author, item.Authors)
 	for _, a := range item.Attachments {
-		entry.Links = append(entry.Links, newLink(*a.URL, nil))
+		entry.Links = append(entry.Links, newLink(*a.URL, ""))
 	}
 	return entry
 }

@@ -1,6 +1,7 @@
 package sanitize
 
 import (
+	"log/slog"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -14,7 +15,10 @@ func parseFragment(content string) *html.Node {
 	nodes, err := html.ParseFragment(strings.NewReader(content), context)
 	root := &html.Node{Type: html.ElementNode, DataAtom: atom.Div, Data: "div"}
 	if err != nil {
-		// strings.Reader cannot fail, so this only guards a parser change.
+		// x/net/html refuses more than 511 open elements; ammonia has no such
+		// limit. Keep the content as escaped text rather than lose it.
+		slog.Warn("html nesting too deep, keeping content as text", "event", "sanitize.too_deep", "error", err)
+		root.AppendChild(&html.Node{Type: html.TextNode, Data: content})
 		return root
 	}
 	for _, n := range nodes {

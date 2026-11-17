@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/sanitize"
@@ -57,7 +56,7 @@ type element struct {
 	space    namespace
 	attrs    []attr
 	nodes    []node
-	base     *url.URL
+	base     string
 	offset   int64
 }
 
@@ -307,18 +306,7 @@ func applyXMLBase(el *element) {
 	if !ok {
 		return
 	}
-	if u, err := url.Parse(value); err == nil && u.Scheme != "" {
-		el.base = u
-		return
-	}
-	if el.base == nil {
-		return
-	}
-	joined, ok := sanitize.ResolveLink(value, el.base)
-	if !ok {
-		return
-	}
-	if u, err := url.Parse(joined); err == nil {
-		el.base = u
+	if resolved, ok := sanitize.ResolveLink(value, el.base); ok {
+		el.base = resolved
 	}
 }

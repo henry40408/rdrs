@@ -93,11 +93,11 @@ func stripTrackingParamsFromURL(href string) (string, bool) {
 	if !strings.HasPrefix(href, "http://") && !strings.HasPrefix(href, "https://") {
 		return "", false
 	}
-	u, ok := parseSpecial(href)
+	u, ok := parseURL(href, nil)
 	if !ok {
 		return "", false
 	}
-	pairs := parseQueryPairs(u.RawQuery)
+	pairs := parseQueryPairs(u.query)
 	kept := make([]queryPair, 0, len(pairs))
 	for _, p := range pairs {
 		if !isTrackingParam(p.name) {
@@ -107,9 +107,9 @@ func stripTrackingParamsFromURL(href string) (string, bool) {
 	if len(kept) == len(pairs) {
 		return "", false
 	}
-	u.ForceQuery = false
-	u.RawQuery = serializeQueryPairs(kept)
-	return normalizeURL(u)
+	u.query = serializeQueryPairs(kept)
+	u.hasQuery = len(kept) > 0
+	return u.String(), true
 }
 
 type queryPair struct{ name, value string }
