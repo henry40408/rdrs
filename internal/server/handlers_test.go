@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/henry40408/rdrs/internal/auth"
 	"github.com/henry40408/rdrs/internal/db"
+	"github.com/henry40408/rdrs/internal/imageproxy"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/secret"
 	"github.com/henry40408/rdrs/internal/version"
@@ -1926,4 +1928,519 @@ func TestRevokeAllApiTokensFlashCountsTheTokens(t *testing.T) {
 	if text := revokeAll(); !strings.Contains(text, "Revoked 1 API token.") {
 		t.Errorf("one token must read as singular, got: %s", text)
 	}
+}
+
+func TestUpdateRoleFormPromotesUser(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+
+	wantSeeOther(t, app.postPairs("/admin/users/2/role", "role", "admin"), "/admin")
+
+	// Two admins now: the action button on a non-self admin row says "demote".
+	body := app.GetOK("/admin")
+	if !strings.Contains(body, "target") || !strings.Contains(body, "demote") {
+		t.Error("the target row should now be an admin row with a demote button")
+	}
+}
+
+func TestUpdateStatusFormDisablesUser(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+
+	wantSeeOther(t, app.postPairs("/admin/users/2/status", "disabled", "true"), "/admin")
+
+	login := app.PostJSON("/api/session", map[string]string{"username": "target", "password": fixturePassword})
+	wantStatus(t, login, http.StatusForbidden)
+}
+
+func TestStartMasqueradeFormRedirectsToRoot(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+
+	wantSeeOther(t, app.request(http.MethodPost, "/admin/users/2/masquerade"), "/")
+}
+
+func TestDeleteUserFormSucceeds(t *testing.T) {
+	app := adminApp(t)
+	seedTarget(app)
+
+	wantSeeOther(t, app.request(http.MethodPost, "/admin/users/2/delete"), "/admin")
+
+	if strings.Contains(app.GetOK("/admin"), ">target<") {
+		t.Error("the target row should be gone")
+	}
+}
+
+func TestUpdateRoleFormSelfProtection(t *testing.T) {
+	app := adminApp(t)
+
+	// Changing your own role is blocked with an error flash, not a 400.
+	wantSeeOther(t, app.postPairs("/admin/users/1/role", "role", "user"), "/admin")
+
+	// The admin's own row carries the "(you)" marker and no role toggle.
+	body := app.GetOK("/admin")
+	if !strings.Contains(body, "(you)") || strings.Contains(body, "promote") {
+		t.Error("the admin role should be unchanged")
+	}
+}
+
+// --- /categories form-action POST endpoints ---
+
+func queryInt(t *testing.T, app *itestApp, query string, args ...any) int64 {
+	t.Helper()
+	var value int64
+	if err := app.DB.QueryRowContext(context.Background(), query, args...).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func queryString(t *testing.T, app *itestApp, query string, args ...any) string {
+	t.Helper()
+	var value string
+	if err := app.DB.QueryRowContext(context.Background(), query, args...).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestCreateCategoryFormSucceeds(t *testing.T) {
+	app := authedApp(t)
+
+	wantSeeOther(t, app.postPairs("/categories", "name", "Tech"), "/categories")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM category WHERE name = $1", "Tech") == 0 {
+		t.Error("category 'Tech' should exist in the DB after creation")
+	}
+}
+
+func TestCreateCategoryFormEmptyName(t *testing.T) {
+	app := authedApp(t)
+
+	// An error flash redirect: still 303 to /categories, no DB write.
+	wantSeeOther(t, app.postPairs("/categories", "name", ""), "/categories")
+
+	// Only the seeded "Uncategorized" remains.
+	if count := queryInt(t, app, "SELECT COUNT(*) FROM category"); count != 1 {
+		t.Errorf("categories = %d, want 1 (only the seeded default)", count)
+	}
+}
+
+func TestRenameCategoryFormSucceeds(t *testing.T) {
+	app := authedApp(t)
+	wantSeeOther(t, app.postPairs("/categories", "name", "OldName"), "/categories")
+	categoryID := queryInt(t, app, "SELECT id FROM category WHERE name = $1", "OldName")
+
+	wantSeeOther(t, app.postPairs(fmt.Sprintf("/categories/%d/rename", categoryID), "name", "NewName"), "/categories")
+
+	if name := queryString(t, app, "SELECT name FROM category WHERE id = $1", categoryID); name != "NewName" {
+		t.Errorf("name = %q, want NewName", name)
+	}
+}
+
+func TestDeleteCategoryFormSucceeds(t *testing.T) {
+	app := authedApp(t)
+	wantSeeOther(t, app.postPairs("/categories", "name", "ToDelete"), "/categories")
+	categoryID := queryInt(t, app, "SELECT id FROM category WHERE name = $1", "ToDelete")
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/categories/%d/delete", categoryID)), "/categories")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM category WHERE id = $1", categoryID) != 0 {
+		t.Error("category should be deleted from the DB")
+	}
+}
+
+// --- /feeds form-action POST endpoints ---
+
+func TestCreateFeedFormEmptyUrl(t *testing.T) {
+	app := authedApp(t)
+
+	wantSeeOther(t, app.postPairs("/feeds", "url", "", "category_id", "1"), "/feeds")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed") != 0 {
+		t.Error("an empty url must not create a feed")
+	}
+}
+
+func TestCreateFeedFormInvalidCategory(t *testing.T) {
+	app := authedApp(t)
+
+	wantSeeOther(t, app.postPairs("/feeds", "url", "https://example.com/feed.xml", "category_id", "999999"), "/feeds")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed") != 0 {
+		t.Error("no feed should be created when the category is invalid")
+	}
+}
+
+func TestEditFeedFormSucceeds(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://example.com/feed.xml")
+
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+		"url", "https://example.com/feed.xml", "title", "Renamed Feed", "description", "New description",
+		"site_url", "https://example.com", "category_id", fmt.Sprint(categoryID),
+		"custom_user_agent", "", "custom_referrer", "")
+
+	wantSeeOther(t, response, "/feeds")
+	if title := queryString(t, app, "SELECT title FROM feed WHERE id = $1", feedID); title != "Renamed Feed" {
+		t.Errorf("title = %q", title)
+	}
+	if description := queryString(t, app, "SELECT description FROM feed WHERE id = $1", feedID); description != "New description" {
+		t.Errorf("description = %q", description)
+	}
+}
+
+func TestEditFeedFormReturnsToTheFilteredList(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://return-to.example.com/feed.xml")
+	back := fmt.Sprintf("/feeds?category=%d&sort=unread&filter=all", categoryID)
+	edit := func(feedURL, returnTo string) itestResponse {
+		return app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+			"url", feedURL, "category_id", fmt.Sprint(categoryID), "return_to", returnTo)
+	}
+
+	// Success lands on the list the edit link came from.
+	wantSeeOther(t, edit("https://return-to.example.com/feed.xml", back), back)
+
+	// An error stays on the edit page, still carrying the list.
+	wantSeeOther(t, edit("", back), fmt.Sprintf(
+		"/feeds/%d/edit?return_to=%%2Ffeeds%%3Fcategory%%3D%d%%26sort%%3Dunread%%26filter%%3Dall", feedID, categoryID))
+
+	// Off-site or off-list targets fall back to the bare list.
+	for _, evil := range []string{"https://evil.example/feeds", "//evil.example/feeds", "/admin"} {
+		if got := edit("https://return-to.example.com/feed.xml", evil).Header().Get("Location"); got != "/feeds" {
+			t.Errorf("%s: Location = %q, want /feeds", evil, got)
+		}
+	}
+}
+
+func TestFeedRowFormsReturnToTheFilteredList(t *testing.T) {
+	app := authedApp(t)
+	categoryID, feedID := insertTestFeed(t, app, "Tech", "https://row-forms.example.com/feed.xml")
+	encodedBack := fmt.Sprintf("%%2Ffeeds%%3Fcategory%%3D%d%%26sort%%3Dunread%%26filter%%3Dall", categoryID)
+	page := app.GetOK(fmt.Sprintf("/feeds?category=%d&sort=unread&filter=all", categoryID))
+	back := fmt.Sprintf("/feeds?category=%d&amp;sort=unread&amp;filter=all", categoryID)
+
+	if !strings.Contains(page, fmt.Sprintf(`name="return_to" value="%s"`, back)) {
+		t.Error("row forms carry the filtered view")
+	}
+	if !strings.Contains(page, fmt.Sprintf("/feeds/%d/edit?return_to=%s", feedID, encodedBack)) {
+		t.Error("the edit link carries the filtered view")
+	}
+	editPage := app.GetOK(fmt.Sprintf("/feeds/%d/edit?return_to=%s", feedID, encodedBack))
+	if !strings.Contains(editPage, fmt.Sprintf(`<a href="%s" class="btn btn-secondary">Cancel</a>`, back)) {
+		t.Error("Cancel returns to the filtered list")
+	}
+
+	returnTo := fmt.Sprintf("/feeds?category=%d&filter=errors", categoryID)
+	wantSeeOther(t, app.postPairs(fmt.Sprintf("/feeds/%d/delete", feedID), "return_to", returnTo), returnTo)
+}
+
+func TestEditFeedFormChangesCategory(t *testing.T) {
+	app := authedApp(t)
+	_, feedID := insertTestFeed(t, app, "Tech", "https://example.com/feed.xml")
+	other, err := models.CreateCategory(context.Background(), app.DB, 1, "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := app.postPairs(fmt.Sprintf("/feeds/%d/edit", feedID),
+		"url", "https://example.com/feed.xml", "title", "Test Feed", "description", "", "site_url", "",
+		"category_id", fmt.Sprint(other.ID), "custom_user_agent", "", "custom_referrer", "")
+
+	wantStatus(t, response, http.StatusSeeOther)
+	if got := queryInt(t, app, "SELECT category_id FROM feed WHERE id = $1", feedID); got != other.ID {
+		t.Errorf("category_id = %d, want %d", got, other.ID)
+	}
+}
+
+func TestDeleteFeedFormSucceeds(t *testing.T) {
+	app := authedApp(t)
+	_, feedID := insertTestFeed(t, app, "Tech", "https://example.com/feed.xml")
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/feeds/%d/delete", feedID)), "/feeds")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed WHERE id = $1", feedID) != 0 {
+		t.Error("the feed should be deleted")
+	}
+}
+
+// otherUsersFeed is a feed owned by a second account, made behind the router's back.
+func otherUsersFeed(t *testing.T, app *itestApp) int64 {
+	t.Helper()
+	ctx := context.Background()
+	other, err := models.CreateUser(ctx, app.DB, "other", "x", models.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	category, err := models.CreateCategory(ctx, app.DB, other.ID, "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Other"
+	feed, err := models.CreateFeed(ctx, app.DB, models.CreateFeedParams{
+		CategoryID: category.ID, URL: "https://other.example.com/feed.xml", Title: &title,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return feed.ID
+}
+
+func TestDeleteFeedFormNotOwned(t *testing.T) {
+	app := authedApp(t)
+	otherFeedID := otherUsersFeed(t, app)
+
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/feeds/%d/delete", otherFeedID)), "/feeds")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed WHERE id = $1", otherFeedID) != 1 {
+		t.Error("non-owner delete must not remove the feed")
+	}
+}
+
+func TestRefreshFeedFormNotOwned(t *testing.T) {
+	app := authedApp(t)
+	otherFeedID := otherUsersFeed(t, app)
+
+	// The ownership check fails first, so no network call is attempted.
+	wantSeeOther(t, app.request(http.MethodPost, fmt.Sprintf("/feeds/%d/refresh", otherFeedID)), "/feeds")
+}
+
+func multipartUpload(t *testing.T, parts map[string]string) (body *bytes.Buffer, contentType string) {
+	t.Helper()
+	body = &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for name, content := range parts {
+		part, err := writer.CreateFormFile(name, "subscriptions.opml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = part.Write([]byte(content))
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body, writer.FormDataContentType()
+}
+
+func postMultipart(app *itestApp, path string, body *bytes.Buffer, contentType string) itestResponse {
+	return app.Do(itestRequest{Method: http.MethodPost, Path: path, Body: body.String(), Headers: map[string]string{"Content-Type": contentType}})
+}
+
+func TestImportOpmlFormEmpty(t *testing.T) {
+	app := authedApp(t)
+	body, contentType := multipartUpload(t, nil)
+
+	wantSeeOther(t, postMultipart(app, "/feeds/import", body, contentType), "/feeds/import")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed") != 0 {
+		t.Error("an empty upload must not create feeds")
+	}
+}
+
+func TestImportOpmlFormSucceeds(t *testing.T) {
+	app := authedApp(t)
+	body, contentType := multipartUpload(t, map[string]string{"file": `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Test Subscriptions</title></head>
+  <body>
+    <outline text="Tech" title="Tech">
+      <outline type="rss" text="Example Feed" title="Example Feed"
+               xmlUrl="https://example.com/feed.xml" htmlUrl="https://example.com"/>
+    </outline>
+  </body>
+</opml>`})
+
+	wantSeeOther(t, postMultipart(app, "/feeds/import", body, contentType), "/feeds")
+
+	if queryInt(t, app, "SELECT COUNT(*) FROM category WHERE name = 'Tech'") != 1 {
+		t.Error("want one Tech category")
+	}
+	if queryInt(t, app, "SELECT COUNT(*) FROM feed WHERE url = 'https://example.com/feed.xml'") != 1 {
+		t.Error("want the imported feed")
+	}
+}
+
+// --- GET /entries/{id}/fragment ---
+
+// fragmentEntry is a signed-in reader who owns one entry in one feed.
+func fragmentEntry(t *testing.T, username, feedURL, guid string) (owner libraryOwner, entryID int64) {
+	t.Helper()
+	owner = newLibraryOwner(t, username)
+	feedID := owner.feed(t, owner.category(t, "T"), feedURL, "Test Feed")
+	entryID = owner.entryWithContent(t, feedID, guid, "Hello World", "https://x/post", "<p>Body text here</p>")
+	return owner, entryID
+}
+
+func TestEntryFragmentRendersReadingPane(t *testing.T) {
+	owner, entryID := fragmentEntry(t, "alice_frag", "https://x/feed", "guid-frag-test")
+	app := owner.app
+
+	response := app.Get(fmt.Sprintf("/entries/%d/fragment", entryID))
+
+	wantStatus(t, response, http.StatusOK)
+	if contentType := response.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
+		t.Errorf("expected text/html, got: %s", contentType)
+	}
+	html := response.Text()
+	row := fmt.Sprintf("#entry-row-%d", entryID)
+	for what, want := range map[string]string{
+		"reading-pane id":    `id="reading-pane"`,
+		"entry title":        "Hello World",
+		"entry body":         "Body text here",
+		"favicon chip":       "entry-favicon-chip",
+		"shared action":      `class="rp-action"`,
+		"accessible name":    `aria-label="Mark Unread"`,
+		"marker form swap":   fmt.Sprintf(`data-swap-target="%s .entry-marker"`, row),
+		"row read directive": fmt.Sprintf(`<template data-class-target="%s" data-class-add="entry-read">`, row),
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("%s: %q missing", what, want)
+		}
+	}
+	if strings.Contains(html, fmt.Sprintf(`<div id="entry-row-%d"`, entryID)) {
+		t.Error("the whole row must not be re-sent, only the sub-elements that changed")
+	}
+	// The sidebar's counts travel over SSE, not in this response.
+	if strings.Contains(html, "sidebar-unread") {
+		t.Error("the unconsumed sidebar-unread payload must not be reintroduced")
+	}
+	// The mark-as-read write is detached, so poll until it lands.
+	if !waitForRead(t, app, entryID) {
+		t.Error("entry must be marked read after open")
+	}
+}
+
+// A real top-level navigation to the partial-only /fragment route must
+// redirect to the full entries page rather than serving bare <template>
+// blocks, which render blank. It still marks the entry read on the way out.
+func TestEntryFragmentRedirectsOnTopLevelNavigation(t *testing.T) {
+	owner, entryID := fragmentEntry(t, "doc_nav", "https://x/feed", "guid-doc-nav")
+	app := owner.app
+
+	response := app.Do(itestRequest{
+		Path:    fmt.Sprintf("/entries/%d/fragment", entryID),
+		Headers: map[string]string{"Sec-Fetch-Dest": "document"},
+	})
+
+	wantSeeOther(t, response, fmt.Sprintf("/entries?entry=%d", entryID))
+	if !waitForRead(t, app, entryID) {
+		t.Error("a scriptless open must mark the entry read, like the fetch() path")
+	}
+}
+
+// A prefetch or prerender is the browser guessing, not the reader opening
+// something: it must not mark anything read, and its response must not be
+// storable, or the real click could be served from the prefetch cache.
+func TestEntryFragmentSpeculativeLoadDoesNotMarkRead(t *testing.T) {
+	owner, entryID := fragmentEntry(t, "spec_load", "https://x/spec-feed", "guid-spec")
+	app := owner.app
+	path := fmt.Sprintf("/entries/%d/fragment", entryID)
+
+	// A prerender sends "prefetch;prerender", which the substring test also has to catch.
+	for _, purpose := range []string{"prefetch", "prefetch;prerender"} {
+		response := app.Do(itestRequest{Path: path, Headers: map[string]string{"Sec-Purpose": purpose}})
+		wantStatus(t, response, http.StatusOK)
+		if got := response.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", purpose, got)
+		}
+	}
+	// The same request as a scriptless navigation covers the redirect branch.
+	response := app.Do(itestRequest{Path: path, Headers: map[string]string{"Sec-Purpose": "prefetch", "Sec-Fetch-Dest": "document"}})
+	wantStatus(t, response, http.StatusSeeOther)
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("redirect Cache-Control = %q, want no-store", got)
+	}
+
+	// The write is detached: give it the window a real one would have had.
+	time.Sleep(150 * time.Millisecond)
+	if isRead(t, app, entryID) {
+		t.Error("a speculative load must leave the entry unread")
+	}
+	// And the reader's real open still works.
+	wantStatus(t, app.Get(path), http.StatusOK)
+	if !waitForRead(t, app, entryID) {
+		t.Error("a genuine open after a prefetch must still mark read")
+	}
+}
+
+// A top-level navigation carrying a Referer from a scoped list page must
+// redirect back into that scope with the pane pre-opened. An id that resolves
+// to nothing still redirects rather than 404s.
+func TestEntryFragmentDocumentNavPreservesRefererScope(t *testing.T) {
+	app := defaultITestApp(t)
+	wantStatus(t, app.setupJSON("ref_scope", nil), http.StatusCreated)
+	app.Login("ref_scope")
+
+	response := app.Do(itestRequest{
+		Path: "/entries/123/fragment",
+		Headers: map[string]string{
+			"Sec-Fetch-Dest": "document",
+			"Referer":        "https://testserver/categories/4/entries?q=rust",
+		},
+	})
+
+	wantSeeOther(t, response, "/categories/4/entries?q=rust&entry=123")
+}
+
+const (
+	proxyTestImageURL    = "https://example.com/a.png"
+	proxyTestImageURLB64 = "aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw"
+)
+
+// The media proxy serves a stable ETag (the per-URL request signature). A
+// conditional request that already holds it gets a 304 with no origin fetch.
+func TestProxyImage304OnIfNoneMatch(t *testing.T) {
+	app := defaultITestApp(t)
+	// Signed with the test config's secret: the 304 short-circuit sits behind
+	// signature verification.
+	signature := imageproxy.SignURL(make([]byte, 32), proxyTestImageURL)
+
+	response := app.Do(itestRequest{
+		Path:    "/api/proxy/image?url=" + proxyTestImageURLB64 + "&s=" + signature,
+		Headers: map[string]string{"If-None-Match": `"` + signature + `"`},
+	})
+
+	wantStatus(t, response, http.StatusNotModified)
+	if etag := response.Header().Get("ETag"); etag != `"`+signature+`"` {
+		t.Errorf("ETag = %q", etag)
+	}
+}
+
+// The 304 short-circuit must not answer ahead of the signature check, or
+// anyone could get back a cacheable 304 whose ETag echoed their own input.
+func TestProxyImage304RequiresAValidSignature(t *testing.T) {
+	app := defaultITestApp(t)
+	for _, signature := range []string{"sometoken", "*"} {
+		response := app.Do(itestRequest{
+			Path:    "/api/proxy/image?url=" + proxyTestImageURLB64 + "&s=" + url.QueryEscape(signature),
+			Headers: map[string]string{"If-None-Match": "*"},
+		})
+
+		wantStatus(t, response, http.StatusBadRequest)
+		if etag := response.Header().Get("ETag"); etag != "" {
+			t.Errorf("a rejected request must not echo `s` back as an ETag, got %q", etag)
+		}
+	}
+}
+
+func TestEntryFragment404ForOtherUser(t *testing.T) {
+	owner := newLibraryOwner(t, "alice_404")
+	app := owner.app
+	// Bob and his entry go straight into the database; he never logs in.
+	bob, err := models.CreateUser(context.Background(), app.DB, "bob_404", "x", models.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobCategory, err := models.CreateCategory(context.Background(), app.DB, bob.ID, "T")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobOwner := libraryOwner{app: app, userID: bob.ID}
+	bobFeed := bobOwner.feed(t, bobCategory.ID, "https://b/feed", "Bob Feed")
+	bobEntry := bobOwner.entry(t, bobFeed, "guid-bob-entry", "Bob's Entry", "https://b/post")
+
+	response := app.Get(fmt.Sprintf("/entries/%d/fragment", bobEntry))
+
+	wantStatus(t, response, http.StatusNotFound)
 }
