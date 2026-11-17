@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/henry40408/rdrs/internal/models"
-	"github.com/henry40408/rdrs/internal/summarize"
 )
 
 // BookmarkData is what is sent to a service.
@@ -34,12 +33,25 @@ func (e *Error) Error() string { return e.Message + ": " + e.Cause.Error() }
 
 func (e *Error) Unwrap() error { return e.Cause }
 
+// KagiConfig is the user's Kagi setting, stored inside save_services.
+type KagiConfig struct {
+	// SessionToken is extracted from a Kagi session link.
+	SessionToken string `json:"session_token"`
+	// Language is the target language, such as "ZH-HANT" or "EN". Optional.
+	Language *string `json:"language"`
+}
+
+// IsConfigured needs only the session token.
+func (c KagiConfig) IsConfigured() bool {
+	return c.SessionToken != ""
+}
+
 // ServicesConfig is every service's setting, stored as JSON in
 // user_settings.save_services. Kagi lives here too, though it summarizes
 // rather than saves.
 type ServicesConfig struct {
-	Linkding *LinkdingConfig       `json:"linkding"`
-	Kagi     *summarize.KagiConfig `json:"kagi"`
+	Linkding *LinkdingConfig `json:"linkding"`
+	Kagi     *KagiConfig     `json:"kagi"`
 }
 
 // ParseServicesConfig reads the stored JSON.

@@ -13,22 +13,14 @@ import (
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/fetch"
+	"github.com/henry40408/rdrs/internal/save"
 )
 
 const kagiAPIBase = "https://kagi.com"
 
-// KagiConfig is the user's Kagi setting, stored inside save_services.
-type KagiConfig struct {
-	// SessionToken is extracted from a Kagi session link.
-	SessionToken string `json:"session_token"`
-	// Language is the target language, such as "ZH-HANT" or "EN". Optional.
-	Language *string `json:"language"`
-}
-
-// IsConfigured needs only the session token.
-func (c KagiConfig) IsConfigured() bool {
-	return c.SessionToken != ""
-}
+// KagiConfig is the user's Kagi setting. It lives in save, next to the rest of
+// the stored services document.
+type KagiConfig = save.KagiConfig
 
 // Result is the outcome of one summarization. A Kagi-side problem comes back as
 // Success false so it cannot fail the caller; only transport and decoding
