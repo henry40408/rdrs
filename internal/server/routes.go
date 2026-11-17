@@ -70,6 +70,7 @@ func (a *App) routes() []Route {
 	table = append(table, a.entryActionRoutes()...)
 	table = append(table, a.markReadRoutes()...)
 	table = append(table, a.entryAPIRoutes()...)
+	table = append(table, a.eventRoutes()...)
 	return table
 }
 
@@ -119,7 +120,7 @@ type Options struct {
 }
 
 // Handler mounts every registered route inside the middleware stack, outermost
-// first as in the Rust router. The SSE route will sit outside the core stack:
+// first as in the Rust router. The SSE route sits outside the core stack:
 // Timeout, Compress and ETag buffer, which would break a stream.
 func Handler(options Options) http.Handler {
 	return NewApp(options).Handler()
@@ -176,8 +177,12 @@ func (a *App) notFoundPage(w http.ResponseWriter, r *http.Request) {
 // buildHandler takes the route table so tests can mount probe routes behind
 // the real stack.
 func buildHandler(options Options, table []Route) http.Handler {
-	mux := http.NewServeMux()
+	mux, stream := http.NewServeMux(), http.NewServeMux()
 	for _, route := range table {
+		if streamingPaths[route.Path] {
+			stream.HandleFunc(route.pattern(), withRoute(route))
+			continue
+		}
 		mux.HandleFunc(route.pattern(), withRoute(route))
 	}
 	mux.HandleFunc("/", fallback(mux, options.notFound))
@@ -196,12 +201,18 @@ func buildHandler(options Options, table []Route) http.Handler {
 		middleware.ETag,
 		middleware.NoStoreForAuthenticated,
 	)
+	// Streams skip the core layers; the layers below still wrap them.
+	outer := http.NewServeMux()
+	outer.Handle("/", core)
+	for path := range streamingPaths {
+		outer.Handle("GET "+path, stream)
+	}
 	layers := []middleware.Middleware{middleware.RequestLog}
 	if options.HSTS != "" {
 		layers = append(layers, middleware.HSTS(options.HSTS))
 	}
 	layers = append(layers, middleware.SecurityHeaders)
-	return middleware.Chain(core, layers...)
+	return middleware.Chain(outer, layers...)
 }
 
 // withRoute tells the request log which template matched.
