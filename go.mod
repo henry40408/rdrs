@@ -6,6 +6,7 @@ toolchain go1.26.11
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
+	github.com/andybalholm/brotli v1.3.0
 	github.com/jackc/pgx/v5 v5.12.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0

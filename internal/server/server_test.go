@@ -24,8 +24,28 @@ func get(t *testing.T, target string) *httptest.ResponseRecorder {
 func do(t *testing.T, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	Handler().ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+	Handler(Options{}).ServeHTTP(rec, httptest.NewRequest(method, target, nil))
 	return rec
+}
+
+func TestEveryResponseCarriesTheOuterLayers(t *testing.T) {
+	handler := Handler(Options{HSTS: "max-age=1"})
+	for _, target := range []string{"/health", "/nope", "/static/missing.js"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		for _, name := range []string{"Content-Security-Policy", "Strict-Transport-Security", "Date"} {
+			if rec.Header().Get(name) == "" {
+				t.Errorf("%s lacks %s", target, name)
+			}
+		}
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/health", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 403 || rec.Header().Get("Content-Security-Policy") == "" {
+		t.Errorf("a refused request still gets the security headers: %d %v", rec.Code, rec.Header())
+	}
 }
 
 func TestRegisteredRoutesAreAllInTheRustRouteList(t *testing.T) {

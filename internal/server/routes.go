@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/henry40408/rdrs/internal/server/middleware"
 	"github.com/henry40408/rdrs/internal/version"
 )
 
@@ -50,11 +51,42 @@ func serveHealth(w http.ResponseWriter, _ *http.Request) {
 	}{"ok", version.Version()})
 }
 
-// Handler mounts every registered route.
-func Handler() http.Handler {
+// Options configures the layers around the routes.
+type Options struct {
+	// HSTS is the Strict-Transport-Security value; empty leaves it off, which
+	// is right for plain HTTP deployments.
+	HSTS string
+}
+
+// Handler mounts every registered route inside the middleware stack, outermost
+// first as in the Rust router. The session, flash, forward-auth and
+// synchronizer-token layers join the core stack with the auth step. The SSE
+// route will sit outside the core stack: Timeout, Compress and ETag buffer,
+// which would break a stream.
+func Handler(options Options) http.Handler {
 	mux := http.NewServeMux()
 	for _, route := range routes() {
-		mux.HandleFunc(route.pattern(), route.Handler)
+		mux.HandleFunc(route.pattern(), withRoute(route))
 	}
-	return mux
+	core := middleware.Chain(mux,
+		middleware.CrossSiteGuard,
+		middleware.Timeout(middleware.RequestTimeout),
+		middleware.Compress,
+		middleware.DateHeader,
+		middleware.ETag,
+	)
+	layers := []middleware.Middleware{middleware.RequestLog}
+	if options.HSTS != "" {
+		layers = append(layers, middleware.HSTS(options.HSTS))
+	}
+	layers = append(layers, middleware.SecurityHeaders)
+	return middleware.Chain(core, layers...)
+}
+
+// withRoute tells the request log which template matched.
+func withRoute(route Route) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		middleware.SetRoute(r, route.Path)
+		route.Handler(w, r)
+	}
 }
