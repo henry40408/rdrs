@@ -47,6 +47,29 @@ func relativeTime(t *time.Time, now time.Time) (relative, datetime string) {
 	return relative, rfc3339Offset(*t)
 }
 
+// relativeTimeCompact is the short age of an entry row ("5m", "3h", "2mo");
+// a missing time is a dash.
+func relativeTimeCompact(t *time.Time, now time.Time) string {
+	if t == nil {
+		return "—"
+	}
+	age := now.Sub(*t)
+	seconds := int64(age / time.Second)
+	switch {
+	case seconds < 60:
+		return "now"
+	case seconds < 3600:
+		return fmt.Sprintf("%dm", int64(age/time.Minute))
+	case seconds < 86400:
+		return fmt.Sprintf("%dh", int64(age/time.Hour))
+	case seconds < 2_592_000:
+		return fmt.Sprintf("%dd", wholeDays(age))
+	case seconds < 31_536_000:
+		return fmt.Sprintf("%dmo", wholeDays(age)/30)
+	}
+	return fmt.Sprintf("%dy", wholeDays(age)/365)
+}
+
 // rfc3339Offset is chrono's to_rfc3339 for a UTC time: "+00:00" and a
 // fraction of 3, 6 or 9 digits only when needed.
 func rfc3339Offset(t time.Time) string {

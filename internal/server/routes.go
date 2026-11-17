@@ -1,17 +1,20 @@
 package server
 
 import (
-	"github.com/henry40408/rdrs/internal/feedsync"
-	"github.com/henry40408/rdrs/internal/fetch"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/henry40408/rdrs/internal/audit"
 	"github.com/henry40408/rdrs/internal/auth"
+	"github.com/henry40408/rdrs/internal/cache"
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
+	"github.com/henry40408/rdrs/internal/events"
+	"github.com/henry40408/rdrs/internal/feedsync"
+	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/server/middleware"
+	"github.com/henry40408/rdrs/internal/summarize"
 	"github.com/henry40408/rdrs/internal/version"
 )
 
@@ -57,6 +60,11 @@ func (a *App) routes() []Route {
 	table = append(table, a.categoryRoutes()...)
 	table = append(table, a.feedRoutes()...)
 	table = append(table, a.mediaRoutes()...)
+	table = append(table, a.entryPageRoutes()...)
+	table = append(table, a.entryFragmentRoutes()...)
+	table = append(table, a.entryActionRoutes()...)
+	table = append(table, a.markReadRoutes()...)
+	table = append(table, a.entryAPIRoutes()...)
 	return table
 }
 
@@ -92,6 +100,12 @@ type Options struct {
 	Fetcher *fetch.Fetcher
 	// Syncer refreshes feeds on demand; nil builds one around Fetcher.
 	Syncer *feedsync.Syncer
+	// Events, Summaries, SummaryQueue and Cancels connect the handlers to the
+	// SSE endpoint and the summary worker; nil builds fresh ones.
+	Events       *events.Bus
+	Summaries    *cache.Summary
+	SummaryQueue chan summarize.Job
+	Cancels      *summarize.Cancels
 	// Now is the clock of relative times; nil is time.Now. Tests pin it.
 	Now func() time.Time
 

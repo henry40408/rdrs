@@ -24,6 +24,8 @@ import (
 // The goldens are full pages captured from the Rust server (see
 // testdata/html/capture.py). Each handler step adds its pages to goldenCovered.
 
+var goldenNow = time.Date(2026, 11, 17, 7, 15, 0, 0, time.UTC)
+
 var goldenSecret = []byte("golden-secret-not-base64-0123456789")
 
 type goldenPage struct {
@@ -51,15 +53,42 @@ func goldenCovered(page goldenPage) bool {
 
 // goldenPaths are the exact request targets whose handlers exist.
 var goldenPaths = map[string]bool{
-	"/categories":                     true,
-	"/api/sidebar":                    true,
-	"/api/sidebar/categories/1/feeds": true,
-	"/api/user":                       true,
-	"/feeds":                          true,
-	"/feeds/1/edit":                   true,
-	"/feeds/2/edit":                   true,
-	"/feeds/3/edit":                   true,
-	"/feeds/import":                   true,
+	"/categories":                      true,
+	"/api/sidebar":                     true,
+	"/api/sidebar/categories/1/feeds":  true,
+	"/api/user":                        true,
+	"/feeds":                           true,
+	"/feeds/1/edit":                    true,
+	"/feeds/2/edit":                    true,
+	"/feeds/3/edit":                    true,
+	"/feeds/import":                    true,
+	"/":                                true,
+	"/entries":                         true,
+	"/entries?fragment=1":              true,
+	"/entries/read":                    true,
+	"/entries/starred":                 true,
+	"/entries/summarized":              true,
+	"/entries/today":                   true,
+	"/entries/offline":                 true,
+	"/entries/1":                       true,
+	"/entries?entry=1":                 true,
+	"/feeds/1/entries":                 true,
+	"/feeds/1/entries?status=read":     true,
+	"/feeds/1/entries?status=starred":  true,
+	"/categories/1/entries":            true,
+	"/categories/1/entries?fragment=1": true,
+	"/entries/1/fragment":              true,
+	"/entries/3/fragment":              true,
+	"/entries/4/fragment":              true,
+	"/entries/6/fragment":              true,
+	"/entries/7/fragment":              true,
+	"/entries/8/fragment":              true,
+	"/entries/1/summary/fragment":      true,
+	"/entries/5/summary/fragment":      true,
+	"/entries/2/summary/fragment":      true,
+	"/offline":                         true,
+	"/no/such/page":                    true,
+	"/api/offline/manifest":            true,
 }
 
 var (
@@ -83,8 +112,10 @@ func newGoldenFixture(t *testing.T) *goldenFixture {
 		Audit:   audit.New(slog.New(slog.DiscardHandler), goldenSecret),
 		Limiter: auth.NewRateLimiter(0, 60),
 		// Inside the window the Rust capture ran in, so relative times match.
-		Now: func() time.Time { return time.Date(2026, 11, 17, 7, 15, 0, 0, time.UTC) },
+		Now: func() time.Time { return goldenNow },
 	})
+	// The next replayed request must see what a detached write changed.
+	app.detach = func(task func()) { task() }
 	return &goldenFixture{
 		handler: app.Handler(), database: database, version: gitVersion(),
 		expires: time.Now().UTC().Add(7 * 24 * time.Hour).Format("2006-01-02T15:04:05.000000+00:00"),
@@ -106,18 +137,6 @@ func (f *goldenFixture) seed(t *testing.T) {
 	// The Rust server's cleanup sweep ran at its start and removed the seeded
 	// summaries, which are older than a day.
 	if _, err := models.DeleteExpiredSummaries(context.Background(), f.database, 24); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// emulateOpenedEntries stands in for the entry pages the Rust capture visited
-// before /feeds: opening an entry marks it read. Remove it once those pages
-// are served by the Go handlers and replayed in order.
-func (f *goldenFixture) emulateOpenedEntries(t *testing.T) {
-	t.Helper()
-	_, err := f.database.ExecContext(context.Background(),
-		"UPDATE entry SET read_at = '2026-11-17 00:00:00' WHERE id IN (1, 3, 4, 7)")
-	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -166,6 +185,7 @@ func (f *goldenFixture) replay(t *testing.T, page goldenPage) *httptest.Response
 
 func (f *goldenFixture) normalise(page goldenPage, body string) string {
 	body = strings.ReplaceAll(body, f.version, "@VERSION@")
+	body = strings.ReplaceAll(body, goldenNow.Format("2006-01-02 15:04:05"), "@NOW@")
 	if page.Anonymous {
 		body = hex64Pattern.ReplaceAllString(body, "@HEX64@")
 	}
@@ -193,9 +213,6 @@ func TestHTMLGoldens(t *testing.T) {
 		}
 		if page.Name == "login" {
 			f.seed(t)
-		}
-		if page.Name == "feeds" {
-			f.emulateOpenedEntries(t)
 		}
 		t.Run(page.Name, func(t *testing.T) { f.check(t, page) })
 	}
