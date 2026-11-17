@@ -103,7 +103,7 @@ func (p Params) download(ctx context.Context, u *url.URL) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", &Error{Kind: KindFetch, Detail: "HTTP " + strconv.Itoa(resp.StatusCode) + " " + http.StatusText(resp.StatusCode)}
+		return "", &Error{Kind: KindFetch, Detail: "HTTP " + strconv.Itoa(resp.StatusCode) + " " + fetch.StatusReason(resp.StatusCode)}
 	}
 	text, err := decode(resp.Body, resp.Header.Get("Content-Type"))
 	if err != nil {

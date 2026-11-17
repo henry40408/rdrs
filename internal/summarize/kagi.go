@@ -130,7 +130,7 @@ func statusMessage(response *http.Response) string {
 	if err != nil {
 		text = []byte("Unknown error")
 	}
-	return fmt.Sprintf("Kagi error (%d %s): %s", response.StatusCode, http.StatusText(response.StatusCode), text)
+	return fmt.Sprintf("Kagi error (%d %s): %s", response.StatusCode, fetch.StatusReason(response.StatusCode), text)
 }
 
 func resultOf(body kagiResponse) *Result {

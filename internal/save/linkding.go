@@ -112,7 +112,7 @@ func errorMessage(response *http.Response) string {
 		text = "Unknown error"
 	}
 	if response.StatusCode != http.StatusBadRequest {
-		return "Linkding error (" + strconv.Itoa(response.StatusCode) + " " + http.StatusText(response.StatusCode) + "): " + text
+		return "Linkding error (" + strconv.Itoa(response.StatusCode) + " " + fetch.StatusReason(response.StatusCode) + "): " + text
 	}
 	// A 400 for a duplicate means already bookmarked, which the user wants.
 	if strings.Contains(text, "already exists") || strings.Contains(text, "unique") {

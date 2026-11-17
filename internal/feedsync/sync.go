@@ -68,23 +68,8 @@ func newRequest(ctx context.Context, feed *models.Feed, userAgent string) (*http
 	return req, nil
 }
 
-// statusReasons are the three phrases where Go's names differ from the http
-// crate's, which Rust showed.
-var statusReasons = map[int]string{
-	http.StatusRequestEntityTooLarge:        "Payload Too Large",
-	http.StatusRequestURITooLong:            "URI Too Long",
-	http.StatusRequestedRangeNotSatisfiable: "Range Not Satisfiable",
-}
-
 func statusText(code int) string {
-	text, ok := statusReasons[code]
-	if !ok {
-		text = http.StatusText(code)
-	}
-	if text == "" {
-		text = "<unknown status code>"
-	}
-	return fmt.Sprintf("HTTP %d %s", code, text)
+	return fmt.Sprintf("HTTP %d %s", code, fetch.StatusReason(code))
 }
 
 // headerPtr is nil for an absent header and for a value that is not visible

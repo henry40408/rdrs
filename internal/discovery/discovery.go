@@ -123,7 +123,7 @@ func (p Params) get(ctx context.Context, u *url.URL) (*page, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &Error{Kind: KindFetch, Detail: "HTTP " + strconv.Itoa(resp.StatusCode) + " " + http.StatusText(resp.StatusCode)}
+		return nil, &Error{Kind: KindFetch, Detail: "HTTP " + strconv.Itoa(resp.StatusCode) + " " + fetch.StatusReason(resp.StatusCode)}
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
