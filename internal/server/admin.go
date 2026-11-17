@@ -291,7 +291,7 @@ func (a *App) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrRegistrationNotAllowed):
 		adminFlash(w, flash.NewError("This instance is single-user. Set RDRS_MULTI_USER_ENABLED=true to add accounts."))
 	case err != nil:
-		slog.Error("account creation failed", "error", err)
+		slog.Error("account creation failed", "event", "admin.create_account_failed", "error", err)
 		adminFlash(w, flash.NewError("Failed to create the account."))
 	default:
 		adminFlash(w, flash.NewInviteLink(a.inviteURL(path)))
@@ -581,7 +581,7 @@ func takeInviteLink(banners *[]flash.Message) string {
 func (a *App) adminUserRows(ctx context.Context, principal *auth.Principal) []views.AdminUserRow {
 	users, err := models.ListUsers(ctx, a.DB)
 	if err != nil {
-		slog.Error("admin user list failed", "error", err)
+		slog.Error("admin user list failed", "event", "admin.list_users_failed", "error", err)
 		return nil
 	}
 	rows := make([]views.AdminUserRow, 0, len(users))

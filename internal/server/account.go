@@ -478,7 +478,7 @@ func (a *App) updatePreferencesForm(w http.ResponseWriter, r *http.Request) {
 			settingsFlash(w, flash.NewError(validation.Message))
 			return
 		}
-		slog.Error("preferences update failed", "error", err)
+		slog.Error("preferences update failed", "event", "settings.preferences_failed", "error", err)
 		settingsFlash(w, flash.NewError("Failed to update preferences."))
 		return
 	}
