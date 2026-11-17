@@ -12,6 +12,10 @@ import (
 // minCompressSize is tower-http's default: smaller bodies are left alone.
 const minCompressSize = 32
 
+// maxCompressBody is the largest body buffered for compression; a larger one
+// is sent uncompressed so memory stays bounded.
+const maxCompressBody = 8 << 20
+
 // Compress encodes responses with gzip or br according to Accept-Encoding,
 // following tower-http's CompressionLayer: the highest q-value wins and br
 // beats gzip on a tie; q=0 refuses an encoding; when nothing is acceptable
@@ -25,10 +29,15 @@ func Compress(next http.Handler) http.Handler {
 			return
 		}
 		if encoding == "" {
-			next.ServeHTTP(w, r)
+			// tower-http varies on Accept-Encoding even when it sends identity.
+			withHead(next, func(header http.Header, status int) {
+				if isCompressible(status, header) {
+					addVaryAcceptEncoding(header)
+				}
+			}).ServeHTTP(w, r)
 			return
 		}
-		dw := &deferredWriter{ResponseWriter: w, shouldBuffer: isCompressible}
+		dw := &deferredWriter{ResponseWriter: w, shouldBuffer: isCompressible, maxBody: maxCompressBody, spill: true}
 		next.ServeHTTP(dw, r)
 		if !dw.held() {
 			return

@@ -463,3 +463,32 @@ func TestLayersCompose(t *testing.T) {
 		t.Error("ETag was computed over the compressed body")
 	}
 }
+
+func TestTimeoutHandlerMayEditHeadersAfterExpiry(t *testing.T) {
+	// Run under -race: the handler holds w.Header() across the expiry while the
+	// outer layers edit the real map.
+	handler := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		h := w.Header()
+		time.Sleep(60 * time.Millisecond)
+		h.Set("X-Late", "1")
+		w.WriteHeader(http.StatusOK)
+	}), SecurityHeaders, Timeout(20*time.Millisecond))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	time.Sleep(100 * time.Millisecond)
+	if rec.Code != http.StatusRequestTimeout || rec.Header().Get("X-Late") != "" {
+		t.Errorf("status %d, headers %v", rec.Code, rec.Header())
+	}
+}
+
+func TestTimeoutRepanicsWithTheOriginalValue(t *testing.T) {
+	handler := Timeout(time.Second)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Errorf("recovered %v", got)
+		}
+	}()
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+}

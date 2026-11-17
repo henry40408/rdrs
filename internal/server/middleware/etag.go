@@ -22,7 +22,12 @@ func ETag(next http.Handler) http.Handler {
 			return
 		}
 		if dw.overflow {
-			// HTML should never exceed the limit, so fail loudly.
+			// HTML should never exceed the limit, so fail loudly. Rust builds a
+			// fresh empty response, so drop what the handler set.
+			header := w.Header()
+			for name := range header {
+				delete(header, name)
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}

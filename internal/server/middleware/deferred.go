@@ -13,6 +13,9 @@ type deferredWriter struct {
 	http.ResponseWriter
 	shouldBuffer func(status int, header http.Header) bool
 	maxBody      int // 0 means no limit
+	// spill makes a body over maxBody stream through unchanged instead of
+	// being dropped (overflow).
+	spill bool
 
 	decided   bool
 	buffering bool
@@ -44,6 +47,13 @@ func (w *deferredWriter) Write(data []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	if !w.buffering {
+		return w.ResponseWriter.Write(data)
+	}
+	if w.spill && w.maxBody > 0 && w.body.Len()+len(data) > w.maxBody {
+		w.buffering = false
+		w.ResponseWriter.WriteHeader(w.status)
+		_, _ = w.ResponseWriter.Write(w.body.Bytes())
+		w.body.Reset()
 		return w.ResponseWriter.Write(data)
 	}
 	if w.maxBody > 0 && w.body.Len()+len(data) > w.maxBody {

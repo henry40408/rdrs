@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -22,7 +21,7 @@ func Timeout(limit time.Duration) Middleware {
 			// body may legitimately take longer than limit.
 			ctx, cancel := context.WithCancel(r.Context())
 			defer cancel()
-			tw := &timeoutWriter{ResponseWriter: w}
+			tw := &timeoutWriter{ResponseWriter: w, header: http.Header{}}
 			panicked := make(chan any, 1)
 			done := make(chan struct{})
 			go func() {
@@ -49,7 +48,9 @@ func Timeout(limit time.Duration) Middleware {
 			}
 			select {
 			case p := <-panicked:
-				panic(fmt.Sprint(p))
+				// Re-panic with the original value so http.ErrAbortHandler still
+				// aborts the connection silently.
+				panic(p)
 			default:
 			}
 		})
@@ -57,9 +58,13 @@ func Timeout(limit time.Duration) Middleware {
 }
 
 // timeoutWriter lets the timer and the handler race for the head; the loser's
-// writes are dropped.
+// writes are dropped. The handler works on a private header map that is copied
+// to the real writer under mu when the head goes out, as http.TimeoutHandler
+// does: the handler may keep editing headers after the timer fired, and the
+// outer layers edit the real map concurrently.
 type timeoutWriter struct {
 	http.ResponseWriter
+	header   http.Header
 	mu       sync.Mutex
 	headSent bool
 	timedOut bool
@@ -79,6 +84,15 @@ func (w *timeoutWriter) expire() bool {
 	return true
 }
 
+// publishHeader copies the handler's headers to the real writer. The caller
+// holds mu.
+func (w *timeoutWriter) publishHeader() {
+	dst := w.ResponseWriter.Header()
+	for name, values := range w.header {
+		dst[name] = append([]string(nil), values...)
+	}
+}
+
 func (w *timeoutWriter) WriteHeader(status int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -88,6 +102,7 @@ func (w *timeoutWriter) WriteHeader(status int) {
 	if status >= 200 {
 		w.headSent = true
 	}
+	w.publishHeader()
 	w.ResponseWriter.WriteHeader(status)
 }
 
@@ -97,6 +112,9 @@ func (w *timeoutWriter) Write(data []byte) (int, error) {
 	if w.timedOut {
 		return len(data), nil
 	}
+	if !w.headSent {
+		w.publishHeader()
+	}
 	w.headSent = true
 	return w.ResponseWriter.Write(data)
 }
@@ -104,21 +122,15 @@ func (w *timeoutWriter) Write(data []byte) (int, error) {
 func (w *timeoutWriter) Flush() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if !w.timedOut {
-		w.headSent = true
-		_ = http.NewResponseController(w.ResponseWriter).Flush()
-	}
-}
-
-// Header is shared with the real writer; after a timeout the handler may still
-// edit it, which would race with the server, so it gets a private copy.
-func (w *timeoutWriter) Header() http.Header {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.timedOut {
-		return http.Header{}
+		return
 	}
-	return w.ResponseWriter.Header()
+	if !w.headSent {
+		w.publishHeader()
+	}
+	w.headSent = true
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 
-func (w *timeoutWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+// Header is the handler's private map; only the handler goroutine touches it.
+func (w *timeoutWriter) Header() http.Header { return w.header }

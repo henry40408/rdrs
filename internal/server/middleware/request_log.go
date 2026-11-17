@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,10 +24,12 @@ type routeSlotKey struct{}
 func RequestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		route := UnmatchedRoute
+		// Atomic because a timed-out handler may still call SetRoute.
+		var route atomic.Value
+		route.Store(UnmatchedRoute)
 		r = r.WithContext(context.WithValue(r.Context(), routeSlotKey{}, &route))
 		logHead := func(_ http.Header, status int) {
-			logCompleted(completedRequest{method: r.Method, route: route, status: status, elapsed: time.Since(started)})
+			logCompleted(completedRequest{method: r.Method, route: route.Load().(string), status: status, elapsed: time.Since(started)})
 		}
 		withHead(next, logHead).ServeHTTP(w, r)
 	})
@@ -35,8 +38,8 @@ func RequestLog(next http.Handler) http.Handler {
 // SetRoute records the matched route template for RequestLog. Without a
 // RequestLog above it, it does nothing.
 func SetRoute(r *http.Request, template string) {
-	if slot, ok := r.Context().Value(routeSlotKey{}).(*string); ok {
-		*slot = template
+	if slot, ok := r.Context().Value(routeSlotKey{}).(*atomic.Value); ok {
+		slot.Store(template)
 	}
 }
 
