@@ -13,7 +13,7 @@ import (
 
 // SQLite opens a freshly migrated SQLite database in a temporary directory and
 // closes it when the test ends.
-func SQLite(t *testing.T) *db.DB {
+func SQLite(t testing.TB) *db.DB {
 	t.Helper()
 	ctx := context.Background()
 	database, err := db.Open(ctx, filepath.Join(t.TempDir(), "test.sqlite3"), config.SQLite)

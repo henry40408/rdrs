@@ -38,7 +38,7 @@ func itestConfig() config.Config {
 // itestApp is a cookie-saving client over the real handler stack, with the
 // database kept for tests that seed data behind the router's back.
 type itestApp struct {
-	t       *testing.T
+	t       testing.TB
 	App     *App
 	DB      *db.DB
 	handler http.Handler
@@ -46,13 +46,13 @@ type itestApp struct {
 	headers http.Header
 }
 
-func newITestApp(t *testing.T, config config.Config) *itestApp {
+func newITestApp(t testing.TB, config config.Config) *itestApp {
 	t.Helper()
 	return newITestAppWith(t, Options{Config: config})
 }
 
 // newITestAppWith lets a test set options beyond the Config.
-func newITestAppWith(t *testing.T, options Options) *itestApp {
+func newITestAppWith(t testing.TB, options Options) *itestApp {
 	t.Helper()
 	t.Setenv("RDRS_FAST_HASH", "1")
 	options.DB = testutil.SQLite(t)
@@ -65,7 +65,7 @@ func newITestAppWith(t *testing.T, options Options) *itestApp {
 	}
 }
 
-func defaultITestApp(t *testing.T) *itestApp { return newITestApp(t, itestConfig()) }
+func defaultITestApp(t testing.TB) *itestApp { return newITestApp(t, itestConfig()) }
 
 // itestRequest describes one request; the zero value is a plain GET.
 type itestRequest struct {
