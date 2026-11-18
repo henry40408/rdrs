@@ -9,6 +9,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // These documents are written the way webauthn-rs 0.5 serialises a Passkey.
@@ -149,6 +150,53 @@ func TestDecodeLegacyRefusesWhatItCannotRepresent(t *testing.T) {
 		}
 		if name != "not json" && !errors.Is(err, ErrUnsupportedPasskey) {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestEncodeLegacyRefusesKeysItCannotWrite(t *testing.T) {
+	marshal := func(key any) []byte {
+		t.Helper()
+		data, err := webauthncbor.Marshal(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	header := func(keyType webauthncose.COSEKeyType, algorithm webauthncose.COSEAlgorithmIdentifier) webauthncose.PublicKeyData {
+		return webauthncose.PublicKeyData{KeyType: int64(keyType), Algorithm: int64(algorithm)}
+	}
+	cases := map[string]struct {
+		key         []byte
+		unsupported bool
+	}{
+		"not cbor":          {key: []byte{0xff, 0xff}},
+		"unknown algorithm": {key: marshal(header(webauthncose.EllipticKey, 12345)), unsupported: true},
+		"unknown key type":  {key: marshal(header(99, webauthncose.AlgES256)), unsupported: true},
+		"unknown curve": {key: marshal(webauthncose.EC2PublicKeyData{
+			PublicKeyData: header(webauthncose.EllipticKey, webauthncose.AlgES256), Curve: 999}), unsupported: true},
+		"unknown okp curve": {key: marshal(webauthncose.OKPPublicKeyData{
+			PublicKeyData: header(webauthncose.OctetKey, webauthncose.AlgEdDSA), Curve: 999}), unsupported: true},
+		"long rsa exponent": {key: marshal(webauthncose.RSAPublicKeyData{
+			PublicKeyData: header(webauthncose.RSAKey, webauthncose.AlgRS256), Modulus: []byte{1}, Exponent: []byte{1, 2, 3, 4}}), unsupported: true},
+	}
+	for name, c := range cases {
+		_, err := EncodeLegacyPasskey(webauthn.Credential{PublicKey: c.key})
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if c.unsupported && !errors.Is(err, ErrUnsupportedPasskey) {
+			t.Errorf("%s: %v, want ErrUnsupportedPasskey", name, err)
+		}
+	}
+}
+
+func TestLegacyBinaryRejectsWhatIsNotBytes(t *testing.T) {
+	for _, data := range []string{`"***"`, `[1,2,300]`, `7`, `{"a":1}`} {
+		var decoded binaryData
+		if err := decoded.UnmarshalJSON([]byte(data)); err == nil {
+			t.Errorf("%s accepted as %v", data, decoded)
 		}
 	}
 }
