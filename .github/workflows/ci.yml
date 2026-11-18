@@ -396,6 +396,14 @@ jobs:
         working-directory: e2e
         env:
           E2E_CHROME: /usr/bin/google-chrome
+      - run: go run -mod=vendor ./cmd/cspaudit
+        working-directory: e2e
+        env:
+          E2E_CHROME: /usr/bin/google-chrome
+      - run: go run -mod=vendor ./cmd/nojs
+        working-directory: e2e
+        env:
+          E2E_CHROME: /usr/bin/google-chrome
 
   lint-workflow:
     name: lint-workflow
