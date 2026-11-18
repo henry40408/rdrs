@@ -372,6 +372,31 @@ jobs:
         env:
           RDRS_FAST_HASH: "1"
 
+  # The Go browser suite: godog + chromedp, driving the runner's Chrome. Named
+  # apart from the Rust `e2e` job, which stays until the rewrite replaces it.
+  e2e-go:
+    name: e2e-go
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history so the VCS-stamped version resolves
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Prebuild the server the suite launches, keeping the compile off its
+      # timeout.
+      - run: go build -mod=vendor -o bin/rdrs ./cmd/rdrs
+      # The runner ships Chrome; chromedp starts it itself, so no driver is needed.
+      # Pinned, because chromedp's own search would pick the runner's Chromium
+      # snapshot ahead of google-chrome.
+      - run: google-chrome --version
+      - run: go test -mod=vendor -count=1 -v -timeout 25m ./...
+        working-directory: e2e
+        env:
+          E2E_CHROME: /usr/bin/google-chrome
+
   lint-workflow:
     name: lint-workflow
     runs-on: ubuntu-latest
