@@ -185,13 +185,11 @@ func backgroundWorkers(in assembly, app *server.App, fetcher *fetch.Fetcher) []f
 
 // serve runs until ctx ends, then shuts down in two stages: first the HTTP
 // server stops taking requests and open ones finish, then the workers are
-// joined and the database closes. Cancelling ctx also ends SSE streams, which
-// Shutdown would otherwise wait for.
+// joined and the database closes. Shutdown also closes the event bus, which
+// ends SSE streams that Shutdown would otherwise wait for.
 func (a *application) serve(ctx context.Context, listener net.Listener) error {
 	workerCtx, stopWorkers := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopWorkers()
-	streamCtx, endStreams := context.WithCancel(context.WithoutCancel(ctx))
-	defer endStreams()
 
 	workersDone := a.startWorkers(workerCtx)
 	if recovered := summarize.RecoverIncomplete(workerCtx, a.db, a.server.SummaryQueue, a.server.Summaries); recovered > 0 {
@@ -200,7 +198,6 @@ func (a *application) serve(ctx context.Context, listener net.Listener) error {
 
 	httpServer := &http.Server{
 		Handler:           a.handler,
-		BaseContext:       func(net.Listener) context.Context { return streamCtx },
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	a.logger.Info("starting server", "event", "server.starting", "addr", listener.Addr().String())
@@ -212,7 +209,7 @@ func (a *application) serve(ctx context.Context, listener net.Listener) error {
 	case result = <-serveErr:
 	case <-ctx.Done():
 	}
-	a.stopServer(httpServer, endStreams)
+	a.stopServer(httpServer)
 	if errors.Is(result, http.ErrServerClosed) {
 		result = nil
 	}
@@ -245,9 +242,10 @@ func (a *application) startWorkers(ctx context.Context) <-chan struct{} {
 }
 
 // stopServer ends the streams at once, then gives requests a grace period
-// before closing their connections.
-func (a *application) stopServer(httpServer *http.Server, endStreams context.CancelFunc) {
-	endStreams()
+// before closing their connections. Request contexts stay alive meanwhile, so
+// a request that is still running can finish its database writes.
+func (a *application) stopServer(httpServer *http.Server) {
+	a.server.Events.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
