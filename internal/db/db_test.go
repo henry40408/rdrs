@@ -235,3 +235,82 @@ func TestOpenMemory(t *testing.T) {
 		t.Errorf("got %d, want 7", got)
 	}
 }
+
+func TestOperationsOnAClosedPoolReturnTheError(t *testing.T) {
+	ctx := context.Background()
+	database, _ := openTemp(t)
+	if err := database.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "SELECT 1"); err == nil {
+		t.Error("ExecContext: want an error")
+	}
+	if rows, err := database.QueryContext(ctx, "SELECT 1"); err == nil {
+		_ = rows.Close()
+		t.Error("QueryContext: want an error")
+	}
+	if err := database.QueryRowContext(ctx, "SELECT 1").Scan(new(int64)); err == nil {
+		t.Error("QueryRowContext: want an error")
+	}
+	if _, err := database.Begin(ctx); err == nil {
+		t.Error("Begin: want an error")
+	}
+	if err := database.Optimize(ctx); err == nil {
+		t.Error("Optimize: want an error")
+	}
+	if _, err := database.RunMaintenance(ctx); err == nil {
+		t.Error("RunMaintenance: want an error")
+	}
+}
+
+func TestBackgroundOperationsStopWhenTheContextIsCancelled(t *testing.T) {
+	database, _ := openTemp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	background := database.Background()
+	// Hold user admission so the background handle has to wait.
+	release := database.sched.enterUser()
+	defer release()
+	if _, err := background.ExecContext(ctx, "SELECT 1"); err == nil {
+		t.Error("ExecContext: want the context error")
+	}
+	if rows, err := background.QueryContext(ctx, "SELECT 1"); err == nil {
+		_ = rows.Close()
+		t.Error("QueryContext: want the context error")
+	}
+	if err := background.QueryRowContext(ctx, "SELECT 1").Scan(new(int64)); err == nil {
+		t.Error("QueryRowContext: want the context error")
+	}
+	if _, err := background.Begin(ctx); err == nil {
+		t.Error("Begin: want the context error")
+	}
+}
+
+func TestOpenRejectsBadTargets(t *testing.T) {
+	ctx := context.Background()
+	if _, err := Open(ctx, filepath.Join(t.TempDir(), "missing-dir", "x.sqlite3"), config.SQLite); err == nil {
+		t.Error("sqlite in a missing directory: want an error")
+	}
+	if _, err := Open(ctx, "postgres://%zz", config.Postgres); err == nil {
+		t.Error("malformed postgres URL: want an error")
+	}
+}
+
+func TestTxOperationsAfterCommitReturnTheError(t *testing.T) {
+	ctx := context.Background()
+	database, _ := openTemp(t)
+	tx, err := database.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := tx.QueryContext(ctx, "SELECT 1"); err == nil {
+		_ = rows.Close()
+		t.Error("QueryContext after commit: want an error")
+	}
+	if err := tx.LockUserTable(ctx); err != nil {
+		t.Errorf("LockUserTable is a no-op on SQLite, got %v", err)
+	}
+}
