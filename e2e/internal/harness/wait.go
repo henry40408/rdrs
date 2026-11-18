@@ -46,6 +46,19 @@ func Eventually(what string, probe func() (bool, error)) error {
 	return fmt.Errorf("%s: still not true after %v", what, WaitTimeout)
 }
 
+// EventuallyWithin is Eventually with its own timeout, for work that outlasts
+// an interaction wait.
+func EventuallyWithin(timeout time.Duration, what string, probe func() (bool, error)) error {
+	done, lastErr := poll(timeout, probe)
+	if done {
+		return nil
+	}
+	if lastErr != nil {
+		return fmt.Errorf("%s: still not true after %v, last error: %w", what, timeout, lastErr)
+	}
+	return fmt.Errorf("%s: still not true after %v", what, timeout)
+}
+
 // EventuallyEq polls probe until it reports the expected value; on timeout
 // the error names the last value seen.
 func EventuallyEq[T comparable](what string, expected T, probe func() (T, error)) error {

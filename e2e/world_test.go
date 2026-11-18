@@ -33,6 +33,9 @@ type world struct {
 	network *harness.Network
 	// Held fragment, full-content and summarize responses.
 	delayedFragment, delayedFullContent, delayedSummarize *harness.RouteHandle
+	// heldSummaryFragment holds the summary fragment response; summarizePosts
+	// counts summarize re-queues.
+	heldSummaryFragment, summarizePosts *harness.RouteHandle
 	// clientInfoPuts counts the browser reports the page sends.
 	clientInfoPuts *harness.RouteHandle
 	// paneStamp is the list pane's render stamp when it was tagged.

@@ -327,3 +327,13 @@ func (e *Element) Hover() error {
 func (b *Browser) ClickAt(x, y float64) error {
 	return chromedp.Do(b.ctx, chromedp.MouseClickXY(x, y))
 }
+
+// ComputedStyle is one computed style property of the element.
+func (e *Element) ComputedStyle(property string) (string, error) {
+	return callOn[string](e, "function(p) { return getComputedStyle(this).getPropertyValue(p); }", property)
+}
+
+// MovePointerTo moves the pointer to viewport coordinates without clicking.
+func (b *Browser) MovePointerTo(x, y float64) error {
+	return chromedp.Do(b.ctx, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseMoved, x, y))
+}
