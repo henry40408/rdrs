@@ -143,16 +143,16 @@ failure. Update that list whenever a variable is added, renamed or removed.
 
 ### Logging
 
-`log/slog` through a custom handler (`cmd/rdrs/logging.go`).
+`log/slog` with the standard text and JSON handlers (`cmd/rdrs/logging.go`).
 - Level: `RDRS_LOG_LEVEL` = `debug` | `info` (default) | `warn` | `error`. There
   is no per-module filter. `RUST_LOG` is retired; the binary refuses to start
   while it is set.
 - Format: `--log-format` or `RDRS_LOG_FORMAT` = `full` (default) | `compact` |
-  `pretty` | `json`. Colour is on unless `NO_COLOR` is set.
+  `pretty` | `json`. `json` prints slog JSON lines (`time`, `level`, `msg`, then
+  attributes); the other three are aliases of slog's `key=value` text format.
 - Calls use a static message and an `event` attribute (`csrf.cross_site`,
   `sync.bucket_started`, ...), with values as typed fields.
-- The `target` attribute reads `rdrs` unless the code sets another; the audit
-  logger sets `rdrs::audit`.
+- Only the audit logger sets a `target` attribute (`rdrs::audit`).
 
 ### Error Handling (`internal/server/errors.go`)
 

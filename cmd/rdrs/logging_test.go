@@ -14,46 +14,27 @@ import (
 	"testing"
 )
 
-func TestJSONFormatKeepsTracingFieldNames(t *testing.T) {
+func TestJSONFormatIsParseable(t *testing.T) {
 	var out bytes.Buffer
-	logger := newLogger(loggerSettings{format: formatJSON, level: slog.LevelInfo}, &out)
-	logger.Info("hello", "event", "x.y", "count", 3, "ok", true, "name", "a b")
+	newLogger(loggerSettings{format: formatJSON, level: slog.LevelInfo}, &out).Info("hello", "event", "x.y", "count", 3)
 
-	var got struct {
-		Timestamp string
-		Level     string
-		Fields    map[string]any
-		Target    string
-	}
+	var got map[string]any
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("%v: %q", err, out.String())
 	}
-	if got.Level != "INFO" || got.Target != "rdrs" || !strings.HasSuffix(got.Timestamp, "Z") {
+	if got["level"] != "INFO" || got["msg"] != "hello" || got["event"] != "x.y" || got["count"] != float64(3) || got["time"] == nil {
 		t.Fatalf("%+v", got)
 	}
-	if got.Fields["message"] != "hello" || got.Fields["event"] != "x.y" ||
-		got.Fields["count"] != float64(3) || got.Fields["ok"] != true || got.Fields["name"] != "a b" {
-		t.Fatalf("%+v", got.Fields)
-	}
 }
 
-func TestTargetAttributeBecomesTheTarget(t *testing.T) {
-	var out bytes.Buffer
-	logger := newLogger(loggerSettings{format: formatJSON, level: slog.LevelInfo}, &out)
-	logger.With("target", "rdrs::audit").Info("session created", "event", "session.created")
-	if !strings.Contains(out.String(), `"target":"rdrs::audit"`) || strings.Contains(out.String(), `"target":"rdrs","`) {
-		t.Fatal(out.String())
-	}
-}
-
-func TestEveryFormatPrintsEventAndMessage(t *testing.T) {
-	for _, format := range []logFormat{formatFull, formatCompact, formatPretty, formatJSON} {
+func TestEveryTextFormatPrintsText(t *testing.T) {
+	for _, format := range []logFormat{formatFull, formatCompact, formatPretty} {
 		var out bytes.Buffer
-		logger := newLogger(loggerSettings{format: format, level: slog.LevelInfo}, &out)
-		logger.Warn("careful", "event", "config.warning")
-		if !strings.Contains(out.String(), "config.warning") || !strings.Contains(out.String(), "careful") ||
-			!strings.Contains(out.String(), "WARN") {
-			t.Errorf("%s: %q", format, out.String())
+		newLogger(loggerSettings{format: format, level: slog.LevelInfo}, &out).Warn("careful", "event", "config.warning")
+		for _, want := range []string{"level=WARN", `msg=careful`, "event=config.warning"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%s: missing %q in %q", format, want, out.String())
+			}
 		}
 	}
 }
@@ -64,23 +45,6 @@ func TestLevelFilter(t *testing.T) {
 	logger.Info("quiet", "event", "x")
 	logger.Warn("loud", "event", "x")
 	if strings.Contains(out.String(), "quiet") || !strings.Contains(out.String(), "loud") {
-		t.Fatal(out.String())
-	}
-}
-
-func TestAnsiColoursOnlyWhenEnabled(t *testing.T) {
-	var plain, coloured bytes.Buffer
-	newLogger(loggerSettings{format: formatFull, level: slog.LevelInfo}, &plain).Info("m", "event", "x")
-	newLogger(loggerSettings{format: formatFull, level: slog.LevelInfo, ansi: true}, &coloured).Info("m", "event", "x")
-	if strings.Contains(plain.String(), "\x1b[") || !strings.Contains(coloured.String(), "\x1b[") {
-		t.Fatalf("%q %q", plain.String(), coloured.String())
-	}
-}
-
-func TestTextValuesAreQuotedWhenAmbiguous(t *testing.T) {
-	var out bytes.Buffer
-	newLogger(loggerSettings{format: formatFull, level: slog.LevelInfo}, &out).Info("m", "event", "x", "err", "a b", "empty", "")
-	if !strings.Contains(out.String(), `err="a b"`) || !strings.Contains(out.String(), `empty=""`) {
 		t.Fatal(out.String())
 	}
 }

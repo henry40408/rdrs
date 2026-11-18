@@ -63,15 +63,3 @@ func TestLogLevel(t *testing.T) {
 		}
 	}
 }
-
-func TestNoColorDisablesAnsiEvenWhenEmpty(t *testing.T) {
-	var sink bytes.Buffer
-	opts, _ := parseOptions(nil, envOf(nil), &sink)
-	if !opts.ansi {
-		t.Fatal("ansi is on by default")
-	}
-	opts, _ = parseOptions(nil, envOf(map[string]string{"NO_COLOR": ""}), &sink)
-	if opts.ansi {
-		t.Fatal("NO_COLOR set to empty must disable ansi")
-	}
-}

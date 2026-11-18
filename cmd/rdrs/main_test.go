@@ -72,7 +72,6 @@ func isolatedEnv(t *testing.T) map[string]string {
 	return map[string]string{
 		"DATABASE_URL":     filepath.Join(dir, "rdrs.sqlite3"),
 		"RDRS_SERVER_BIND": "127.0.0.1:0",
-		"NO_COLOR":         "1",
 	}
 }
 

@@ -42,7 +42,7 @@ func run(ctx context.Context, releaseSignals func(), args []string, lookupEnv fu
 		fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 2
 	}
-	logger := newLogger(loggerSettings{format: opts.logFormat, level: opts.logLevel, ansi: opts.ansi}, stderr)
+	logger := newLogger(loggerSettings{format: opts.logFormat, level: opts.logLevel}, stderr)
 
 	cfg, err := loadConfig(lookupEnv)
 	if err != nil {

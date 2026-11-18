@@ -12,8 +12,6 @@ import (
 type options struct {
 	logFormat logFormat
 	logLevel  slog.Level
-	// ansi is on unless NO_COLOR is set, even to an empty value.
-	ansi bool
 }
 
 // parseOptions reads --log-format (env RDRS_LOG_FORMAT, default full) and
@@ -41,6 +39,5 @@ func parseOptions(args []string, lookupEnv func(string) (string, bool), usageOut
 	if err != nil {
 		return options{}, err
 	}
-	_, noColor := lookupEnv("NO_COLOR")
-	return options{logFormat: format, logLevel: level, ansi: !noColor}, nil
+	return options{logFormat: format, logLevel: level}, nil
 }

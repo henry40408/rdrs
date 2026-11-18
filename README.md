@@ -88,7 +88,7 @@ All configuration is via environment variables.
 > - **`RDRS_` prefix:** every rdrs-specific variable gained an `RDRS_` prefix
 >   and `IMAGE_PROXY_SECRET` became `RDRS_SECRET`. Old names are not read;
 >   rdrs **refuses to start** while any is set, listing replacements.
->   `DATABASE_URL` and `NO_COLOR` keep their names.
+>   `DATABASE_URL` keeps its name. Log output has no colour, so `NO_COLOR` is no longer read.
 > - **`RUST_LOG` is retired:** rdrs **refuses to start** while it is set. Use
 >   `RDRS_LOG_LEVEL` (`debug`, `info`, `warn`, `error`); there is no per-module
 >   filter syntax.
@@ -123,7 +123,7 @@ All configuration is via environment variables.
 | `RDRS_WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin |
 | `RDRS_WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
 | `RDRS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Environment only. |
-| `RDRS_LOG_FORMAT` | `full` | `full`, `compact`, `pretty`, or `json`. Also `--log-format`. |
+| `RDRS_LOG_FORMAT` | `full` | `full`, `compact`, `pretty`, or `json`. `compact` and `pretty` are aliases of `full`. Also `--log-format`. |
 | `RDRS_AUTH_PROXY_HEADER` | - | Forward-auth username header (e.g. `Remote-User`). Empty disables. |
 | `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs/IPs (e.g. `10.0.0.0/8, 192.168.1.5`) the TCP peer must be in for identity headers to be trusted. Required with `RDRS_AUTH_PROXY_HEADER`. Also used to find the real client IP for rate limiting — set it whenever rdrs is behind a reverse proxy, or all clients share one bucket. |
 | `RDRS_AUTH_PROXY_USER_CREATION` | `false` | `true` → create accounts for unknown proxy users instead of redirecting to `/login`. |
@@ -142,16 +142,17 @@ All configuration is via environment variables.
 Every log line has an `event` field (`domain.verb`: `feed.sync_failed`,
 `retention.pruned`, `summary.worker_started`, `shutdown.signal`) and typed
 value fields (`feed_id`, `entry_id`, `user_id`, `bucket`, `count`, `error`, …);
-messages are static. Under `RDRS_LOG_FORMAT=json`:
+messages are static. Output is the standard `log/slog` format: `key=value` text
+(`full`, `compact` and `pretty` are the same text layout) or, under
+`RDRS_LOG_FORMAT=json`, one JSON object per line:
 
 ```json
-{"timestamp":"…","level":"WARN","target":"rdrs",
- "fields":{"message":"feed sync failed","event":"feed.sync_failed",
-           "feed_id":42,"error":"connection timed out"}}
+{"time":"…","level":"WARN","msg":"feed sync failed","event":"feed.sync_failed",
+ "feed_id":42,"error":"connection timed out"}
 ```
 
-`target` is `rdrs`, except audit events (`rdrs::audit`). Messages are static;
-values go in typed fields.
+Audit events add `target` (`rdrs::audit`). Messages are static; values go in
+typed fields.
 
 ### Request Timing
 
