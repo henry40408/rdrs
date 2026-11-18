@@ -2,7 +2,7 @@
 # process (socket bind, worker spawn) and is not unit-testable; exclude it
 # from the project coverage denominator.
 ignore:
-  - "src/main.rs"
+  - "cmd/rdrs/main.go"
 
 coverage:
   status:
