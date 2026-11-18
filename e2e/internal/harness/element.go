@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 
+	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
@@ -236,4 +237,17 @@ func (e *Element) WaitFind(selector string) (*Element, error) {
 		return found != nil, err
 	})
 	return found, err
+}
+
+// SetFiles chooses local files for a file input.
+func (e *Element) SetFiles(paths ...string) error {
+	return send(e.browser, dom.SetFileInputFiles, dom.SetFileInputFilesParams{Files: paths, ObjectID: e.id})
+}
+
+// Fill replaces the contents of a form control.
+func (e *Element) Fill(value string) error {
+	if _, err := callOn[chromedp.Void](e, `function() { this.value = ''; }`); err != nil {
+		return err
+	}
+	return e.Type(value)
 }

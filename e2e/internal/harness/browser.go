@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/browser"
@@ -272,4 +273,32 @@ func JSLiteral(value any) string {
 		panic(fmt.Sprintf("encoding %v as a JavaScript literal: %v", value, err))
 	}
 	return string(encoded)
+}
+
+// CookieHeader is the browser's cookie jar as a Cookie header value, plus its
+// CSRF token, so a step can act as the signed-in user without the page.
+func (b *Browser) CookieHeader() (header, csrf string, err error) {
+	result, err := chromedp.Call(b.ctx, network.GetCookies, network.GetCookiesParams{})
+	if err != nil {
+		return "", "", err
+	}
+	pairs := make([]string, 0, len(result.Cookies))
+	for _, cookie := range result.Cookies {
+		pairs = append(pairs, cookie.Name+"="+cookie.Value)
+		// The prefixed name wins when a deployment is secure; e2e is plain HTTP.
+		if cookie.Name == "__Host-csrf_token" || (cookie.Name == "csrf_token" && csrf == "") {
+			csrf = cookie.Value
+		}
+	}
+	return strings.Join(pairs, "; "), csrf, nil
+}
+
+// EvalJSON evaluates a JavaScript expression and decodes its JSON result into
+// target.
+func EvalJSON(b *Browser, expression string, target any) error {
+	raw, err := Eval[json.RawMessage](b, expression)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
 }

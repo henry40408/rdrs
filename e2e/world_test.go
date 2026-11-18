@@ -3,6 +3,8 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/cucumber/godog"
 
@@ -117,4 +119,40 @@ func (w *world) seedFeed(title string, count int) ([]int64, error) {
 	ids, err := w.seed.SeedTestEntries(feedID, count)
 	w.seededEntries = ids
 	return ids, err
+}
+
+// userClient does not follow redirects: only the status and the side effect
+// of a request made as the user matter.
+var userClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}}
+
+// requestAsUser sends a request with the browser's session, outside the page.
+func (w *world) requestAsUser(method, path string) (*http.Response, error) {
+	cookies, csrf, err := w.browser.CookieHeader()
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequest(method, w.server.BaseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Cookie", cookies)
+	request.Header.Set("X-CSRF-Token", csrf)
+	return userClient.Do(request)
+}
+
+// getAsUser returns the body of a GET made with the browser's session, for
+// downloads the browser cannot be asked for.
+func (w *world) getAsUser(path string) (string, error) {
+	response, err := w.requestAsUser(http.MethodGet, path)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return "", fmt.Errorf("GET %s answered %s", path, response.Status)
+	}
+	body, err := io.ReadAll(response.Body)
+	return string(body), err
 }
