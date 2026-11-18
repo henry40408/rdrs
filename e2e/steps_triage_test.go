@@ -97,11 +97,18 @@ func (w *world) confirmThenClick(testID string) error {
 	if err := w.confirmNextDialog(); err != nil {
 		return err
 	}
-	element, err := w.browser.TestID(testID)
-	if err != nil {
-		return err
-	}
-	return element.Click()
+	// Polled: after a feed switch the control stays hidden until the list has
+	// been rewritten.
+	return harness.Eventually("the "+testID+" control to accept a click", func() (bool, error) {
+		element, err := w.browser.TestID(testID)
+		if err != nil {
+			return false, err
+		}
+		if err := element.Click(); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
 }
 
 func registerEntryListSteps(sc *godog.ScenarioContext, w *world) {
