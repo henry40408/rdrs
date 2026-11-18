@@ -1,18 +1,19 @@
 # Architecture
 
-RDRS is a self-hosted RSS reader built with Rust.
+RDRS is a self-hosted RSS reader built with Go. It ships as one static binary
+(CGO off) with every CSS, JS, font and icon file embedded.
 
 ## Overview
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              Views (maud Markup)                    │
+│        Views (internal/views, string markup)        │
 ├─────────────────────────────────────────────────────┤
-│           HTTP Layer (Axum Handlers)                │
+│       HTTP Layer (net/http handlers, middleware)    │
 ├─────────────────────────────────────────────────────┤
-│            Services (Business Logic)                │
+│     Services (feedsync, worker, summarize, ...)     │
 ├─────────────────────────────────────────────────────┤
-│              Models (Data Access)                   │
+│              Models (SQL per table)                 │
 ├─────────────────────────────────────────────────────┤
 │           Database (SQLite / PostgreSQL)            │
 └─────────────────────────────────────────────────────┘
@@ -20,151 +21,111 @@ RDRS is a self-hosted RSS reader built with Rust.
 
 ## Directory Structure
 
-```
-src/
-├── main.rs              # Entry point
-├── lib.rs               # Router and app configuration
-├── config.rs            # Environment configuration
-├── error.rs             # Error types and HTTP responses
-├── version.rs           # Build version information
-├── secret.rs            # Keyed derivation from RDRS_SECRET (domain-separated)
-├── test_support.rs      # Shared unit-test fixtures
-│
-├── db/
-│   └── pool.rs          # Dual-backend (SQLite/PostgreSQL) sqlx pool + SQLite write-priority scheduler
-│
-├── models/              # Data models and database operations
-│   ├── user.rs          # User accounts
-│   ├── api_token.rs     # GReader ClientLogin tokens (separate from sessions)
-│   ├── session.rs       # Session management
-│   ├── feed.rs          # RSS feeds
-│   ├── entry/           # Feed entries (mod.rs + filters.rs query builder + query.rs boolean search parser)
-│   ├── entry_summary.rs # Article summaries
-│   ├── entry_open.rs    # Rendered-entry opens and per-feed open rate
-│   ├── category.rs      # Feed categories
-│   ├── image.rs         # Image storage
-│   ├── statistics.rs    # Statistics/analytics queries
-│   ├── passkey.rs       # WebAuthn credentials
-│   ├── user_invite.rs   # One-time account-activation / password-reset links
-│   ├── webauthn_challenge.rs # WebAuthn challenge state
-│   └── user_settings.rs # User preferences
-│
-├── handlers/            # HTTP request handlers
-│   ├── pages/           # HTML page rendering (mod.rs + script_json/search_text/time_format helpers)
-│   ├── auth.rs          # Authentication endpoints
-│   ├── passkey.rs       # Passkey/WebAuthn endpoints
-│   ├── invite.rs        # Anonymous redemption of a one-time account link
-│   ├── admin.rs         # Admin operations
-│   ├── user.rs          # User operations + sidebar payload
-│   ├── client_info.rs   # Browser-only facts (timezone) compared with settings
-│   ├── categories.rs    # Category form actions (SSR)
-│   ├── feeds.rs         # Feed form actions: create/edit/delete/refresh/OPML import (SSR)
-│   ├── feed.rs          # Per-feed JSON endpoints (e.g. icon)
-│   ├── entries.rs       # Entry SSR fragments + form actions (read/star/summarize/save)
-│   ├── entry.rs         # Per-entry JSON endpoints (summary, neighbors, full content)
-│   ├── favicon.rs       # Favicon serving (embedded at compile time)
-│   ├── static_assets.rs # Static assets, the web app manifest and `/sw.js` (embedded at compile time)
-│   ├── proxy.rs         # Image proxy
-│   ├── health.rs        # Health check endpoint
-│   ├── offline.rs       # Offline-reading manifest
-│   ├── pixel.rs         # Open-tracking pixel endpoint
-│   ├── summarizer.rs    # Batch URL summarizer
-│   ├── events.rs        # SSE live-update stream
-│   ├── views/           # maud views (layout, macros, one module per area)
-│   └── greader/         # Google Reader API compatibility
-│       ├── auth.rs      # ClientLogin authentication
-│       ├── subscription.rs # Subscription list/edit, OPML import
-│       ├── item.rs      # Stream contents and item IDs
-│       ├── tag.rs       # Read/star tag operations
-│       ├── user.rs      # User info endpoint
-│       └── types.rs     # Shared GReader types
-│
-├── utils/               # Shared utility modules
-│   ├── datetime.rs      # Date/time parsing (RFC 2822, ISO 8601, Chinese dates)
-│   ├── han.rs           # Simplified-Chinese detection for the `lang` attribute
-│   ├── http.rs          # Request-header helpers (User-Agent)
-│   ├── text.rs          # HTML to plain text
-│   ├── timezone.rs      # Per-user IANA timezone: local dates <-> UTC instants
-│   └── url_validation.rs# URL validation and SSRF protection
-│
-├── services/            # Business logic
-│   ├── background.rs    # Background sync scheduler
-│   ├── audit.rs         # Session/credential audit events (`rdrs::audit`)
-│   ├── content_text_backfill.rs # One-shot `entry.content_text` backfill
-│   ├── entry_retention.rs # Read-entry retention/pruning worker
-│   ├── events.rs        # In-memory EventBus for SSE live updates
-│   ├── feed_sync.rs     # Feed refresh logic
-│   ├── feed_discovery.rs# Feed URL detection
-│   ├── fetch.rs         # SSRF-guarded HTTP client for untrusted URLs
-│   ├── readability.rs   # Content extraction
-│   ├── sanitize.rs      # HTML sanitization
-│   ├── html_entities.rs # HTML entity decoding for plain-text fields
-│   ├── opml.rs          # OPML import/export
-│   ├── icon_fetcher.rs  # Feed icon fetching
-│   ├── http.rs          # Shared HTTP client utilities
-│   ├── image_proxy.rs   # Secure image proxying
-│   ├── page_cache.rs    # Per-user TTL page-payload caches (moka)
-│   ├── pixel.rs         # Open-tracking pixel injection
-│   ├── sidebar_cache.rs # Per-user sidebar chrome cache
-│   ├── summary_cache.rs # Summary caching
-│   ├── summary_cleanup.rs # Summary cleanup task
-│   ├── summary_worker.rs# Summary generation worker
-│   ├── save/            # External save targets
-│   │   ├── mod.rs       # Save dispatch
-│   │   └── linkding.rs  # Linkding integration
-│   └── summarize/       # AI summarization
-│       ├── mod.rs       # Summarizer trait
-│       └── kagi.rs      # Kagi AI service
-│
-├── middleware/          # HTTP middleware
-│   ├── auth.rs          # Session authentication
-│   ├── cache_control.rs # `Cache-Control: no-store` for session responses
-│   ├── csrf.rs          # CSRF defence (origin check + token)
-│   ├── date_header.rs   # Date response header
-│   ├── etag.rs          # ETag / conditional-request handling
-│   ├── flash.rs         # Flash messages
-│   ├── forward_auth.rs  # Forward-auth / trusted-header browser login
-│   ├── rate_limit.rs    # Credential-endpoint rate limiting
-│   ├── request_log.rs   # Per-request duration logging
-│   └── security_headers.rs # CSP, HSTS and other security headers
-│
-└── auth/
-    ├── password.rs      # Password hashing (Argon2)
-    └── webauthn.rs      # WebAuthn/Passkey authentication
+The module is `github.com/henry40408/rdrs`. Dependencies are vendored.
 
-tests/                   # Integration tests
+```
+cmd/rdrs/            # Entry point: flags, logging setup, wiring, graceful shutdown
+internal/
+├── audit/           # Session/credential audit events (log target `rdrs::audit`)
+├── auth/            # Session/CSRF cookies, sliding sessions, passwords (Argon2id),
+│                    #   rate limiter, client IP, forward-auth login, WebAuthn setup
+├── cache/           # In-memory caches: TTL map, sidebar chrome, summary state, admin DB stats
+├── config/          # Environment configuration, validation, startup warnings
+├── datetime/        # Date parsing (RFC 2822, ISO 8601, Chinese dates) and display
+├── db/              # Pool per backend, dialect forks, SQLite write-priority scheduler, maintenance
+├── discovery/       # Feed URL detection
+├── events/          # In-memory event bus for SSE live updates
+├── feedparse/       # RSS / Atom / RDF / JSON Feed parser, charset decoding
+├── feedsync/        # Feed refresh: conditional fetch, parse, entry upsert, bucket refresh
+├── fetch/           # SSRF-guarded HTTP client for untrusted URLs, retry, timeouts
+├── flash/           # One-shot banner messages in a signed cookie
+├── greader/         # Google Reader API: stream/item ids, JSON shapes, POST token
+├── han/             # Simplified-Chinese detection for the `lang` attribute
+├── htmldepth/       # Workaround for x/net/html's 511-open-element limit
+├── icon/            # Feed icon fetching
+├── imageproxy/      # Signing and verification of image-proxy URLs
+├── migrate/         # Embedded SQL migration runner
+├── models/          # SQL for every table (entry/ holds the entry queries)
+├── opml/            # OPML import/export
+├── pixel/           # Open-tracking pixel injection
+├── readability/     # Full-content extraction
+├── sanitize/        # HTML sanitization and tracking removal
+├── save/            # External save targets (Linkding)
+├── search/          # Boolean query parser for /search
+├── secret/          # Keyed derivation from RDRS_SECRET (domain-separated), sealing
+├── server/          # Router, handlers, page/fragment/JSON/GReader endpoints
+│   └── middleware/  # Cross-site guard, CSRF, session sliding, forward-auth, headers, ETag, ...
+├── siphash/         # SipHash variants kept for stored bucket and entry ids
+├── summarize/       # Kagi summarizer client, job queue and worker
+├── testutil/        # Shared test fixtures
+├── textutil/        # HTML to plain text, entity decoding
+├── timezone/        # Per-user IANA timezone: local dates <-> UTC instants
+├── version/         # Build version
+├── views/           # Page markup (layout, macros, one file per area)
+├── worker/          # Background loops: sync, cleanup, retention, content_text backfill
+└── zxcvbn/          # Password strength estimator (fork of trustelem/zxcvbn)
+
+migrations/          # Embedded SQL: sqlite/ and postgres/
+static/              # CSS, JS (vanilla ES modules), fonts, icons, web manifest (go:embed)
+e2e/                 # Separate Go module: godog + chromedp suite and audits
 ```
 
 ## Core Components
 
-### Application Entry (`main.rs`)
+### Application Entry (`cmd/rdrs`)
 
-Initializes config, database, background tasks, and the Axum server.
+- `main.go` parses options, refuses retired environment variables, loads and
+  validates `config`, then starts the server and blocks until SIGINT/SIGTERM.
+- `app.go` opens the database, runs migrations, builds `server.App` and the
+  background workers (`worker.Sync`, the summary worker, `worker.Cleanup`,
+  `worker.Retention`, `worker.BackfillContentText`), each on a `db.Background()`
+  handle where it writes.
+- **Shutdown** runs in two stages: first the HTTP server stops accepting
+  requests (open requests get 10 s; SSE streams end at once), then the workers
+  are joined (30 s) and the database closes.
+- The one-time **setup token** is printed to stderr, not through the logger,
+  and only while no account exists.
 
-### Router (`lib.rs`)
+### Router (`internal/server/routes.go`)
 
-Defines all routes; builds the app with embedded static assets
-(`include_str!`/`include_bytes!`), the cookie layer, and the DB pool as state.
+`App.routes()` is the single registry of `Route{Method, Path, Handler}`;
+`internal/server/testdata/routes.txt` pins the table. Patterns are
+`net/http.ServeMux` patterns with the method included, so a known path with
+another method answers 405 with `Allow`. Unmatched paths render the 404 page
+when signed in and redirect to `/login` otherwise.
+
+**Middleware stack**, outermost first (`buildHandler`):
+
+1. `RequestLog` (one event per request, labelled by route template, never the
+   path; `http.slow_request` at WARN past 1 s)
+2. `HSTS` (only when HTTPS per `Config`)
+3. `SecurityHeaders`
+4. the core stack: `CrossSiteGuard`, `SignFlashCookies`, `ForwardAuth`,
+   `SlideSession`, `AnonymousSession`, `CSRFGuard`, `Timeout` (120 s to the
+   response head, then 408), `Compress` (gzip/br), `DateHeader`, `ETag`,
+   `NoStoreForAuthenticated`
+
+`/events` (SSE) is mounted outside the core stack: Timeout, Compress and ETag
+would cut or buffer a long-lived stream.
 
 **Asset cache invalidation.**
-- Templates stamp every embedded asset URL with `?v={{ git_version }}`.
+- Templates stamp every embedded asset URL with `?v=<version>`.
 - Only stamped requests get `public, max-age=31536000, immutable`
-  (`static_assets::cache_control_for`; favicons via `cache_control_for_request`).
-  Unstamped requests (`/favicon.ico` probes, `/apple-touch-icon.png`, bare
-  module imports) get a short TTL.
+  (`server/static.go`; favicons too). Unstamped requests (`/favicon.ico`
+  probes, `/apple-touch-icon.png`) get a short TTL.
 - Nested JS imports get the stamp by substituting `__RDRS_ASSET_VERSION__` at
   serve time.
 - A `-dirty` build serves `no-cache` throughout (its version string does not
   change between edits).
 
-### Configuration (`config.rs`)
+### Configuration (`internal/config`)
 
 Loads settings from environment variables (full table in
 [README.md → Configuration](README.md#configuration)):
-- `DATABASE_URL` - file path / `sqlite://` (SQLite, default) or `postgres://`; chosen once at startup
-- `SERVER_PORT` - HTTP port
+- `DATABASE_URL` - file path / `sqlite://` (SQLite, default) or `postgres://` / `postgresql://`; chosen once at startup
+- `RDRS_SERVER_BIND` - listen address (default `127.0.0.1:8080`)
 - `RDRS_MULTI_USER_ENABLED` - whether an admin may create accounts beyond the first; no self-service sign-up (`RDRS_SIGNUP_ENABLED` is retired and refuses startup)
-- `RDRS_SECRET` - root HMAC key for every signature, domain-separated in `secret.rs`
+- `RDRS_SECRET` - root HMAC key for every signature, domain-separated in `internal/secret`; a missing or too-short (< 16 bytes) value is replaced by a random per-process key and a warning is logged
 - `RDRS_AUTH_PROXY_HEADER` - forward-auth username header; empty disables
 - `RDRS_TRUSTED_PROXY_NETWORKS` - CIDRs/IPs whose TCP peer may supply the identity header; required with `RDRS_AUTH_PROXY_HEADER`
 - `RDRS_AUTH_PROXY_USER_CREATION` - JIT-create unknown proxy users (default `false`; otherwise redirect to `/login`)
@@ -172,27 +133,56 @@ Loads settings from environment variables (full table in
 - `RDRS_AUTH_PROXY_ADMIN_GROUP` - group granting admin; active only with the groups header
 - `RDRS_DISABLE_LOCAL_AUTH` - hides the password form, `POST /api/session` → 403; GReader `ClientLogin` and passkeys unaffected; refuses startup without `RDRS_AUTH_PROXY_HEADER`
 - `RDRS_AUTH_PROXY_LOGOUT_URL` - Sign Out redirects here to end the IdP session; if unset, forward-auth Sign Out clears the local session and warns the user to log out at the proxy
+- `RDRS_LOG_LEVEL` / `RDRS_LOG_FORMAT` (or `--log-format`) - see [Logging](#logging)
 
-### Error Handling (`error.rs`)
+**Retired variables.** `ensureNoLegacyEnvVars` (`cmd/rdrs/env.go`) refuses to
+start while an old name is set (`SERVER_BIND`, `IMAGE_PROXY_SECRET`,
+`SIGNUP_ENABLED`, `RUST_LOG`, ...), naming the replacement: a silently ignored
+variable (say, falling back to a random secret) is worse than a startup
+failure. Update that list whenever a variable is added, renamed or removed.
 
-`AppError` maps to HTTP: auth → 401, not found → 404, validation → 400, internal → 500.
+### Logging
+
+`log/slog` through a custom handler (`cmd/rdrs/logging.go`).
+- Level: `RDRS_LOG_LEVEL` = `debug` | `info` (default) | `warn` | `error`. There
+  is no per-module filter. `RUST_LOG` is retired; the binary refuses to start
+  while it is set.
+- Format: `--log-format` or `RDRS_LOG_FORMAT` = `full` (default) | `compact` |
+  `pretty` | `json`. Colour is on unless `NO_COLOR` is set.
+- Calls use a static message and an `event` attribute (`csrf.cross_site`,
+  `sync.bucket_started`, ...), with values as typed fields.
+- The `target` attribute reads `rdrs` unless the code sets another; the audit
+  logger sets `rdrs::audit`.
+
+### Error Handling (`internal/server/errors.go`)
+
+`AppError` carries a status and a client-visible message; the JSON body is
+always `{"error": message}`. Auth → 401, forbidden → 403, not found → 404,
+validation → 400, rate limited → 429, upstream fetch failure → 502, internal
+and database errors → 500 with the cause hidden from the client. Malformed
+requests (bad JSON, missing form field) get plain-text rejections.
 
 ## Data Layer
 
 ### Schema & Migrations (`migrations/`)
 
-Embedded per backend (`migrations/sqlite/`, `migrations/postgres/`), run at
-startup via `sqlx::migrate!`. Schemas are equivalent; dialect differences
+Embedded per backend (`migrations/sqlite/`, `migrations/postgres/`) and applied
+at startup by `internal/migrate`. Schemas are equivalent; dialect differences
 (`BIGINT` for non-id integers, `GENERATED ALWAYS AS IDENTITY`) live in the
-Postgres migrations.
+Postgres migrations. The runner keeps the `_sqlx_migrations` bookkeeping table
+byte-compatible with sqlx (checksums, PostgreSQL advisory lock), so a database
+written by the earlier Rust releases keeps working: never reformat or edit an
+applied migration.
 
 | Table | Purpose |
 |-------|---------|
 | `user` | User accounts with role (admin/user) |
 | `session` | Session tokens: masquerade support, `previous_token`/`previous_token_expires_at` rotation grace, `last_authenticated_at` for re-auth, `user_agent`/`ip_address`/`last_seen_at` |
+| `api_token` | GReader `ClientLogin` tokens, separate from sessions |
 | `category` | Feed categories per user |
 | `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
+| `entry_open` | Rendered-entry opens (open-tracking pixel) |
 | `entry_summary` | AI-generated article summaries |
 | `entry_tombstone` | Retention-pruned entries; blocks re-insertion on sync (cascades with feed) |
 | `image` | Polymorphic image storage |
@@ -201,159 +191,173 @@ Postgres migrations.
 | `user_invite` | One-time links that set an account's password (HMAC-stored) |
 | `webauthn_challenge` | WebAuthn challenge state |
 
-### Connection Pool (`db/pool.rs`)
+### Database Handle (`internal/db`)
 
-- `struct Db` wraps `enum DbInner { Sqlite(SqlitePool), Postgres(PgPool) }`,
-  selected by `DATABASE_URL`.
-- All queries go through `query_*!` / `db_execute!`, so SQL and binds are
-  written once. Dialect differences live in `entry::filters::Dialect` and the
-  `pg_rewrite` shim (`datetime('now')`→`now()`, `to_char` cursor comparisons,
-  `make_interval`, quoted `"user"`).
-- Exception: the entry upsert's NULL-safe inequality (`IS NOT` /
-  `IS DISTINCT FROM`) is a hand-dispatched `UPSERT_UPDATE_SQL_SQLITE` / `_PG`
-  pair in `models/entry/mod.rs`, because a `pg_rewrite` rule for `IS NOT` would
-  also rewrite every `IS NOT NULL`.
-- PG connections pin `TimeZone=UTC` so timestamp-string cursors match SQLite.
+- `db.DB` wraps one `database/sql` pool and a `Dialect`, selected by
+  `DATABASE_URL`: `modernc.org/sqlite` (pure Go) or `pgx` (via its `stdlib`
+  adapter). `db.Executor` is what models accept, so one function runs on a
+  `DB` or inside a `Tx`.
+- Queries are written once with `$N` placeholders. Dialect forks go through
+  `Dialect` methods (`LikeCI`, `CursorTS`, `DaysAgo`, `IndexedBy`,
+  `NullSafeNe`, ...) and `Dialect.Rewrite` (`datetime('now')` → `now()`).
+- The entry upsert's NULL-safe inequality is a deliberate hand-dispatched pair
+  (`NullSafeNe`: `IS NOT` / `IS DISTINCT FROM`) because a blanket `IS NOT`
+  rewrite would also rewrite every `IS NOT NULL`.
+- SQLite: WAL, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=1`,
+  `analysis_limit=400`, at most 5 connections, and every transaction is
+  `BEGIN IMMEDIATE` (a deferred read-to-write promotion returns `SQLITE_BUSY`
+  without honouring the timeout). PostgreSQL: at most 10 connections, session
+  `timezone=UTC` so timestamp-string cursors match SQLite.
 - Instants are UTC everywhere and the browser localises what it shows. The one
   place a calendar day matters is `/statistics`: it cuts days in the user's
-  `user_settings.timezone` (default `UTC`, `utils/timezone`). Range bounds are
-  the UTC instant of a local midnight, and the daily-read chart buckets in Rust
-  (`SQLite` cannot apply a zone), so both backends share one path.
-- Feed dates without an offset are read as UTC (`utils/datetime`), never in the
-  server's `TZ`.
+  `user_settings.timezone` (default `UTC`, `internal/timezone`). Range bounds
+  are the UTC instant of a local midnight, and the daily-read chart buckets in
+  Go (SQLite cannot apply a zone), so both backends share one path.
+- Feed dates without an offset are read as UTC (`internal/datetime`), never in
+  the server's `TZ`.
 
 **Planner statistics (SQLite only).** SQLite never refreshes `sqlite_stat1`
 itself, and stale (or missing, for a new index) stats cost plans.
-`Db::optimize()` (`PRAGMA optimize`) runs at the end of `connect()` and on every
-retention tick after the first. `analysis_limit=400` bounds the ANALYZE per
-connection. No-op on PostgreSQL.
+`DB.Optimize()` (`PRAGMA optimize`) runs after migrations and on every
+retention tick after the first. No-op on PostgreSQL.
 
 **Write-priority scheduling (SQLite only).** SQLite has one writer under WAL.
-`Db` carries a `Priority` (`User` by default; background workers call
-`db.background()`) and a shared `SqliteSched` whose `admit()` holds a background
-write until no `User` write is in flight. Reads are never gated. No-op on
+A `DB` carries a `Priority` (`User` by default; background workers use
+`db.Background()`) and a shared scheduler whose admission gate holds a
+background operation until no `User` operation is in flight. Rows and
+transactions hold admission until closed, so always close them. No-op on
 PostgreSQL.
 
-### Models
+### Models (`internal/models`)
 
-Each model has a struct matching the schema, CRUD associated functions (params
-structs like `CreateFeedParams` instead of long argument lists), and query
-methods (e.g. `Feed::find_by_user`, `find_due_for_sync`).
+Each file holds the SQL for one table: a struct matching the schema, plain
+functions taking a `db.Executor`, and parameter structs instead of long
+argument lists. Entry queries live in `models/entry` (filters, cursor
+pagination, neighbours, marks, upsert, retention, offline set).
 
 Global `/search` supports a boolean query language (`is:`, `feed:`,
 `category:`, `title:`, `author:`, `before:`, `after:`, `AND`/`OR`/`NOT`,
-grouping, quoting, `-` negation). `models/entry/query.rs` parses it into a
-`QueryNode` AST on `EntryFilter.query`; `filters::render_query` renders it per
-`Dialect` using `LIKE`/`ILIKE` (no full-text index). Scoped per-view search uses
-the plain substring `EntryFilter.search`.
+grouping, quoting, `-` negation). `internal/search` parses it into a node tree
+and `models/entry/filters.go` renders it per `Dialect` using
+case-insensitive `LIKE` (no full-text index). Scoped per-view search uses a
+plain substring filter.
 
 ## HTTP Layer
 
 ### Handlers
 
-Organized by resource: pages (HTML), auth, feed, entry, admin, GReader — see
-[Directory Structure](#directory-structure).
+Handlers live in `internal/server`, one file per area (auth, account, admin,
+categories, feeds, entries, search, statistics, summarizer, media, passkey,
+invite, events, GReader). The `Authenticator` in `internal/auth` turns the
+session cookie into a `Principal` (`Authenticate` for API routes, where a
+store failure is an error; `AuthenticatePage` for pages, which redirect to
+`/login`).
 
 **Bulk writes report what they changed**, using the database's affected-row
 count, not the requested count.
-- Form actions put it in the flash (`mark_read_scoped`, OPML import via
-  `opml::ImportSummary::describe`, revoke-others, revoke-all-tokens).
-- GReader `mark-all-as-read`, `edit-tag`, `subscription/import` must keep the
-  bare `OK` body, so the count goes in `X-RDRS-Affected`
-  (`handlers::greader::AFFECTED_HEADER`). `app.js` reads it, falling back to its
-  DOM-row count.
+- Form actions put it in the flash (mark-read, OPML import via
+  `opml.ImportSummary.Describe`, revoke-others, revoke-all-tokens).
+- GReader `edit-tag` and friends keep the bare `OK` body, so the count goes in
+  the `X-Rdrs-Affected` header.
 
 **Bulk mark-as-read is scoped by the rendered list.** The "Mark as Read..."
 dropdown sends the list's `data-snapshot-at` as `snapshot` (an rdrs extension
-to `mark-all-as-read`; other GReader clients omit it). `MarkAllRead::stored_by`
-then leaves entries with `created_at` at or after it unread (the stamp is taken
-before the list query and truncated to the second, hence strict), so a feed
-fetch between render and click cannot mark what the reader never saw. A malformed snapshot
-is a 400, never "no limit". `older_than_days` alone cannot do this: it tests
+to `mark-all-as-read`; other GReader clients omit it). Entries with
+`created_at` at or after it stay unread, so a feed fetch between render and
+click cannot mark what the reader never saw. A malformed snapshot is refused,
+never treated as "no limit". `older_than_days` alone cannot do this: it tests
 `published_at`, which a late arrival may already have in the past.
 
 **Today** (`/entries/today`, sidebar item after Unread) is the unread entries
 whose `COALESCE(published_at, created_at)` falls on the current day in the
-user's timezone. `entry::today_unread_filter` is the one definition behind the
-list, the sidebar badge, the reader's neighbours (`today=true`) and mark-all, so
-the badge always equals the list. Day bounds come from `timezone::day_bounds_utc`
-(23 or 25 hours across DST). Its "Mark all as Read" posts to
-`/entries/today/mark-read` with the same `snapshot` rule as above, applied as
-`EntryFilter::stored_before`; the form copies the list's `data-snapshot-at`
-client-side (`installSnapshotFormSync`).
+user's timezone. `entry.TodayUnreadFilter` is the one definition behind the
+list, the sidebar badge, the reader's neighbours and mark-all, so the badge
+always equals the list. Day bounds come from `timezone.StartOfDayUTC` (23 or 25
+hours across DST). Its "Mark all as Read" posts to
+`/entries/today/mark-read` with the same `snapshot` rule.
 
-### Middleware
+### Middleware (`internal/server/middleware`)
 
-- **auth.rs** - `AuthUser` from the session cookie; `AdminUser` for admin routes
-- **flash.rs** - flash messages in cookies
+See [the stack above](#router-internalserverroutesgo). Session handling lives
+in `internal/auth` (`Authenticator`, `Cookies`); the layers only apply it.
 
 ### Browser-only facts
 
-`PUT /api/user/client-info` (`handlers/client_info.rs`) takes what only the
-browser knows (today its timezone). It stores nothing: it compares each fact
-with the account's settings and answers `200 {"hints": [...]}`; the page shows
-each hint with `<rdrs-flash>.show()`. A hint links to the settings form
-(`/user-settings?timezone=…` pre-fills the field, marked unsaved; the user still
-presses Save). Hints are not flash cookies: the report is sent after the page
-has loaded, and a cookie set then is consumed by whichever request reads flashes
-next, often a fragment swap that renders none.
+`PUT /api/user/client-info` takes what only the browser knows (today its
+timezone). It stores nothing: it compares each fact with the account's settings
+and answers `200 {"hints": [...]}`; the page shows each hint with
+`<rdrs-flash>.show()`. A hint links to the settings form
+(`/user-settings?timezone=…` pre-fills the field, marked unsaved; the user
+still presses Save). Hints are not flash cookies: the report is sent after the
+page has loaded, and a cookie set then is consumed by whichever request reads
+flashes next, often a fragment swap that renders none.
 
-`static/js/client-info.js` sends a report only when it differs from the last one
-this browser delivered (`localStorage`, keyed per account), which is what makes
-an offer one-time per browser. Zones are compared by behaviour over the next
-year (`timezone::same_rules`), since browsers report aliases such as
-`Asia/Calcutta`. The body is a typed struct of `Option` fields, not a free-form
-map: a new fact is one field plus one check function.
+`static/js/client-info.js` sends a report only when it differs from the last
+one this browser delivered (`localStorage`, keyed per account), which is what
+makes an offer one-time per browser. Zones are compared by behaviour over the
+next year (`timezone.SameRules`), since browsers report aliases such as
+`Asia/Calcutta`.
 
 ### Account Creation
 
 No self-service registration: an anonymous endpoint taking a username always
 leaks whether it exists.
 
-1. **`POST /api/setup`** creates the first account (admin), refused once
-   `user::count() > 0` (`Config::can_setup`). `GET /setup` then redirects to
-   `/login`. It also requires `AppState::setup_token` (random per start,
-   logged), compared in constant time, so an anonymous
-   bot cannot claim a fresh public deploy. The count, the user insert and the
-   default category share one transaction (`lock_user_table` serializes
-   concurrent setups on PostgreSQL).
+1. **`POST /api/setup`** creates the first account (admin), refused once an
+   account exists (`Config.CanSetup`). `GET /setup` then redirects to
+   `/login`. It also requires the setup token (random per start, printed on
+   stderr only while setup is open), compared in constant time
+   (`secret.VerifySetupToken`), so an anonymous bot cannot claim a fresh
+   public deploy. An empty token never means "no token": setup is refused. The
+   count, the user insert and the default category share one transaction
+   (`Tx.LockUserTable` serializes concurrent setups on PostgreSQL).
 2. **`POST /admin/users`** creates every later account with
-   `password_hash = "!"` (unparseable PHC, same as `forward_auth`), so
-   `verify_password` fails for all input, browser and GReader alike. The
-   account, its default category and its first invite link share one
-   transaction, so a failure leaves no half-made account holding the username.
+   `password_hash = "!"` (unparseable PHC, same as forward-auth), so
+   `VerifyPassword` fails for all input, browser and GReader alike.
 3. **`user_invite`** holds a one-time link. Token generated like a session
-   token, stored as an HMAC under `secret::DOMAIN_INVITE`; raw value shown once
-   in the admin's flash. Expires after `INVITE_TTL_DAYS` (7); re-issuing revokes
+   token, stored as an HMAC under `secret.DomainInvite`; raw value shown once
+   in the admin's flash. Expires after `InviteTTL` (7 days); re-issuing revokes
    the previous link.
 4. **`GET`/`POST /invite/{token}`** is anonymous. Every failure (unknown,
    expired, spent) renders one identical page naming no account. Redemption
-   spends the invite with `UPDATE … WHERE consumed_at IS NULL` *before* writing
-   the password (so racing submissions can't both win), then clears the
-   account's sessions and API tokens, all in one transaction
-   (`user_invite::redeem`): a failed write leaves the link live to retry.
-   `user::change_password` and `user::disable_user` bind the same revocation
-   to a password change and an admin disable.
+   spends the invite with `UPDATE … WHERE consumed_at IS NULL` (so racing
+   submissions can't both win), then sets the password and clears the
+   account's sessions and API tokens.
 
 This is also the only password-reset path; the old password keeps working until
 the link is redeemed.
 
 ### Authentication Flow
 
-1. Credentials posted to `POST /api/session`
-2. Argon2 verification. Unknown usernames still verify against a throwaway hash
-   (`auth::verify_dummy_password`) so timing doesn't reveal account existence;
+1. Credentials posted to `POST /api/session` (JSON) or `POST /login` (form)
+2. The per-IP and per-account rate limits are charged first, then Argon2
+   verification. Unknown usernames still verify against a throwaway hash
+   (`auth.VerifyDummyPassword`) so timing doesn't reveal account existence;
    the error message is generic
 3. Session row created
-4. Signed session cookie set (`<token>.<hmac>`, see [Signing & the root key](#signing--the-root-key-secretrs))
-5. `AuthUser` verifies the signature before the DB lookup on later requests
+4. Signed session cookie set (`<token>.<hmac>`, see [Signing & the root key](#signing--the-root-key-internalsecret))
+5. On later requests the signature is verified before the DB lookup
+
+**Rate limiting** (`auth.RateLimiter`): fixed-window counters in a fixed
+16 384-slot table (constant memory; keys hash with a per-process seed), in
+independent buckets (`login`, `account setup`, `passkey probe`,
+`password change`) so abuse of one endpoint cannot lock users out of another.
+Defaults: 5 attempts per 60 s per client IP (`RDRS_LOGIN_RATE_LIMIT_ATTEMPTS`,
+`RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS`; `0` attempts disables), and a deliberately
+wider per-account budget (4x), since anyone can aim an account budget at a
+victim. A successful credential check refunds the attempt. Limits run before
+any query or Argon2 work.
 
 ### WebAuthn/Passkey Authentication
 
+Uses `go-webauthn`. The relying party comes from `RDRS_WEBAUTHN_RP_*`; an
+invalid RP fails startup rather than every ceremony later.
+
 **Registration:**
-1. User starts registration from settings
+1. User starts registration from settings (requires recent authentication)
 2. Server stores a challenge in `webauthn_challenge`, requiring a
-   **discoverable** credential (`residentKey: required`) — sign-in is usernameless
+   **discoverable** credential (`residentKey: required`) and user verification
+   (only ES256 and RS256 offered), since sign-in is usernameless
 3. Browser creates the passkey
 4. Client sends attestation
 5. Server validates and stores it in `passkey`
@@ -365,8 +369,8 @@ the link is redeemed.
    per-user IDs, and differing on an empty table is an account-existence oracle
 3. Browser verifies the passkey
 4. Client sends the assertion
-5. Server resolves the credential by ID, verifies against that key
-   (`finish_discoverable_authentication`), and creates a session
+5. Server resolves the credential by ID, verifies against that key, and
+   creates a session
 
 > **Older passkeys may need re-registering.** They were created with
 > `residentKey: discouraged`; authenticators that honoured it hold
@@ -377,7 +381,7 @@ the link is redeemed.
 >   `allowCredentials` for passkeys flagged `discoverable`).
 > - **Unaffected**: iCloud Keychain, Google Password Manager.
 >
-> Recovery order matters: `start_registration` lists existing credential IDs in
+> Recovery order matters: registration lists existing credential IDs in
 > `excludeCredentials`, so the authenticator refuses a second one
 > (`InvalidStateError`). Sign in with a password, **delete the old passkey** in
 > `/user-settings`, then register. The failure is a client-side timeout
@@ -386,34 +390,36 @@ the link is redeemed.
 
 ### Forward-Auth (Trusted-Header) Login
 
-`middleware/forward_auth.rs` establishes a session from a trusted identity
-header set by a forward-auth proxy (Authelia, authentik, Traefik ForwardAuth),
-falling back to normal cookie login.
+The `ForwardAuth` middleware (with `auth.ForwardLogin`) establishes a session
+from a trusted identity header set by a forward-auth proxy (Authelia,
+authentik, Traefik ForwardAuth), falling back to normal cookie login.
 
 > **Operator setup** — env vars, reverse-proxy requirements (header stripping, GReader and image-proxy bypass), logout behavior: [README.md → Authentication & SSO](README.md#authentication--sso).
 
-- **Trust model:** the TCP peer IP (`ConnectInfo`, never `X-Forwarded-For`)
-  must be in `RDRS_TRUSTED_PROXY_NETWORKS`; otherwise the header is ignored.
-  Fails closed on untrusted peer, missing header, missing `ConnectInfo`, or DB
-  error.
+- **Trust model:** the TCP peer IP (never `X-Forwarded-For`) must be in
+  `RDRS_TRUSTED_PROXY_NETWORKS`; otherwise the header is ignored. Fails closed
+  on untrusted peer, missing header, unparsable peer, or DB error.
 - **Username mapping:** matched against existing usernames; no schema change.
   Existing password accounts gain forward-auth login automatically.
 - **JIT creation:** with `RDRS_AUTH_PROXY_USER_CREATION=true`, unknown users get
-  an account with sentinel hash `"!"` (no password login possible).
+  an account with sentinel hash `"!"` (no password login possible). The count,
+  insert and default category share one transaction, so two concurrent first
+  logins cannot both become admin.
 - **Group → role sync:** with both `RDRS_AUTH_PROXY_GROUPS_HEADER` and
   `RDRS_AUTH_PROXY_ADMIN_GROUP`, role is recomputed and persisted on every
   forward-auth login; the IdP is authoritative.
 - **`RDRS_DISABLE_LOCAL_AUTH`:** hides the password form, `POST /api/session` →
   403. GReader `ClientLogin` (`/accounts/ClientLogin`) and passkeys unaffected.
-- **Scope:** browser page routes only; never `/api`, `/reader`, `/accounts`,
-  `/events`, `/static`, `/favicon`, `/health`. Skipped when a valid session
-  cookie is present.
+- **Scope:** browser page routes only; machine endpoints and the PWA paths
+  (`/static`, `/favicon`, `/health`, `/sw.js`, `/offline`, GReader, `/api`,
+  `/events`) are skipped. Skipped when a valid session cookie is present; an
+  invalid cookie never blocks forward-auth.
 
 **Logout mechanics:**
-- Sign Out always clears `session_token` (`Path=/`) and deletes the server
-  session. It succeeds even if the session is already gone (idle timeout,
-  revocation, new `RDRS_SECRET`): `DELETE /api/session` and `POST /logout` still
-  clear cookies and send `Clear-Site-Data` rather than 401.
+- Sign Out always clears the session cookie (under both names) and deletes the
+  server session. It succeeds even if the session is already gone (idle
+  timeout, revocation, new `RDRS_SECRET`): `DELETE /api/session` and
+  `POST /logout` still clear cookies and send `Clear-Site-Data` rather than 401.
 - Forward-auth re-authenticates whenever there is no *valid* session cookie, so
   a stale cookie never causes a lockout. `/login` redirects authenticated users
   to `/`.
@@ -425,121 +431,133 @@ falling back to normal cookie login.
   warns the user to log out at the proxy/SSO provider.
 
 **Active session list:**
-- `/user-settings` lists non-expired sessions as cards (`.cred-list` /
-  `.cred-card`, shared with the API token list): full `user_agent`,
-  `ip_address`, created/last-active/expires. The row `id` reaches the template;
-  `session_token` never does.
-- `POST /user-settings/sessions/{id}/revoke` —
-  `session::delete_user_session_by_id`, `user_id`-scoped, reports "already
-  gone" from the affected-row count. Refuses the caller's own session (card
-  shows "This device"; handler re-checks).
-- `POST /user-settings/sessions/revoke-others` —
-  `session::delete_user_sessions_except`; count goes to the flash and to
-  `audit::sessions_destroyed_bulk`'s `count`.
-- `POST /user-settings/api-tokens/revoke-all` (`api_token::delete_user_tokens`)
-  works the same way.
+- `/user-settings` lists non-expired sessions as cards (shared with the API
+  token list): full `user_agent`, `ip_address`, created/last-active/expires.
+  The row `id` reaches the template; `session_token` never does.
+- `POST /user-settings/sessions/{id}/revoke` is `user_id`-scoped, reports
+  "already gone" from the affected-row count, and refuses the caller's own
+  session (card shows "This device"; handler re-checks).
+- `POST /user-settings/sessions/revoke-others`: count goes to the flash and to
+  the audit event's `count`.
+- `POST /user-settings/api-tokens/revoke-all` works the same way.
 
 **Session metadata:**
-- `user_agent`, `ip_address`, `last_seen_at` are `NOT NULL`, captured at all 4
-  login sites (`POST /api/session`, forward-auth, passkey
-  `finish_authentication`, GReader `ClientLogin`).
-- Client IP via `Config::client_ip`: honours `X-Forwarded-For`/`X-Real-IP` only
-  when the TCP peer is trusted (`is_trusted_peer`, same as forward-auth). Reads
-  `X-Forwarded-For` right-to-left, taking the right-most entry that isn't a
-  trusted proxy (append-mode proxies add hops on the right; left-most would be
-  client-spoofable), then `X-Real-IP`, then the peer.
-- `last_seen_at` is bumped by `AuthUser`/`PageAuthUser`, throttled to once per
-  minute per session (`session::touch_last_seen`).
+- `user_agent`, `ip_address`, `last_seen_at` are `NOT NULL`, captured at every
+  login site (`POST /api/session`, forward-auth, passkey, GReader
+  `ClientLogin`).
+- Client IP via `auth.ClientIP`: honours `X-Forwarded-For`/`X-Real-IP` only
+  when the TCP peer is trusted (`Config.IsTrustedPeer`, same as forward-auth).
+  Reads `X-Forwarded-For` right-to-left, taking the right-most entry that isn't
+  a trusted proxy (append-mode proxies add hops on the right; left-most would
+  be client-spoofable), then `X-Real-IP`, then the peer.
+- `last_seen_at` is bumped on authenticated requests, throttled to once per
+  minute per session (`models.TouchLastSeen`).
 - Migration `0002_add_session_metadata` **drops and recreates `session`**:
-  upgrading signs everyone out.
+  upgrading past it signs everyone out.
 
 **Auth-mode indicator:** the sidebar shows an **SSO** pill when the request came
-via forward-auth (computed per request; `via_forward_auth` on extractors and the
-sidebar payload). `/settings` shows forward-auth config; it is **admin-only**
-(`PageAdminUser`), passes `DATABASE_URL` through `config::redact_database_url`,
-and the sidebar hides its link for non-admins.
+via forward-auth (computed per request; `via_forward_auth` on the principal and
+the sidebar payload). `/settings` shows forward-auth config; it is
+**admin-only**, passes `DATABASE_URL` through `config.RedactDatabaseURL`, and
+the sidebar hides its link for non-admins.
 
 ## Services
 
 ### Feed Synchronization
 
-**Background Scheduler** (`background.rs`): a Tokio task that assigns feeds to
-60 one-minute buckets by URL hash (indexed `bucket` column) and syncs the
-current bucket every minute.
+**Background Scheduler** (`worker.Sync`): assigns feeds to 60 one-minute
+buckets by URL hash (indexed `bucket` column; the hash is SipHash-1-3 with zero
+keys in `internal/siphash`, so every URL keeps the bucket already stored) and
+refreshes the bucket of the current minute every minute. A bucket in progress
+is finished on shutdown. Missed ticks run back to back instead of being
+dropped.
 
-**Sync Logic** (`feed_sync.rs`): etag / if-modified-since; feed-rs with a
-custom timestamp parser (Chinese dates); inserts new entries, skips duplicates;
-`JoinSet` with concurrency 4.
+**Sync Logic** (`internal/feedsync`): conditional GET (etag /
+if-modified-since); `internal/feedparse` handles RSS, Atom, RDF and JSON Feed
+with charset decoding, and `internal/datetime` parses odd timestamps (Chinese
+dates); new entries are inserted in one transaction with the fetch result,
+duplicates skipped, tombstoned guids skipped. Feeds in a bucket refresh in
+groups of 4. A single feed's fetch, retries, icon and writes are bounded by
+90 s.
 
 **Timestamps on `/feeds`:**
 - `fetched_at` — written on every attempt.
-- `feed_updated_at` — `effective_feed_updated_at(feed_timestamp,
-  latest_entry_date, http_last_modified)`: the **max** of the present values
-  (`.flatten().max()`), so a feed with only `Last-Modified` isn't called stale.
-  Feed timestamp is `updated.or(published)`; entry date is
-  `published.or(updated)`, falling back to the feed timestamp. Written via
-  `COALESCE($5, feed_updated_at)`, so a `304` or failure never clears it.
-- `compute_freshness` (`handlers/pages/time_format.rs`) grades against
-  `FRESH_MAX_DAYS` / `WARNING_MAX_DAYS`, falling back to `fetched_at`. The Stale
-  filter matches the stale band only. The constants are passed into
-  `feeds.html` (which explains the rule in a `<details>`) rather than retyped.
+- `feed_updated_at` — the **latest** of the feed's own timestamp, the newest
+  entry date and the HTTP `Last-Modified`, so a feed with only `Last-Modified`
+  isn't called stale. Written via `COALESCE($5, feed_updated_at)`, so a `304`
+  or failure never clears it.
+- The freshness grade (`server/timefmt.go`, `freshMaxDays` 30 /
+  `warningMaxDays` 90) falls back to `fetched_at`. The Stale filter matches the
+  stale band only. The constants are passed into the page, which explains the
+  rule, rather than retyped.
 - No failure counter or auto-disable: `fetch_error` holds the last error until
   the next success.
 
 ### Entry Retention
 
-**Retention Worker** (`entry_retention.rs`):
+**Retention Worker** (`worker.Retention`):
 - Opt-in per user via `user_settings.retention_read_days` (`0` = off).
 - Every 24h, prunes read, non-starred entries older than the window, in batches.
 - Each pruned entry gets an `entry_tombstone` (`feed_id`, `guid`) so sync won't
   re-insert it; tombstones cascade with the feed.
-- SQLite maintenance: a tick that pruned runs `run_maintenance` (planner stats,
-  VACUUM when the freelist reaches 20% of the file, truncating WAL checkpoint);
-  a tick that pruned nothing still refreshes stats. The first (immediate) tick
-  skips it since `Db::connect` just did.
+- SQLite maintenance: a tick that pruned runs `DB.RunMaintenance` (planner
+  stats, VACUUM when the freelist reaches 20% of the file, truncating WAL
+  checkpoint); a tick that pruned nothing still refreshes stats. The first
+  (immediate) tick skips it since opening the database just did.
+
+**Cleanup Worker** (`worker.Cleanup`, hourly) deletes expired summaries,
+sessions and API tokens, and feed images whose feed was deleted (`image` has no
+foreign key). **`worker.BackfillContentText`** fills `entry.content_text` for
+rows that predate it, once per start and resumable.
 
 ### Content Processing
 
-**HTML Sanitization** (`sanitize.rs`):
-- Ammonia for XSS protection (always runs, ungated)
-- Drops `aria-hidden="true"` subtrees first (Ammonia strips `class`/`style`, so
-  hidden-by-CSS markup like Shiki line-number gutters would surface as text);
-  falls back to the original if that empties the entry
-- Strips tracking params (utm_*, fbclid, …), tracking domains (pixel.*,
-  analytics.*, …), and 1x1 pixels
-- Fixes relative image URLs
+**HTML Sanitization** (`internal/sanitize`): an allowlist sanitizer on top of
+`golang.org/x/net/html` (always runs, ungated). Pipeline: pre-passes, allowlist
+clean, post-pass.
+- Drops `aria-hidden="true"` subtrees first (the allowlist strips
+  `class`/`style`, so hidden-by-CSS markup like Shiki line-number gutters would
+  surface as text); an article that would be left empty is returned untouched
+- Promotes lazy-loaded image URLs (`data-src`, `data-lazy-src`,
+  `data-original`)
 - Injects `width`/`height` from `data-original-width`/`-height` or inline
   `style` when missing
-- Tags proxied images `data-img-state="loading"` (CSS skeleton; broken-image
-  fallback with `alt` on error)
-- The three pre-Ammonia passes (`aria-hidden`, lazy-image promotion, dimension
-  harvesting) are each gated by a cheap case-insensitive substring test
-  returning a borrowed `Cow`. **A gate must remain a superset of its pass's
-  trigger**; `gates_are_supersets_of_the_passes_they_front` enforces this. The
-  passes are presentation, not security
+- Strips tracking params (`utm_*`, `mtm_*`, `fbclid`, …), tracking domains
+  (`pixel.*`, `analytics.*`, …) and paths, and 1x1 pixels
+- Resolves relative image URLs against the entry's base URL; an image that
+  cannot resolve to http(s) is dropped
+- Routes every image through the signed image proxy and tags it
+  `data-img-state="loading"` (CSS skeleton; broken-image fallback with `alt`
+  on error)
+- Each pre-pass is fronted by a cheap case-insensitive substring gate. **A gate
+  must remain a superset of its pass's trigger**;
+  `TestGatesAreSupersetsOfThePassesTheyFront` enforces this. The passes are
+  presentation, not security
+- `internal/htmldepth` works around `x/net/html` refusing documents with more
+  than 511 open elements
 
-**Full Content Extraction** (`readability.rs`):
-- Fetches the article and extracts main content; SSRF-guarded via
-  `utils/url_validation`
+**Full Content Extraction** (`internal/readability`):
+- Fetches the article and extracts main content; fetched through the
+  SSRF-guarded `fetch.Fetcher`
 - Stored **raw** in `entry.full_content` and sanitized per render (sanitizing
   signs proxy URLs with `RDRS_SECRET`, which a stored copy would outlive)
 - Persists across refreshes/tabs/no-JS; `GET /entries/{id}/fragment?view=original`
   shows the feed's version; re-posting the action refreshes it
 - Not mirrored into `content_text` (search covers feed content only)
 
-### Image Proxy (`image_proxy.rs`)
+### Image Proxy (`internal/imageproxy`, `server/media.go`)
 
 Proxies external images for privacy and to avoid mixed content.
 - Signed URLs: `/api/proxy/image?url=...&s=...`, HMAC-SHA256 truncated to 8
-  bytes, verified before fetching.
-- `Cache-Control: public, max-age=86400`, `ETag` = the signature; matching
-  `If-None-Match` → `304` without refetching (checked *after* signature
-  verification).
+  bytes, verified in constant time before fetching.
+- Default `Cache-Control: public, max-age=86400` (an origin's non-empty value is
+  mirrored), `ETag` = the signature; matching `If-None-Match` → `304` without
+  refetching (checked *after* signature verification).
 - `GET /api/feeds/{id}/icon` uses `private, max-age=86400`: it is per-user
-  (`AuthUser`, scoped to the caller's categories) and sets its own
-  `Cache-Control`, so `no_store_for_authenticated` adds no `Vary: Cookie`;
-  `public` would leak icons across users via shared caches. The proxy stays
-  `public` because its URLs carry no per-user meaning.
+  (scoped to the caller's categories) and sets its own `Cache-Control`, so
+  `NoStoreForAuthenticated` adds no `Vary: Cookie`; `public` would leak icons
+  across users via shared caches. The proxy stays `public` because its URLs
+  carry no per-user meaning.
 
 **URL format:**
 - **Relative** (default): used by the web UI and when `RDRS_PUBLIC_BASE_URL` is unset.
@@ -558,18 +576,17 @@ navigation. Entries-family response shapes:
   the row via multi-target templates). Prev/Next come from the DOM when the
   entry has rows on both sides; otherwise from `GET /api/entries/{id}/neighbors`
   (list ends, which may have more pages or an `after` cursor, and scoped
-  searches, which `NeighborsQuery` can't express).
+  searches).
 - **Load More** — `?fragment=1&after=<cursor>` appends before `#load-more`. Page
-  size is the user's `entries_per_page` via `entries_page_size`, read per
-  request and clamped to `MIN..=MAX_ENTRIES_PER_PAGE` (it reaches a SQL `LIMIT`).
+  size is the user's `entries_per_page`, read per request and clamped to
+  `MinEntriesPerPage..MaxEntriesPerPage` (it reaches a SQL `LIMIT`).
 - **list refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
   and the "Mark N matching" slot, leaving the search box alone. The search
   drawer sits above `.list-pane-header` and renders open when `q` is present.
   Searching hides "Mark Above as Read" (the `A` shortcut still works). Also
   backs **Mark Above as Read** and the **"Mark as Read..." dropdown** via
   `refreshEntriesList()`, which re-renders in place and raises
-  `rdrs:sidebar-stale` instead of reloading. `/` distinguishes
-  `?fragment=1&after=` from bare `?fragment=1`.
+  `rdrs:sidebar-stale` instead of reloading.
 - **sidebar navigation** — `?pane=1` (`/categories/{id}/entries`,
   `/feeds/{id}/entries`) replaces `[data-list-pane]` and resets
   `#reading-pane`. `swapListPane()` drives it for sidebar links, `[` `]` `{` `}`,
@@ -602,36 +619,45 @@ previous entry could paint into the new one. The summary-dismiss handler
 
 ### SSE Live Updates
 
-`GET /events` (`handlers/events.rs`) streams per-user events. Mutations call
-`EventBus::emit_sidebar` / `emit_summary` (`services/events.rs`, a
-`tokio::sync::broadcast` wrapper). `installSse()` in `app.js` handles:
+`GET /events` (`server/events.go`) streams per-user events. Mutations call
+`events.Bus.EmitSidebar` / `EmitSummary` (`internal/events`). Each open tab has
+a subscription with a 256-event buffer; a slow subscriber loses its oldest
+event and is sent a resync nudge (refetch) instead of blocking the sender.
+A 15 s keep-alive stops proxies closing an idle stream. `installSse()`
+(`static/js/live-updates.js`, started from `app.js`) handles:
 
 - **`sidebar`** — refetch `/api/sidebar` to update badges.
 - **`summary`** — `{entry_id, status}`; updates the row badge and, if open,
   swaps `GET /entries/{id}/summary/fragment` into `#rp-summary-container`.
 
-The stream `select!`s against the global `CancellationToken` for graceful
-shutdown. `/events` is registered outside the ETag, Compression, Date-header and
-Timeout layers, which would buffer or cut a long-lived stream.
+Graceful shutdown cancels the streams' base context and closes the bus, so
+shutdown never waits on an open tab. `/events` is mounted outside the core
+middleware (see [Router](#router-internalserverroutesgo)).
 
-### Caching
+### Caching (`internal/cache`)
 
-- **Sidebar cache** (`sidebar_cache.rs`) — per-user sidebar chrome (tree +
-  unread counts), excluding session-specific fields (e.g. masquerade flag).
-  Bounded by capacity and TTL; busted by handlers, sync, and the summary worker.
-  Each slot has a generation that `bust` bumps (leaving a tombstone);
-  `read_chrome_data` captures it before reading and publishes via
-  `insert_if_current`, so a bust during population isn't overwritten by a stale
-  value. `RDRS_DISABLE_SIDEBAR_CACHE` disables it (E2E only — it seeds SQLite
-  directly, bypassing bust hooks). The Today count depends on the clock, not
-  just on data, so a slot records the user's timezone and local day and
-  `CachedChrome::is_current` rejects it once that day has passed.
-- **Page cache** (`page_cache.rs`) — helper over `moka::sync::Cache` for
-  per-user TTL page payloads.
-- **Admin database stats** (`AdminDbStatsCache` in `page_cache.rs`) — the one
-  non-per-user cache: site-wide `/statistics` figures (`COUNT(*)` over `entry`
-  and `entry_tombstone`, page-count PRAGMAs) in one `()` slot. Never busted; the
-  60 s TTL is the whole invalidation strategy.
+All caches are in-memory, live for the process, and are built on one bounded
+TTL map (oldest insertion evicted first). Writers invalidate explicitly; the
+TTL bounds the damage of a missed call.
+
+- **Sidebar cache** (`cache.Sidebar`) — per-user sidebar chrome (theme,
+  categories, unread counts), excluding session-specific fields (e.g.
+  masquerade flag). 10 000 users, 60 s TTL; busted by handlers, sync, and the
+  summary worker. Each slot has a generation that `Bust` bumps (leaving a
+  tombstone); `BeginRead` captures it before reading and `InsertIfCurrent`
+  publishes only if no bust landed since, so a bust during population isn't
+  overwritten by a stale value. `RDRS_DISABLE_SIDEBAR_CACHE` (set to anything)
+  disables it (E2E only — it seeds the database directly, bypassing bust
+  hooks). The Today count depends on the clock, not just on data, so a slot
+  records the user's timezone and local day and `Chrome.IsCurrent` rejects it
+  once that day has passed.
+- **Summary state** (`cache.Summary`) — pending / processing / completed /
+  failed state of summary jobs (1000 entries, 24 h), so a page shows progress
+  without a database row for unfinished work.
+- **Admin database stats** (`cache.AdminDBStats`) — the one non-per-user cache:
+  site-wide `/statistics` figures (`COUNT(*)` over `entry` and
+  `entry_tombstone`, page-count PRAGMAs) in one slot. Never busted; the 60 s
+  TTL is the whole invalidation strategy.
 
 ### Progressive Web App
 
@@ -639,21 +665,21 @@ Installable and offline-tolerant without leaving SSR. By default the browser
 stores nothing of the reader's; offline reading is the only opt-in exception,
 and turning it off restores that property.
 
-**Manifest.** `static/manifest.webmanifest`, linked from `base.html` with `?v=`,
+**Manifest.** `static/manifest.webmanifest`, linked from the layout with `?v=`,
 served under `/static/` (skipped by session, CSRF and forward-auth layers, so no
 `Set-Cookie`). Served as `application/manifest+json` (the fallback type would be
 rejected under `nosniff`). `start_url` and `scope` are absolute, else scope
 would become `/static/`.
 
-**Icons.** `build.rs` renders `icon-192.png`, `icon-512.png`,
-`maskable-icon-512.png` from `favicon.svg` into `OUT_DIR`; `static_assets.rs`
-embeds them. The maskable icon is 80% scale on opaque `#1A0E08`.
+**Icons.** `static/icons/` holds committed PNGs (`icon-192.png`,
+`icon-512.png`, `maskable-icon-512.png`) next to the favicons; all are embedded
+with the rest of `static/`.
 
-**Service worker.** `static/js/sw.js`, served at `/sw.js` by
-`static_assets::service_worker` (root scope sees navigations). Unstamped URL
-(a stamp would register a new worker per deploy), so the build version is in the
-body and the response is `no-cache`. Registered by `static/js/pwa.js` from
-`app_layout.html`, so `/login` and `/setup` never register one.
+**Service worker.** `static/js/sw.js`, served at `/sw.js`
+(`serveServiceWorker`; root scope sees navigations). Unstamped URL (a stamp
+would register a new worker per deploy), so the build version is in the body
+and the response is `no-cache`. Registered by `static/js/pwa.js` from the app
+layout, so `/login` and `/setup` never register one.
 
 **Worker caching rules** — an allowlist over its shell cache
 (`rdrs-shell-<version>`), since the Cache API ignores `no-store` / `Vary: Cookie`:
@@ -662,9 +688,9 @@ body and the response is `no-cache`. Registered by `static/js/pwa.js` from
   saved library for `/` and `/entries/*`, else the precached `/offline`. Never
   stored.
 - **Same-origin `GET /static/`** — cache-first, populated on use; cache is keyed
-  by build version and dropped on activate. Disabled for dirty builds via
-  `worker_may_cache_static`, derived from `cache_control_for` so the rule lives
-  once.
+  by build version and dropped on activate. Disabled for dirty builds (the
+  server substitutes whether the worker may cache `/static/`, derived from the
+  same `-dirty` rule as the asset `Cache-Control`).
 - **Feed icons and proxied images** — network-first, falling back to the
   offline cache; never populated here (that budget is the reader's).
 - **Everything else** (`/api/*`, `/events`, fragments) — passthrough, never
@@ -673,11 +699,11 @@ body and the response is `no-cache`. Registered by `static/js/pwa.js` from
 Precache is just `/offline` and `app.css`; the rest of the shell is only reached
 via navigations, which fail offline anyway.
 
-**Offline page.** `GET /offline` (`pages::offline_page`) renders `offline.html`
-with no auth and no user data, `public, max-age=3600`. That header stops
-`middleware::cache_control` stamping `no-store` and stops
-`slide_session_cookie` appending a cookie. `/sw.js` and `/offline` are in all
-three middleware skip lists.
+**Offline page.** `GET /offline` renders with no auth and no user data,
+`public, max-age=3600`. That header stops `NoStoreForAuthenticated` stamping
+`no-store` and stops `SlideSession` appending a cookie. `/sw.js` and
+`/offline` are in the forward-auth and session-sliding skip lists, and the
+anonymous-session layer skips the PWA paths too.
 
 ### Offline reading
 
@@ -686,13 +712,11 @@ nothing).
 
 - **Stored markup is the server's.** The client mirrors
   `GET /entries/{id}/fragment` — one renderer, no client templating.
-- **Prefetch doesn't mark read.** Mirroring uses `?offline=1`
-  (`FragmentQuery::is_prefetch`), which dispatches no write. (`is_speculative_load`
-  can't be used: `Sec-Purpose` is forbidden to `fetch()`.)
-- **What to hold:** `GET /api/offline/manifest` (`handlers::offline`) returns
-  ids, per-entry `updated_at`, the budget, and an opaque `cache_key` — no
-  content. The set is `entry::list_offline_set`: newest unread up to budget,
-  starred filling the rest.
+- **Prefetch doesn't mark read.** Mirroring uses `?offline=1`, which dispatches
+  no write. (`Sec-Purpose` can't be used: it is forbidden to `fetch()`.)
+- **What to hold:** `GET /api/offline/manifest` returns ids, per-entry
+  `updated_at`, the budget, and an opaque `cache_key` — no content. The set is
+  `entry.ListOfflineSet`: newest unread up to budget, starred filling the rest.
 - **The cache is its own ledger.** `static/js/offline.js` stores panes under
   `/entries/{id}/fragment` with `updated_at` in `x-rdrs-offline-version`; no
   separate index. `updated_at` moves on every write that changes the pane.
@@ -704,13 +728,13 @@ nothing).
   `performSwap` catches its own failed pane fetch and asks
   `window.rdrsOffline.fragment()`, keeping requests visible to the network
   (and E2E CDP interception).
-- **Library page:** `GET /entries/offline` (`pages::offline_entries_page`) lists
-  the whole saved set — no Load More, search or bulk actions. Linked by
-  `<rdrs-sidebar>` and the scriptless nav whenever `offline_keep > 0` (read from
-  `data-offline-keep` beside `data-offline-key`). The worker serves its cached
-  copy for dead `/` and `/entries/*` navigations.
+- **Library page:** `GET /entries/offline` lists the whole saved set — no Load
+  More, search or bulk actions. Linked by `<rdrs-sidebar>` and the scriptless
+  nav whenever `offline_keep > 0` (read from `data-offline-keep` beside
+  `data-offline-key`). The worker serves its cached copy for dead `/` and
+  `/entries/*` navigations.
 - **Per-reader, cleared on sign-out.** Cache name
-  `rdrs-offline-<secret::offline_id(user_id)>` (opaque, since page JS sees it).
+  `rdrs-offline-<secret.OfflineID(user_id)>` (opaque, since page JS sees it).
   `offline.js` deletes every other cache before its first network call using
   `data-offline-key` on `<html>`. The worker drops all `rdrs-offline-*` caches
   on a successful `POST /logout` or `DELETE /api/session`.
@@ -738,112 +762,127 @@ nothing).
 
 ### External Services
 
-**Linkding** (`save/linkding.rs`): saves entries as bookmarks; configured per user.
+**Linkding** (`internal/save`): saves entries as bookmarks; configured per
+user. A Linkding-side failure comes back as a result with `Success` false, so
+one integration cannot fail the others. It uses its own HTTP client
+(user-typed address), not the SSRF-guarded fetcher.
+
+**Open tracking** (`internal/pixel`, `GET /p/{token}`): a signed 1x1 GIF is
+appended to the rendered entry content (after sanitizing, never before: the
+sanitizer strips 1x1 images) so the server learns which entries a client
+rendered (`entry_open`). The endpoint answers the same GIF for every request,
+valid or not.
 
 ### AI Summarization
 
 Kagi Universal Summarizer integration:
-- `summarize/kagi.rs` — API client
-- `summary_worker.rs` — background worker
-- `summary_cache.rs` — in-memory cache
-- `summary_cleanup.rs` — periodic cleanup of expired summaries, sessions and API tokens, and of feed images whose feed was deleted (`image` has no foreign key)
+- `summarize/kagi.go` — API client (own HTTP client)
+- `summarize/worker.go` — job queue (100 jobs; a full queue fails the enqueue
+  after 5 s) and background worker
+- `cache.Summary` — in-memory state of in-flight and recent jobs
+- `worker.Cleanup` — periodic cleanup of expired summaries (see above)
+- On start, `summarize.RecoverIncomplete` re-queues jobs left unfinished
 
 **Flow:** request → check cache, then DB → otherwise queue to worker → worker
 calls Kagi and stores in `entry_summary` → cached and returned.
 
-- **Cancellation:** each queued/in-flight job has a `CancellationToken` in a
-  `CancelRegistry` keyed by `(user_id, entry_id)`;
-  `POST /entries/{id}/summarize/cancel` cancels it (aborting the HTTP request)
-  and deletes the record.
+- **Cancellation:** each running job has a cancel function in a `Cancels`
+  registry keyed by `(user_id, entry_id)`; `POST /entries/{id}/summarize/cancel`
+  cancels it (aborting the HTTP request) and deletes the record.
 - **Timeout:** 90 s hard timeout per Kagi request; expiry marks it `failed`.
 - **Status:** pending, processing, completed, failed (with error message).
 
 ## Security
 
-### Signing & the root key (`secret.rs`)
+### Signing & the root key (`internal/secret`)
 
 One root key — `RDRS_SECRET`, or random at boot — backs every signature. Each
 use has a domain-separation prefix (`image:`, `greader-token:`, `session:`,
-`csrf:`, …) so a value for one purpose can't be replayed as another (without
-it, the CSRF token would equal the session cookie's signature).
+`csrf:`, `audit:`, `offline:`, `invite:`, `pixel:`, `service-tokens:`, `flash:`,
+`setup:`) so a value for one purpose can't be replayed as another (without it,
+the CSRF token would equal the session cookie's signature).
 
-- **Session cookie:** `<session_token>.<hmac>`. Every extractor and
-  forward-auth read it via `session_token_from_jar`, verifying before the DB
-  lookup; a leaked `session.session_token` is useless without the key.
+- **Session cookie:** `<session_token>.<hmac>`. Every authentication path reads
+  it through `auth.Cookies.SessionToken`, verifying before the DB lookup; a
+  leaked `session.session_token` is useless without the key.
 - **Image-proxy URLs** and the **GReader post token** use their own domains
-  (`image_proxy.rs`, `handlers/greader/auth.rs`).
+  (`internal/imageproxy`, `internal/greader`).
 
 Rotating the key (including restarting without `RDRS_SECRET`) ends all
 sessions and breaks image-proxy URLs cached by GReader clients until re-sync.
-GReader `ClientLogin` API tokens are matched against the database, not signed.
+GReader `ClientLogin` API tokens (`rdrs_gr_` prefix) are matched against the
+database, not signed.
 
 ### CSRF protection
 
 Two independent lines.
 
-- **First line — `tower_http::csrf::CsrfLayer`** (Go 1.25
-  `CrossOriginProtection` scheme), stateless, over the whole router.
-  - Unsafe methods require `Sec-Fetch-Site` of `same-origin` or `none`;
-    `same-site` is rejected (sibling subdomains/ports get the cookie under
-    `SameSite=Lax`).
-  - Without `Sec-Fetch-Site` (Safari < 16.4): `Origin` authority (host *and
-    port*) must byte-match the request authority (request target, else `Host`);
-    `Origin: null` is rejected. Scheme is ignored (works behind TLS
-    termination), but a proxy that drops the port from `Host` (nginx `$host` on a
-    non-default port) breaks it — see README → Production Notes.
+- **First line — `middleware.CrossSiteGuard`**, stateless, header-only, over
+  the whole router. Follows tower-http's CSRF semantics, not Go's
+  `http.CrossOriginProtection`.
+  - Unsafe methods (TRACE counts as unsafe here) require `Sec-Fetch-Site` of
+    `same-origin` or `none`; `same-site` is rejected (sibling subdomains/ports
+    get the cookie under `SameSite=Lax`).
+  - Without `Sec-Fetch-Site` (Safari < 16.4): a present `Origin` authority
+    (host *and port*) must byte-match `Host`; `Origin: null` is rejected.
+    Scheme is ignored (works behind TLS termination), but a proxy that drops the
+    port from `Host` (nginx `$host` on a non-default port) breaks it — see
+    README → Production Notes.
   - Neither header (native GReader clients, `curl`, server-to-server; all
     bearer-authenticated) passes.
-  - `middleware::csrf::log_cross_site_rejection`, directly outside the layer,
-    logs which check fired (`check=sec_fetch_site` / `check=origin_fallback`)
-    from the attached `ProtectionError`.
-- **Second line — synchronizer token** (`middleware::csrf::csrf_guard`).
-  - Token = `secret::derive_csrf` (HMAC of the session token under `csrf:`): no
+  - A refusal is 403 with an empty body, logged as `csrf.cross_site` with
+    `check=sec_fetch_site` or `check=origin_fallback`.
+- **Second line — synchronizer token** (`middleware.CSRFGuard`).
+  - Token = `secret.DeriveCSRF` (HMAC of the session token under `csrf:`): no
     column, no query.
   - Unsafe methods must echo it via `X-CSRF-Token` or a `_csrf` urlencoded field
-    (body buffered and rebuilt for the handler).
+    (body buffered, capped at 1 MiB, and rebuilt for the handler).
   - Delivered as a readable `csrf_token` cookie; `static/js/csrf.js` adds it to
     same-origin `fetch` and native POST forms. The cookie is never the
     credential; only the derived MAC is.
-  - `multipart/form-data` passes through; the OPML-import handler validates it
-    itself (also accepts `X-CSRF-Token`).
+  - Multipart bodies are **not** generally waved through: only `/feeds/import`
+    (OPML) passes the guard, and that handler validates the field itself.
   - GReader paths are **not** exempt: a browser calling `/reader/api/0/*` with
-    an ambient cookie is accepted by `GReaderUser` and waived from the `T` token
-    by `verify_post_token_if_needed`. Only `ClientLogin` is skipped
-    (`CSRF_SKIP_SUFFIX`) — a forged call needs the attacker's own credentials,
-    and login-CSRF is caught by the first line.
-  - Requests with **no** session cookie pass (a forged action must ride the
-    victim's cookie).
-- **Anonymous sessions** (`middleware::csrf::anonymous_session`). Logged-out
+    an ambient cookie keeps its token requirement. Only `ClientLogin` is skipped
+    (suffix match, since it is also mounted under `/api/greader.php`) — a forged
+    call needs the attacker's own credentials, and login-CSRF is caught by the
+    first line.
+  - Requests with **no** (valid) session cookie pass (a forged action must ride
+    the victim's cookie).
+- **Anonymous sessions** (`middleware.AnonymousSession`). Logged-out
   visitors to HTML pages get a signed `session_token` with no `session` row
-  (unauthenticated) plus its `csrf_token`, so login/register forms carry a
-  token. Layered inside `forward_auth` (a real session's `Set-Cookie` wins);
-  skipped for `/api`, `/static`, `/favicon`, `/health`, and GReader prefixes to
-  avoid cookie-poisoning shared caches.
+  (unauthenticated) plus its `csrf_token`, so login forms carry a token.
+  Layered inside `ForwardAuth` (a real session's `Set-Cookie` wins); skipped for
+  cacheable assets and machine APIs to avoid cookie-poisoning shared caches.
 - **Keeping cookie names in step.** Browsers may hold both `csrf_token` and
   `__Host-csrf_token` (on `Secure` deployments). Rules:
-  - `csrf.js` prefers `__Host-`, mirroring `session_token_from_jar`.
-  - `anonymous_session` validates the cookie against
-    `derive_csrf(secret, session_token)`, re-mints on mismatch, and expires the
+  - `csrf.js` prefers `__Host-`; `Cookies.SessionToken` tries the `__Host-` name
+    first and then the plain one, so flipping `RDRS_COOKIE_SECURE` logs no one
+    out.
+  - `AnonymousSession` validates the cookie against
+    `DeriveCSRF(secret, session_token)`, re-mints on mismatch, and expires the
     other name.
-  - Both guards `warn!` on rejection (`csrf.cross_site`, `csrf.mismatch` — the
-    latter identifies the session only by `secret::audit_id`).
-  - Self-healing is required: logout itself is behind `csrf_guard`.
+  - Both guards log a warning on rejection (`csrf.cross_site`, `csrf.mismatch` —
+    the latter identifies the session only by `secret.AuditID`).
+  - Self-healing is required: logout itself is behind `CSRFGuard`.
 
 ### Response security headers
 
-`middleware::security_headers` has two layers, both **outermost** in
-`create_router`, both leaving existing headers alone (reverse proxy wins):
+`middleware.SecurityHeaders` and `middleware.HSTS` wrap the router just inside
+`RequestLog`, and both leave existing headers alone (reverse proxy wins):
 
-- **`set_security_headers`** — always: `Content-Security-Policy`,
+- **`SecurityHeaders`** — always: `Content-Security-Policy`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`,
   `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`. Fixed in
   source.
-- **`set_hsts`** — `Strict-Transport-Security` only when HTTPS per `Config`
-  (`Config::hsts_header_value`).
+- **`HSTS`** — `Strict-Transport-Security`, installed only when HTTPS per
+  `Config` (`Config.HSTSHeader`: `RDRS_HSTS`, `RDRS_HSTS_MAX_AGE`,
+  `RDRS_HSTS_INCLUDE_SUBDOMAINS`). Never includes `preload`.
 
-Outermost because `forward_auth` and both CSRF guards return early on several
-paths (session-minting redirect, "not authorized" redirect, 403s). No path skip
-list — `/static`, `/health` and the image proxy get them too.
+Outside the core stack because `ForwardAuth` and both CSRF guards return early
+on several paths (session-minting redirect, "not authorized" redirect, 403s).
+No path skip list — `/static`, `/health`, the image proxy and the SSE stream
+get them too.
 
 **Strict CSP:**
 
@@ -854,39 +893,36 @@ base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 ```
 
 No `'unsafe-inline'`: **no inline `<script>`, `on*=` attributes, `style=`
-attributes, or inline `<style>`.** These fail silently in the browser, so a unit
-test scans every template *and* `static/js/` file (`innerHTML` and shadow roots
-are policed too).
+attributes, or inline `<style>`.** These fail silently in the browser, so a
+unit test (`internal/views/views_test.go`) scans every rendered view for inline
+handlers and styles, and a runtime audit covers the rest.
 
 Script replacements:
-- Page-specific script → module in `static/js/`, registered in
-  `handlers::static_assets::FILES`, loaded via `src`.
+- Page-specific script → module in `static/js/`, loaded via `src`.
 - `onsubmit="return confirm(…)"` → `data-confirm="…"` on the `<form>`.
 - `onchange="this.form.submit()"` → `data-submit-on-change` on the `<select>`.
 - `onerror="this.style.display='none'"` → `data-hide-on-error` on the `<img>`.
 
-Listeners live in `static/js/behaviors.js` (from `app_layout.html`); flash
-dismiss is in `components/rdrs-flash.js` (from `base.html`, so `/login` and
-`/register` get it). `<script type="application/json">` blocks are unaffected.
+Listeners live in `static/js/behaviors.js`; flash dismiss is in
+`components/rdrs-flash.js`. `<script type="application/json">` blocks are
+unaffected.
 
 Style replacements:
 - Static declaration → class in `static/css/app.css` (`.form-inline`, `.text-xs`, …).
 - `style="display:none"` toggled by JS → `hidden` attribute / `.hidden` property.
-- Per-datum geometry on /statistics → `pct-N` class (0–100 scale at the end of
-  `app.css`) chosen by `bar_percent` in `handlers::pages`; `--pct` drives
-  `height` in `.stats-bar` and `width` in `.stats-progress-fill`.
+- Per-datum geometry on /statistics → a `pct-N` class (0–100 scale at the end of
+  `app.css`); `--pct` drives `height` in `.stats-bar` and `width` in
+  `.stats-progress-fill`.
 - Shadow-DOM styles → constructable stylesheet via `adoptedStyleSheets` (see
   `components/rdrs-kb-help.js`).
-- `_icon_sprite.html` → SVG presentation attributes (`width`/`height`/`overflow`),
-  so it collapses without a stylesheet.
 
 Setting `element.style` from script is fine — CSP polices markup, not the CSSOM.
 
-**Runtime audit:** `e2e/src/bin/csp_audit.rs` walks the app in Chromium and
-fails on any `securitypolicyviolation` (runtime markup, shadow-root `<style>`,
+**Runtime audit:** `e2e/cmd/cspaudit` walks the app in Chromium and fails on
+any `securitypolicyviolation` (runtime markup, shadow-root `<style>`,
 cross-origin `@import`/fonts, unexpected `img-src`). It ends with a **positive
-control** (a planted `style=` that must be blocked). CI runs it in the
-`e2e` job; locally `cd e2e && cargo run --bin csp-audit`.
+control** (a planted `style=` that must be blocked). CI runs it; locally
+`cd e2e && go run -mod=vendor ./cmd/cspaudit`.
 
 Deliberate omissions: **no `Cross-Origin-Resource-Policy`** (would block
 absolute `/api/proxy/image` URLs in native GReader webviews); **no
@@ -896,62 +932,69 @@ passkeys need). `Referrer-Policy` is `strict-origin-when-cross-origin`, not
 
 ### Password Hashing
 
-Argon2id: 19 MiB memory, 2 iterations, parallelism 1.
+Argon2id (`golang.org/x/crypto`): 19 MiB memory, 2 iterations, parallelism 1.
+Verification reads the cost from the stored PHC string and refuses one whose
+memory would exhaust the process; the `"!"` sentinel never verifies.
+`RDRS_FAST_HASH` selects minimal cost for tests and CI; never set it in
+production.
 
 ### Password Policy
 
-`auth::validate_password_strength` gates every *new* password (registration,
-change); existing passwords are never re-checked or force-rotated.
+`auth.ValidatePasswordStrength` gates every *new* password (setup, change,
+invite redemption); existing passwords are never re-checked or force-rotated.
 
 1. **Length** 15–128 **characters** (not bytes). 15 is NIST SP800-63B's floor
    without a second factor. Over-long passwords are rejected, never truncated.
-2. **zxcvbn** score ≥ 3 (of 0–4), with the username as `user_input`.
+2. **zxcvbn** score ≥ 3 (of 0–4), with the username as `user_input`
+   (`internal/zxcvbn`, a rune-indexed fork that keeps the verdicts of the
+   earlier Rust crate).
 
 No breached-password blocklist: common-password lists are almost entirely
 shorter than 15 characters, and zxcvbn catches long structured ones
 (`passwordpassword`). Revisit if a second factor lowers the minimum to 8.
 
-zxcvbn costs ~86 µs typically, ~79 ms at 128 characters, so both call sites run
-it **behind** the rate limiter. Only the pass/fail gates; the guess count is
-never shown.
+zxcvbn is expensive on long input, so call sites run it **behind** the rate
+limiter. Only the pass/fail gates; the guess count is never shown.
 
 ### Session Management
 
 - Sliding expiry: 7-day TTL, extended when less than half remains; absolute cap
-  90 days from creation.
+  90 days from creation (`models.SessionExpiryDays`, `SessionAbsoluteMaxDays`).
 - Token rotation (OWASP "Renewal Timeout") rides the same trigger (~3.5-day
-  token life). The extractor requests it (`middleware::auth::RotationSlot`);
-  `slide_session_cookie` performs it on the way out, skipping publicly
-  cacheable responses (e.g. the feed-icon route) where the new cookie wouldn't
-  reach the client. `rotate_token` matches on the old token, so concurrent
-  requests can't chain rotations.
-- The old token stays valid for `ROTATION_GRACE_SECONDS` (60 s) via
-  `session.previous_token`, handled in `find_by_token`; `delete_session` and
-  `delete_user_sessions_except` match it too.
+  token life). Authentication asks for it (`auth.RequestRotation`);
+  `SlideSession` performs it on the way out, skipping publicly cacheable
+  responses (e.g. the feed-icon route) where the new cookie wouldn't reach the
+  client. Rotation matches on the old token, so concurrent requests can't
+  chain rotations.
+- The old token stays valid for `RotationGrace` (60 s) via
+  `session.previous_token`; session deletion matches it too.
 - Cookies: `HttpOnly`, `SameSite=Lax`, `Max-Age` = absolute cap. `Secure` from
-  `Config::cookie_secure` (`RDRS_PUBLIC_BASE_URL` scheme, overridable via
-  `RDRS_COOKIE_SECURE`). All login paths use
-  `middleware::auth::build_session_cookie`.
+  `Config.CookieSecure` (`RDRS_PUBLIC_BASE_URL` scheme, overridable via
+  `RDRS_COOKIE_SECURE`); under `Secure` the names carry the `__Host-` prefix.
+  All login paths build the cookie through `auth.Cookies.Session`.
 - **Re-authentication** (OWASP "Reauthentication After Risk Events"):
   - `session.last_authenticated_at` records the last credential proof;
-    `middleware::auth::RecentlyAuthenticated` requires it within
-    `REAUTH_WINDOW_MINUTES` (5). Missing counts as stale.
+    `Authenticator.RecentlyAuthenticated` requires it within `ReauthWindow`
+    (5 minutes). Missing counts as stale.
   - Guards passkey registration (at ceremony *start*, since challenges are
     single-use) and removal — a password change doesn't revoke passkeys.
-  - Guards admin actions on other accounts: promote/demote, disable/enable,
-    delete, start masquerade (`handlers::admin::require_recent_authentication`).
-    Ending a masquerade is **not** guarded (the demanded password would be the
-    impersonated account's; it's a de-escalation anyway).
-  - `POST /api/session/reauth` reopens the window, sharing the `PasswordChange`
-    rate-limit budget. `POST /admin/reauth` is its form twin for the no-JS admin
-    panel (inline confirmation form; flash + redirect on refusal). While
-    masquerading it verifies the *original* admin's password
-    (`session.original_user_id`).
+  - Guards admin actions on other accounts (`needsRecentAuthentication` in
+    `server/admin.go`). Ending a masquerade is **not** guarded (the demanded
+    password would be the impersonated account's; it's a de-escalation anyway).
+  - `POST /api/session/reauth` reopens the window, sharing the
+    `password change` rate-limit budget. `POST /admin/reauth` is its form twin
+    for the no-JS admin panel. While masquerading it verifies the *original*
+    admin's password (`session.original_user_id`).
   - Forward-auth sessions are exempt (identity re-asserted each request; JIT
     accounts have unverifiable hashes).
 - **Masquerade:** start and stop rotate the session token in the same `UPDATE`
   that swaps `user_id` (privilege change), and reissue **both** session and
   CSRF cookies (CSRF derives from the token).
+- **Audit** (`internal/audit`): session and credential lifecycle events
+  (creation, renewal, token rotation, destruction, masquerade, re-authentication,
+  passkey added/removed, invites, rate limiting, failed logins) log under
+  target `rdrs::audit`, with sessions identified only by `secret.AuditID`. A new
+  credential path must emit an audit event.
 
 ### Authentication: deliberately not done
 
@@ -965,47 +1008,50 @@ Of nine OWASP Authentication Cheat Sheet findings, these were **declined**:
   desk. A lighter alternative: a per-user "disable password login once a
   passkey is enrolled" switch.
 
-`PASSWORD_MIN_LENGTH` is 15 *because* there is no second factor; adding one
+`PasswordMinLength` is 15 *because* there is no second factor; adding one
 would allow 8 and make a breached-password blocklist worth revisiting.
 
 ### Input Sanitization
 
 - **Third-party credentials** (Linkding, Kagi) are encrypted at rest with
   `XChaCha20-Poly1305` under a key derived from `RDRS_SECRET`
-  (`secret::seal`/`secret::open`). Legacy plain JSON stays readable and is
-  sealed on next write. A *generated* `RDRS_SECRET` stores plaintext on purpose.
-  Undecryptable values are surfaced as such, not as "not configured".
-- **Flash cookie** is HMAC-signed (`secret::DOMAIN_FLASH`) by
-  `middleware::flash::sign_flash_cookies` (sign on the way out, verify on the
-  way in, so handlers need no secret). Payload is base64url so signed bytes
-  equal checked bytes. Stops sibling apps/subdomains from injecting banners.
+  (`secret.Seal`/`secret.Open`). Legacy plain JSON stays readable and is
+  sealed on next write. A *generated* `RDRS_SECRET` stores plaintext on purpose
+  (`Config.ServiceTokenKey`). Undecryptable values are surfaced as such, not as
+  "not configured".
+- **Flash cookie** is HMAC-signed (`secret.DomainFlash`) by
+  `middleware.SignFlashCookies` (sign on the way out, verify on the way in, so
+  handlers need no secret). Payload is base64url so signed bytes equal checked
+  bytes. Stops sibling apps/subdomains from injecting banners.
 - **Image proxy** serves by **sniffed magic bytes**, not origin
   `Content-Type`; `application/octet-stream` is treated as unlabelled. SVG is
   allowed (`nosniff` + CSP neutralise scripts).
-- All HTML sanitized with Ammonia.
+- All feed HTML sanitized (`internal/sanitize`); model-written summaries are
+  reduced to inline prose markup.
 - Parameterized SQL throughout, including dynamic filters.
 - **SSRF protection** on every fetch of a URL the app didn't choose
   (readability, image proxy, feed discovery, feed sync, icon fetcher, OPML
-  import), all via `services::fetch::Fetcher`, which checks:
-  - the **URL** before the request (`utils/url_validation`);
+  import), all via `fetch.Fetcher`, which checks:
+  - the **URL** before the request (`fetch.ValidateURL`);
   - **every redirect hop** (max 5);
-  - **every DNS answer** at connect time (no rebinding window).
+  - **every DNS answer** at dial time (no rebinding window).
 
   Blocked: loopback, private, link-local, CGNAT (`100.64/10`, Tailscale),
   benchmarking, multicast, reserved, IPv6 ULA/link-local, and IPv4-mapped
-  forms. Opt hosts back in with `RDRS_FETCH_ALLOW_PRIVATE_HOSTS`; non-http(s)
-  is always refused. Linkding and Kagi use their own clients (user-typed
-  addresses).
+  forms. Opt hosts back in with `RDRS_FETCH_ALLOW_PRIVATE_HOSTS` (hostnames,
+  IPs or CIDRs; a malformed entry fails startup); non-http(s) is always
+  refused. Linkding and Kagi use their own clients (user-typed addresses).
 
 ## Deployment
 
 ### Docker
 
-Multi-stage Dockerfile (~50MB, minimal attack surface, cached layers):
-1. **chef** - install cargo-chef
-2. **planner** - generate dependency recipe
-3. **builder** - compile
-4. **runtime** - distroless base
+Multi-stage Dockerfile (minimal attack surface, cached layers):
+1. **build** - `golang:bookworm`, cross-compiles a static binary
+   (`CGO_ENABLED=0`, `-mod=vendor`, `-trimpath`) on the build platform, so no
+   qemu or C toolchain; `GIT_VERSION` is stamped via `-ldflags`
+2. **runtime** - `gcr.io/distroless/static-debian12` (CA certs and tzdata, no
+   shell); `DATABASE_URL=/data/rdrs.sqlite3`, `RDRS_SERVER_BIND=0.0.0.0:8080`
 
 ### Production Considerations
 
