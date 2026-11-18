@@ -11,24 +11,6 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "cargo"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    groups:
-      cargo:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "rust-toolchain"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -40,19 +22,19 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "cargo"
-    directory: "/e2e"
+  - package-ecosystem: "gomod"
+    directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
     groups:
-      cargo:
+      gomod:
         patterns:
           - "*"
 
   - package-ecosystem: "gomod"
-    directory: "/"
+    directory: "/e2e"
     schedule:
       interval: "weekly"
     cooldown:
