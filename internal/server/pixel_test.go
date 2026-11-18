@@ -308,6 +308,7 @@ func TestTheFeedsColumnSuppressesARateItCannotStandBehind(t *testing.T) {
 	app.Login("reader")
 
 	app.Get(pixelPath(userID, entries[0]))
+	app.App.Wait()
 
 	// One open out of four is 25%, but on four entries that is noise.
 	body := app.Get("/feeds").Text()
@@ -329,6 +330,7 @@ func TestTheFeedsColumnReportsTheRateAndItsCounts(t *testing.T) {
 	for _, id := range entries[:4] {
 		app.Get(pixelPath(userID, id))
 	}
+	app.App.Wait()
 
 	// 40% of ten is a very different claim from 40% of five.
 	if body := app.Get("/feeds").Text(); !strings.Contains(body, "40% (4/10)") {
@@ -348,6 +350,7 @@ func TestTheStatisticsSectionRanksTheLeastOpenedFeedFirst(t *testing.T) {
 		app.Get(pixelPath(userID, id))
 	}
 	app.Get(pixelPath(userID, ignored[0]))
+	app.App.Wait() // opens are recorded by detached writes
 
 	body := app.Get("/statistics").Text()
 	if !strings.Contains(body, "Feeds by Open Rate") || !strings.Contains(body, "Tracked since") {

@@ -463,6 +463,7 @@ func TestTheNavigationFallbackCarriesTheUnreadTotal(t *testing.T) {
 	}
 	// Read it through the app: a direct write leaves the sidebar cache stale.
 	wantStatus(t, postEntryAction(app, fmt.Sprintf("/entries/%d/read", entryID), renderedCSRF(t, page)), http.StatusSeeOther)
+	app.App.Wait() // the read is a detached write
 	if strings.Contains(app.Get("/").Text(), "nav-fallback-count") {
 		t.Error("an empty inbox shows no badge at all")
 	}
