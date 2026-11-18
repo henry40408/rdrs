@@ -26,8 +26,8 @@ jobs:
       - name: Get version from git
         id: version
         run: echo "GIT_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
-      # No qemu: the Dockerfile builder is pinned to the native platform and zig
-      # cross-compiles both musl targets, so the arm64 image needs no emulation.
+      # No qemu: the Dockerfile builder is pinned to the native platform and Go
+      # cross-compiles both targets, so the arm64 image needs no emulation.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
