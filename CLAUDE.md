@@ -40,9 +40,11 @@ when a command should not touch the network (CI does).
   pass it. Never pass `--test-cpu` either: it builds a single `-cpu 2` argument,
   every mutant's `go test` fails and counts as killed, and the gate passes
   vacuously. Limit CPUs with `GOMAXPROCS=2 ... unleash --workers 2`.
-  CI splits the module into six `mutation-shard (<name>)` matrix jobs on a push
-  to `main` (server-core, server-entries, server-feeds-greader, models, content,
-  misc), 390-820 mutants each; the `mutation` job `needs` all of them and fails
+  CI splits the module into seven `mutation-shard (<name>)` matrix jobs on a push
+  to `main` (server-accounts, server-pages, server-entries,
+  server-feeds-greader, models, content, misc), 250-820 mutants each, 5-41
+  minutes on a runner (an `internal/server` mutant takes 5-6 s, one elsewhere
+  under 1 s); the `mutation` job `needs` all of them and fails
   if any shard fails or is cancelled, so branch protection names only
   `mutation`. `unleash` takes one path, so a shard runs `.` with an
   `--exclude-files` regexp for everything outside it (RE2 has no lookahead, so
