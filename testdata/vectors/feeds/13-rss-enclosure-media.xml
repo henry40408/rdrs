@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Podcast</title><link>https://pod.example/</link><description>d</description>
+<item><title>Ep1</title><guid>ep1</guid><link>https://pod.example/ep1</link><comments>https://pod.example/ep1#c</comments>
+<enclosure url="https://pod.example/ep1.mp3" length="123" type="audio/mpeg"/>
+<media:content url="https://pod.example/ep1.jpg" type="image/jpeg"><media:description>media desc</media:description></media:content>
+<media:thumbnail url="https://pod.example/t.jpg"/></item>
+<item><title>Ep2</title><guid>ep2</guid><comments>https://pod.example/ep2#c</comments></item>
+<item><title>Ep3</title><guid>ep3</guid><link>https://pod.example/ep3</link><link>https://pod.example/ep3-b</link></item>
+</channel></rss>

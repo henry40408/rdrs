@@ -1,0 +1,18 @@
+[
+  {
+    "proxy_absolute": "https://rdrs.example/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=ctPtoMZh_G0",
+    "proxy_referrer": "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=uZi283Prf4E&r=aHR0cHM6Ly9yZWYuZXhhbXBsZS8",
+    "proxy_relative": "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=ctPtoMZh_G0",
+    "sign": "ctPtoMZh_G0",
+    "sign_referrer": "uZi283Prf4E",
+    "url": "https://example.com/a.png"
+  },
+  {
+    "proxy_absolute": "https://rdrs.example/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZz94PTEmeT0y&s=yRMxD1FuTLc",
+    "proxy_referrer": "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZz94PTEmeT0y&s=mIwC6fLS4oU&r=aHR0cHM6Ly9yZWYuZXhhbXBsZS8",
+    "proxy_relative": "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZz94PTEmeT0y&s=yRMxD1FuTLc",
+    "sign": "yRMxD1FuTLc",
+    "sign_referrer": "mIwC6fLS4oU",
+    "url": "https://example.com/a.png?x=1&y=2"
+  }
+]

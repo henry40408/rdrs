@@ -1,0 +1,59 @@
+{
+  "categories": [
+    {
+      "id": 1,
+      "name": "Tech"
+    },
+    {
+      "id": 2,
+      "name": "News &amp; Views"
+    },
+    {
+      "id": 3,
+      "name": "Empty"
+    },
+    {
+      "id": 4,
+      "name": "Q\"uote's <b>"
+    }
+  ],
+  "empty_output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n<head>\n<title>RDRS Subscriptions</title>\n</head>\n<body>\n</body>\n</opml>",
+  "feeds": [
+    {
+      "category_id": 1,
+      "id": 1,
+      "site_url": "https://a.example/",
+      "title": "A Feed",
+      "url": "https://a.example/feed.xml"
+    },
+    {
+      "category_id": 1,
+      "id": 2,
+      "site_url": null,
+      "title": null,
+      "url": "https://b.example/rss?x=1&y=2"
+    },
+    {
+      "category_id": 2,
+      "id": 3,
+      "site_url": "https://c.example/?a=1&b=2",
+      "title": "C &amp; D",
+      "url": "https://c.example/atom"
+    },
+    {
+      "category_id": 4,
+      "id": 4,
+      "site_url": null,
+      "title": "It's \"quoted\" <tag>",
+      "url": "https://d.example/\"q\""
+    },
+    {
+      "category_id": 2,
+      "id": 5,
+      "site_url": null,
+      "title": "日本語",
+      "url": "https://e.example/日本語"
+    }
+  ],
+  "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n<head>\n<title>RDRS Subscriptions</title>\n</head>\n<body>\n<outline text=\"Tech\" title=\"Tech\">\n<outline type=\"rss\" text=\"A Feed\" title=\"A Feed\" xmlUrl=\"https://a.example/feed.xml\" htmlUrl=\"https://a.example/\"/>\n<outline type=\"rss\" text=\"https://b.example/rss?x=1&amp;y=2\" title=\"https://b.example/rss?x=1&amp;y=2\" xmlUrl=\"https://b.example/rss?x=1&amp;y=2\"/>\n</outline>\n<outline text=\"News &amp; Views\" title=\"News &amp; Views\">\n<outline type=\"rss\" text=\"C &amp; D\" title=\"C &amp; D\" xmlUrl=\"https://c.example/atom\" htmlUrl=\"https://c.example/?a=1&amp;b=2\"/>\n<outline type=\"rss\" text=\"日本語\" title=\"日本語\" xmlUrl=\"https://e.example/日本語\"/>\n</outline>\n<outline text=\"Q&quot;uote&apos;s &lt;b&gt;\" title=\"Q&quot;uote&apos;s &lt;b&gt;\">\n<outline type=\"rss\" text=\"It&apos;s &quot;quoted&quot; &lt;tag&gt;\" title=\"It&apos;s &quot;quoted&quot; &lt;tag&gt;\" xmlUrl=\"https://d.example/&quot;q&quot;\"/>\n</outline>\n</body>\n</opml>"
+}

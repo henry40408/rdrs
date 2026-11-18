@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<rss version="2.0"><channel><title>No Guid</title><link>https://noguid.example/</link><description>d</description>
+<item><title>Has link and title</title><link>https://noguid.example/a</link><description>a</description></item>
+<item><title>Same title other link</title><link>https://noguid.example/b</link><description>b</description></item>
+<item><link>https://noguid.example/c</link><description>only link</description></item>
+<item><title>Only title</title><description>only title</description></item>
+<item><description>nothing but a description</description></item>
+<item><title>日本語のタイトル</title><link>https://noguid.example/日本語</link></item>
+<item><title>  padded  </title><link> https://noguid.example/pad </link></item>
+</channel></rss>

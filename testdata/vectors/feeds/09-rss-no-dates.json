@@ -1,0 +1,36 @@
+{
+  "description": "d",
+  "entries": [
+    {
+      "author": null,
+      "content": null,
+      "guid": "a",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "A",
+      "updated": null
+    },
+    {
+      "author": null,
+      "content": null,
+      "guid": "b",
+      "link": null,
+      "links": [],
+      "published": null,
+      "summary": null,
+      "title": "B",
+      "updated": null
+    }
+  ],
+  "feed_type": "RSS2",
+  "icon": null,
+  "id": "399b96515ca98c3b4b93937c6a64b156",
+  "links": [
+    "https://nodate.example/"
+  ],
+  "logo": null,
+  "title": "Dateless",
+  "updated": null
+}

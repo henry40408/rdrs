@@ -1,0 +1,12 @@
+[
+  {
+    "category": "Imported Category",
+    "feeds": [
+      {
+        "html_url": "https://example.com/",
+        "title": "Imported Feed",
+        "xml_url": "https://example.com/imported-feed.xml"
+      }
+    ]
+  }
+]

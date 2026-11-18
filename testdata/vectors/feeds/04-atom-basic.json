@@ -1,0 +1,54 @@
+{
+  "description": "An atom blog",
+  "entries": [
+    {
+      "author": "Dana",
+      "content": "<p>Atom <b>html</b></p>",
+      "guid": "urn:uuid:entry-1",
+      "link": "https://atom.example/1",
+      "links": [
+        "https://atom.example/1"
+      ],
+      "published": "2024-03-04T00:00:00Z",
+      "summary": "Atom summary",
+      "title": "Atom one",
+      "updated": "2024-03-04T09:00:00Z"
+    },
+    {
+      "author": null,
+      "content": "<i>only summary</i>",
+      "guid": "  urn:uuid:entry-2  ",
+      "link": "https://atom.example/2",
+      "links": [
+        "https://atom.example/2"
+      ],
+      "published": null,
+      "summary": "<i>only summary</i>",
+      "title": "Atom two",
+      "updated": "2024-03-03T09:00:00.123Z"
+    },
+    {
+      "author": "Erin",
+      "content": "plain text content",
+      "guid": "urn:uuid:entry-3",
+      "link": "https://atom.example/3",
+      "links": [
+        "https://atom.example/3"
+      ],
+      "published": null,
+      "summary": null,
+      "title": "Atom three",
+      "updated": null
+    }
+  ],
+  "feed_type": "Atom",
+  "icon": "https://atom.example/icon.png",
+  "id": "urn:uuid:feed-1",
+  "links": [
+    "https://atom.example/",
+    "https://atom.example/feed.atom"
+  ],
+  "logo": "https://atom.example/logo.png",
+  "title": "Atom Blog",
+  "updated": "2024-03-05T10:20:30Z"
+}

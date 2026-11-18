@@ -1,0 +1,22 @@
+{
+  "hashed": [
+    {
+      "hash": "$argon2id$v=19$m=8,t=1,p=1$x5JLwwauQimzk5cbeYbZxQ$lSQz5EG6ws82qDzdL6i7zPcQpMfL7ibVP4nu7F2zXqI",
+      "password": "correct horse battery staple",
+      "rejects_other": false,
+      "verifies": true
+    },
+    {
+      "hash": "$argon2id$v=19$m=8,t=1,p=1$Kl9hT4dWy5zQFteTxq6hEA$Zqw9X9jpZrAZg8xZO+npSzJ7Yz83Q2rbcoH1UlIaV0w",
+      "password": "日本語パスワード-15chars",
+      "rejects_other": false,
+      "verifies": true
+    },
+    {
+      "hash": "$argon2id$v=19$m=8,t=1,p=1$8vWoLlwJ4vpJRRdo/THIxA$GXzq3Rsd8VeROZv0RFx1f0/KhuSmv/OXShDrXv6Q5oU",
+      "password": "",
+      "rejects_other": false,
+      "verifies": true
+    }
+  ]
+}

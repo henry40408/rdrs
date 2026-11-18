@@ -1,0 +1,13 @@
+version = "2"
+
+[linters]
+enable = [
+'bidichk', # Check for dangerous unicode characters sequences.
+'modernize', # Provided by Go that modernizes the codebase.
+'testifylint', # Enforce good and correct usage of testify package.
+'unparam', # Find unused parameters.
+'prealloc' # Detects where a loop can be pre-allocated.
+]
+
+[linters.settings.errcheck]
+exclude-functions = [ "(io.ReadCloser).Close", "(*os.File).Close" ]

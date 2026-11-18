@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:xhtml="http://www.w3.org/1999/xhtml"><title type="html">&lt;b&gt;Html&lt;/b&gt; title</title><id>x</id><updated>2024-01-01T00:00:00Z</updated>
+<entry><title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">XHTML <b>title</b></div></title><id>x1</id><updated>2024-01-01T00:00:00Z</updated>
+<content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Para <em>one</em></p></div></content></entry>
+<entry><title>Src content</title><id>x2</id><updated>2024-01-02T00:00:00Z</updated><content type="text/html" src="https://x.example/body"/></entry>
+</feed>

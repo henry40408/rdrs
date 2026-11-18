@@ -1,0 +1,198 @@
+{
+  "postgres": [
+    {
+      "description": "initial",
+      "file": "0001_initial.sql",
+      "sha384": "e22cad0c27ef5baeb8dd5054a0c3422f41bbb364e550df387bca3d711034a9066e84d6974bb7f06638cadf49b4c535fb",
+      "version": 1
+    },
+    {
+      "description": "add session metadata",
+      "file": "0002_add_session_metadata.sql",
+      "sha384": "0238c5b4be8e96c80294e58fda81895af89de66bf972a19651b4836fc14019474e28b5afc9a5c94357e85adea948f782",
+      "version": 2
+    },
+    {
+      "description": "add api token",
+      "file": "0003_add_api_token.sql",
+      "sha384": "18456e9d355a550cec2c8294155809f697a7153a131eb3eebe16ebb0906d1e9c9aeac11c5ccc27d0c9924175ea9ba0b0",
+      "version": 3
+    },
+    {
+      "description": "add session token rotation",
+      "file": "0004_add_session_token_rotation.sql",
+      "sha384": "ed2565b9a115fcab71a1cac11ac3f5c992700a0857929b1f4e8e8966fd57a5d2fee67760de07b6e6212f011deba8ae05",
+      "version": 4
+    },
+    {
+      "description": "add session last authenticated at",
+      "file": "0005_add_session_last_authenticated_at.sql",
+      "sha384": "70051ee9205781f6af6c078e49df518101291b098fc59033b05ea8d1932b85d48e2fdfe895aa4ec2c769318bccbabc41",
+      "version": 5
+    },
+    {
+      "description": "add user invite",
+      "file": "0006_add_user_invite.sql",
+      "sha384": "587c978bdd8f08689f0a7ffd187f3e569b5b4c03257c9788c40d5bc5c091d152f6740f11b2485dc3c24e2935e380cce0",
+      "version": 6
+    },
+    {
+      "description": "add sidebar preferences",
+      "file": "0007_add_sidebar_preferences.sql",
+      "sha384": "a2874132ba50eba90e211a25d830b7c6e1f4390286a3628053c6722f267d82caa6bcf5f2d5152c64cd120711f2623054",
+      "version": 7
+    },
+    {
+      "description": "add entry full content",
+      "file": "0008_add_entry_full_content.sql",
+      "sha384": "7a7c7c244df6b8493b2c59ee4eb148d61ad7a20ce886d39357dbc6f0595b6adafeac5b59d6d4919ae50387465157ca85",
+      "version": 8
+    },
+    {
+      "description": "add offline keep",
+      "file": "0009_add_offline_keep.sql",
+      "sha384": "b989d28f2fc21c1cf72a6585f8782a2751c9af8287a7007cb51b3a4bb46165fa013ede0f4aee08ca2c66ff0807a6aab3",
+      "version": 9
+    },
+    {
+      "description": "add pixel tracking",
+      "file": "0010_add_pixel_tracking.sql",
+      "sha384": "ffc1863a2baeff7bd3b5312ba5ac79e45a4cc58a9073f66573985f0ee6f1099e3526dc393b2643e14bf22cfc93731da5",
+      "version": 10
+    },
+    {
+      "description": "add entry feed read index",
+      "file": "0011_add_entry_feed_read_index.sql",
+      "sha384": "8b6fa0923f208556f4a6f4a37774e676f30fb0881d4574e731ad52fd1fdf7c9e9b105dc335e5a6a4a298a4eb49493b58",
+      "version": 11
+    },
+    {
+      "description": "add entry feed read at index",
+      "file": "0012_add_entry_feed_read_at_index.sql",
+      "sha384": "9260ccd66bedbf8bfc3cadf8487647f11de33516dd5f6086115cd50c8d16ec806d5a9c927ca1ca8baa3b524c663ccf5d",
+      "version": 12
+    },
+    {
+      "description": "add entry feed starred index",
+      "file": "0013_add_entry_feed_starred_index.sql",
+      "sha384": "c8a962ec61388a2d74112ca51a72a118606a36efe671f295280ca726d5c29ecf64e82442f9f8d52d0f191b1f1cf72a42",
+      "version": 13
+    },
+    {
+      "description": "add entry feed created at index",
+      "file": "0014_add_entry_feed_created_at_index.sql",
+      "sha384": "bd7de03c589ca27987814b5799f0c428e2ce443e54c83d102389bb3141c016f6d00917299524dd6cb71421a421fa783f",
+      "version": 14
+    },
+    {
+      "description": "add entry unread feed sort index",
+      "file": "0015_add_entry_unread_feed_sort_index.sql",
+      "sha384": "28b4455e487fba09323459a2ed481d946957af3cdf1609a1a4abba684ba37f940a5b1881604e1dd5de44136d1fa88bea",
+      "version": 15
+    },
+    {
+      "description": "add user timezone",
+      "file": "0016_add_user_timezone.sql",
+      "sha384": "ed1b75670c856ae6f37a0455c3d399f30e1408b53614fbf1e1565d53b6ea828b2b619cf41b1be2e7f34be1c211165550",
+      "version": 16
+    }
+  ],
+  "sqlite": [
+    {
+      "description": "initial",
+      "file": "0001_initial.sql",
+      "sha384": "b651e9761d64108da22169a15bebc03b8911f0b78007bd7d177b072bf554744040933b73393be9fd5a58f98d4666d3bd",
+      "version": 1
+    },
+    {
+      "description": "add session metadata",
+      "file": "0002_add_session_metadata.sql",
+      "sha384": "7d5f90d8baf5a250620ce9e62b088a9dd4660188f0defa47015dac861c0d668e8c0ef0d567cf422bb0cb154ea7272772",
+      "version": 2
+    },
+    {
+      "description": "add api token",
+      "file": "0003_add_api_token.sql",
+      "sha384": "a670ec6f86470b0486b47d838a4b68b7240b147abd9d134d14a67b6fd4953cb39f3ee533e76f28e4a3aed70779045752",
+      "version": 3
+    },
+    {
+      "description": "add session token rotation",
+      "file": "0004_add_session_token_rotation.sql",
+      "sha384": "6710a9893cb056f4c94b99a7fa24457dd2e244bc04de37d306511e0efa3de428293d48eded04f6f0af63d4917b061d48",
+      "version": 4
+    },
+    {
+      "description": "add session last authenticated at",
+      "file": "0005_add_session_last_authenticated_at.sql",
+      "sha384": "181177d4c04aaf4ae967cb6b6a6f7913cbe8b9c29faa83ee15e1f224314a9c4278fe1e07df6d408f97bed805d94a62b3",
+      "version": 5
+    },
+    {
+      "description": "add user invite",
+      "file": "0006_add_user_invite.sql",
+      "sha384": "43c817958862fb029eeda3170abe586349255ecfee47a1f002810e8707c423fa866fe0ad36ccb295d6f4f5f2f822a6fc",
+      "version": 6
+    },
+    {
+      "description": "add sidebar preferences",
+      "file": "0007_add_sidebar_preferences.sql",
+      "sha384": "dc1439be635bcd24269a3dc66ae3dc96a6d8a7444d215c459539e2ade0f807ad2c7afba43569cbfcf9359f45e6aa34e7",
+      "version": 7
+    },
+    {
+      "description": "add entry full content",
+      "file": "0008_add_entry_full_content.sql",
+      "sha384": "7a7c7c244df6b8493b2c59ee4eb148d61ad7a20ce886d39357dbc6f0595b6adafeac5b59d6d4919ae50387465157ca85",
+      "version": 8
+    },
+    {
+      "description": "add offline keep",
+      "file": "0009_add_offline_keep.sql",
+      "sha384": "0c19a7cf554a98cf81015f05afb233c32757b0f9e468929529f0ab602a501e4d01353e9de7d6df3348c95513b07fa048",
+      "version": 9
+    },
+    {
+      "description": "add pixel tracking",
+      "file": "0010_add_pixel_tracking.sql",
+      "sha384": "6829af18694c1f2a5c19c3670129b14eabf55623ea7ee947ad3d7fada4880a066c3b67bb357b0e1231c3a91ff2ba17b8",
+      "version": 10
+    },
+    {
+      "description": "add entry feed read index",
+      "file": "0011_add_entry_feed_read_index.sql",
+      "sha384": "5cfb74fffcea73ccbb806516fe67798a993d5830618432b6d511e664281e4229f26b4ec1ec92bd15e0e2567eee97847b",
+      "version": 11
+    },
+    {
+      "description": "add entry feed read at index",
+      "file": "0012_add_entry_feed_read_at_index.sql",
+      "sha384": "f777cbb938da5b808ed0236e7b4ec1f5604a6fc417105be81eb7b0d819fe094114cd0a421afc670eeeca4d4a4649a42b",
+      "version": 12
+    },
+    {
+      "description": "add entry feed starred index",
+      "file": "0013_add_entry_feed_starred_index.sql",
+      "sha384": "54e246659b759027c1c09ae70a4304a24493c21d5217df7a1c15014aa7b0fe58f6c67801fce264ed6914e9007bdc8c86",
+      "version": 13
+    },
+    {
+      "description": "add entry feed created at index",
+      "file": "0014_add_entry_feed_created_at_index.sql",
+      "sha384": "bd7de03c589ca27987814b5799f0c428e2ce443e54c83d102389bb3141c016f6d00917299524dd6cb71421a421fa783f",
+      "version": 14
+    },
+    {
+      "description": "add entry unread feed sort index",
+      "file": "0015_add_entry_unread_feed_sort_index.sql",
+      "sha384": "1d945e41a6aec77ec33bfb48b9c8d3169fec13aeb1de233907da13379fb0fbf449ba1583b72cacf86c12cf18ea2e3ac8",
+      "version": 15
+    },
+    {
+      "description": "add user timezone",
+      "file": "0016_add_user_timezone.sql",
+      "sha384": "ed1b75670c856ae6f37a0455c3d399f30e1408b53614fbf1e1565d53b6ea828b2b619cf41b1be2e7f34be1c211165550",
+      "version": 16
+    }
+  ]
+}

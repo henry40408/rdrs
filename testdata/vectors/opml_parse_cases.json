@@ -1,0 +1,119 @@
+[
+  {
+    "input": "<opml version=\"2.0\"><body><outline text=\"Cat\"><outline type=\"rss\" text=\"F\" xmlUrl=\"https://x/1\"/></outline></body></opml>",
+    "outlines": [
+      {
+        "category": "Cat",
+        "feeds": [
+          {
+            "html_url": null,
+            "title": "F",
+            "xml_url": "https://x/1"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "input": "<opml><body><outline type=\"rss\" text=\"Top\" xmlUrl=\"https://x/top\"/></body></opml>",
+    "outlines": [
+      {
+        "category": "Uncategorized",
+        "feeds": [
+          {
+            "html_url": null,
+            "title": "Top",
+            "xml_url": "https://x/top"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "input": "<opml><body><outline text=\"A\"><outline text=\"B\"><outline type=\"rss\" text=\"F\" xmlUrl=\"https://x/n\" htmlUrl=\"https://x/\"/></outline></outline></body></opml>",
+    "outlines": [
+      {
+        "category": "B",
+        "feeds": [
+          {
+            "html_url": "https://x/",
+            "title": "F",
+            "xml_url": "https://x/n"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "input": "<opml><body><outline title=\"OnlyTitle\"><outline xmlUrl=\"https://x/notype\"/></outline></body></opml>",
+    "outlines": [
+      {
+        "category": "OnlyTitle",
+        "feeds": [
+          {
+            "html_url": null,
+            "title": null,
+            "xml_url": "https://x/notype"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "input": "<opml><body><outline text=\"Dup\"><outline xmlUrl=\"https://x/1\"/><outline xmlUrl=\"https://x/1\"/></outline><outline text=\"Dup\"><outline xmlUrl=\"https://x/2\"/></outline></body></opml>",
+    "outlines": [
+      {
+        "category": "Dup",
+        "feeds": [
+          {
+            "html_url": null,
+            "title": null,
+            "xml_url": "https://x/1"
+          },
+          {
+            "html_url": null,
+            "title": null,
+            "xml_url": "https://x/1"
+          }
+        ]
+      },
+      {
+        "category": "Dup",
+        "feeds": [
+          {
+            "html_url": null,
+            "title": null,
+            "xml_url": "https://x/2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "input": "<opml><body><outline text=\"E &amp;amp; F\"><outline text=\"T &amp;amp; U\" xmlUrl=\"https://x/?a=1&amp;amp;b=2\"/></outline></body></opml>",
+    "outlines": [
+      {
+        "category": "E &amp; F",
+        "feeds": [
+          {
+            "html_url": null,
+            "title": "T &amp; U",
+            "xml_url": "https://x/?a=1&amp;b=2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "error": "Invalid OPML format: No feeds found in OPML",
+    "input": "<opml><body></body></opml>"
+  },
+  {
+    "error": "Invalid OPML format: No feeds found in OPML",
+    "input": "not xml at all"
+  },
+  {
+    "error": "Invalid OPML format: No feeds found in OPML",
+    "input": ""
+  }
+]

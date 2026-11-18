@@ -198,6 +198,7 @@ Feature: Triage entries (star, mark-read, summarize)
     Given I have a feed "Second Feed" with 3 test entries in category "Triage Category"
     When I open the entries page for feed "Triage Feed"
     And I mark the loaded entries as read
+    And the entry list has 0 entries
     And I click the sidebar feed "Second Feed"
     Then the entry list has 3 entries
     When I mark the loaded entries as read

@@ -1,12 +1,12 @@
-# RDRS - RSS Reader in Rust
+# RDRS - RSS Reader in Go
 
-> A self-hosted RSS/Atom feed reader built with Rust.
+> A self-hosted RSS/Atom feed reader built with Go.
 
 [![CI](https://github.com/henry40408/rdrs/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/rdrs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/henry40408/rdrs/graph/badge.svg)](https://codecov.io/gh/henry40408/rdrs)
 [![Release](https://img.shields.io/github/v/release/henry40408/rdrs)](https://github.com/henry40408/rdrs/releases/latest)
 [![License](https://img.shields.io/github/license/henry40408/rdrs)](LICENSE.txt)
-[![Rust toolchain](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/henry40408/rdrs/main/rust-toolchain.toml&query=$.toolchain.channel&label=rust%20toolchain&logo=rust)](https://www.rust-lang.org/)
+[![Go version](https://img.shields.io/github/go-mod/go-version/henry40408/rdrs)](go.mod)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/rdrs)
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
 [![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
@@ -66,15 +66,15 @@ one-time setup page.
 ```bash
 git clone https://github.com/henry40408/rdrs.git
 cd rdrs
-cargo build --release
-./target/release/rdrs
+go build -o bin/rdrs ./cmd/rdrs
+./bin/rdrs
 ```
 
 Open `http://localhost:8080`. An empty database serves `/setup`, which creates
 the admin account and then closes for good — **there is no public sign-up**.
 `/setup` asks for a one-time **setup token** that rdrs prints to stderr at
 startup (`setup_token=...`), so a bot that finds a fresh public deploy cannot
-claim the admin account first. The token stays out of the structured tracing
+claim the admin account first. The token stays out of the structured
 log; if stderr is also collected (`docker logs`, journald), it appears there
 too, but is useless once setup completes.
 Others are added by an admin; see [Adding people](#adding-people).
@@ -88,7 +88,10 @@ All configuration is via environment variables.
 > - **`RDRS_` prefix:** every rdrs-specific variable gained an `RDRS_` prefix
 >   and `IMAGE_PROXY_SECRET` became `RDRS_SECRET`. Old names are not read;
 >   rdrs **refuses to start** while any is set, listing replacements.
->   `DATABASE_URL`, `RUST_LOG` and `NO_COLOR` keep their names.
+>   `DATABASE_URL` keeps its name. Log output has no colour, so `NO_COLOR` is no longer read.
+> - **`RUST_LOG` is retired:** rdrs **refuses to start** while it is set. Use
+>   `RDRS_LOG_LEVEL` (`debug`, `info`, `warn`, `error`); there is no per-module
+>   filter syntax.
 > - **No self-service registration:** rdrs **refuses to start** while
 >   `RDRS_SIGNUP_ENABLED` is set — remove it. Admins create accounts from
 >   `/admin` (see [Adding people](#adding-people)); `RDRS_MULTI_USER_ENABLED`
@@ -119,8 +122,8 @@ All configuration is via environment variables.
 | `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID |
 | `RDRS_WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin |
 | `RDRS_WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
-| `RUST_LOG` | - | Log filter (e.g. `info`, `rdrs=debug`). Unset → `error,rdrs=info`. |
-| `RDRS_LOG_FORMAT` | `full` | `full`, `compact`, `pretty`, or `json`. Also `--log-format`. |
+| `RDRS_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Environment only. |
+| `RDRS_LOG_FORMAT` | `full` | `full`, `compact`, `pretty`, or `json`. `compact` and `pretty` are aliases of `full`. Also `--log-format`. |
 | `RDRS_AUTH_PROXY_HEADER` | - | Forward-auth username header (e.g. `Remote-User`). Empty disables. |
 | `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs/IPs (e.g. `10.0.0.0/8, 192.168.1.5`) the TCP peer must be in for identity headers to be trusted. Required with `RDRS_AUTH_PROXY_HEADER`. Also used to find the real client IP for rate limiting — set it whenever rdrs is behind a reverse proxy, or all clients share one bucket. |
 | `RDRS_AUTH_PROXY_USER_CREATION` | `false` | `true` → create accounts for unknown proxy users instead of redirecting to `/login`. |
@@ -139,21 +142,21 @@ All configuration is via environment variables.
 Every log line has an `event` field (`domain.verb`: `feed.sync_failed`,
 `retention.pruned`, `summary.worker_started`, `shutdown.signal`) and typed
 value fields (`feed_id`, `entry_id`, `user_id`, `bucket`, `count`, `error`, …);
-messages are static. Under `RDRS_LOG_FORMAT=json`:
+messages are static. Output is the standard `log/slog` format: `key=value` text
+(`full`, `compact` and `pretty` are the same text layout) or, under
+`RDRS_LOG_FORMAT=json`, one JSON object per line:
 
 ```json
-{"timestamp":"…","level":"WARN","target":"rdrs::services::feed_sync",
- "fields":{"message":"feed sync failed","event":"feed.sync_failed",
-           "feed_id":42,"error":"connection timed out"}}
+{"time":"…","level":"WARN","msg":"feed sync failed","event":"feed.sync_failed",
+ "feed_id":42,"error":"connection timed out"}
 ```
 
-`target` is the module path, e.g. `RUST_LOG=rdrs::services::feed_sync=debug`.
-`tests/logging_test.rs` enforces that every log call sets `event` and no
-message interpolates values.
+Audit events add `target` (`rdrs::audit`). Messages are static; values go in
+typed fields.
 
 ### Request Timing
 
-`middleware/request_log.rs` logs each request once, when the response head is
+`internal/server/middleware/request_log.go` logs each request once, when the response head is
 ready, with `method`, `route`, `status`, `elapsed`, `elapsed_ms`:
 
 | Event | Level | When |
@@ -161,19 +164,17 @@ ready, with `method`, `route`, `status`, `elapsed`, `elapsed_ms`:
 | `http.request` | DEBUG | Every request. Off under the default filter. |
 | `http.slow_request` | WARN | The request took ≥ 1s. Visible by default, and carries `threshold_ms`. |
 
-- Enable all: `RUST_LOG=rdrs=debug`; just this: `RUST_LOG=rdrs=info,rdrs::middleware::request_log=debug`.
+- Enable all with `RDRS_LOG_LEVEL=debug`.
 - `route` is the matched template (`/invite/{token}`), never the raw path
   (tokens live in paths); unmatched requests log `<unmatched>`.
 - Timing excludes body streaming (so `/events` SSE looks fast).
-- DB side: `RUST_LOG=sqlx::query=debug` for every statement, `sqlx::query=warn`
-  for those over 1 s.
 
 ### Audit Logging
 
 Session creation/renewal/destruction, API-token issuance/revocation, failed
 logins, rate-limited credential attempts, and masquerade start/stop are logged
-under the `rdrs::audit` target. Isolate with `RUST_LOG=rdrs::audit=info` (or
-`RUST_LOG=rdrs=info,rdrs::audit=info`); use `RDRS_LOG_FORMAT=json` for a SIEM.
+under the `rdrs::audit` target. Filter on `"target":"rdrs::audit"` in the
+`RDRS_LOG_FORMAT=json` output (e.g. for a SIEM).
 
 Sessions are identified by `sid`: a salted HMAC-SHA256 of the token, truncated
 to 16 hex chars. The salt is `RDRS_SECRET`, so rotating it (including restarts
@@ -268,8 +269,8 @@ out and in again.
    - **PWA assets** — `/static/...`, `/favicon...`, `/apple-touch-icon.png`,
      `/sw.js`, `/offline` — for installability (the browser fetches manifest
      icons without the session). They hold no user data and RDRS already
-     serves them sessionless (`SKIP_PREFIXES` in
-     `src/middleware/forward_auth.rs`).
+     serves them sessionless (`forwardAuthSkipPrefixes` in
+     `internal/server/middleware/forwardauth.go`).
 
    Keep everything else behind SSO. Do **not** bypass `/api/feeds/{id}/icon`;
    it uses RDRS's own session check.
@@ -400,13 +401,13 @@ Multi-stage build on a distroless base; see
 
 ### Prerequisites
 
-- Rust (pinned in `rust-toolchain.toml`; rustup installs it)
-- SQLite (bundled)
+- Go (the `toolchain` line in `go.mod`; `GOTOOLCHAIN=auto` fetches it)
+- SQLite (pure Go, no C toolchain)
 
 ### Running Tests
 
 ```bash
-cargo nextest run
+go test -race ./...
 ```
 
 ### Project Structure
@@ -415,13 +416,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Tech Stack
 
-- **Web Framework**: Axum 0.8
-- **Async Runtime**: Tokio
-- **Database**: SQLite / PostgreSQL (sqlx)
-- **Templates**: maud
-- **Feed Parsing**: feed-rs
-- **HTML Sanitization**: Ammonia
-- **Content Extraction**: Readability
+- **Language**: Go (`net/http`, `log/slog`, no web framework)
+- **Database**: SQLite / PostgreSQL (`database/sql`)
+- **Templates**: Go helpers that build the markup (`internal/views`)
+- **Feed Parsing**: `internal/feedparse` (RSS, Atom, RSS 1.0, JSON Feed)
+- **HTML Sanitization**: `internal/sanitize` (allow-list)
+- **Content Extraction**: `internal/readability`
 
 ## License
 
