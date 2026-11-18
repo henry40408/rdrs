@@ -160,16 +160,24 @@ jobs:
       # "times out", which the efficacy score ignores: the job would pass
       # without testing anything.
       - run: go clean -testcache
+      # Never pass `--test-cpu`: gremlins v0.6.0 builds a single `-cpu 2`
+      # argument from it, so every mutant's `go test` fails and counts as
+      # killed, and the gate passes without testing anything. GOMAXPROCS limits
+      # the CPUs instead.
       - name: Mutate the whole module (push)
         if: github.event_name != 'pull_request'
         env:
+          GOMAXPROCS: "2"
           RDRS_FAST_HASH: "1"
         run: |
-          go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash .
+          set -o pipefail
+          go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
+            --workers 2 . 2>&1 | tee "$RUNNER_TEMP/mutation.log"
       - name: Mutate the changed lines (pull request)
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
+          GOMAXPROCS: "2"
           RDRS_FAST_HASH: "1"
         run: |
           # Stream the output so a killed runner still leaves a log. Capping
@@ -179,7 +187,7 @@ jobs:
           status=0
           set -o pipefail
           go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
-            --workers 2 --test-cpu 2 \
+            --workers 2 \
             --diff "origin/$BASE_REF" . 2>&1 | tee "$RUNNER_TEMP/mutation.log" || status=$?
           set +o pipefail
           # A diff with no mutable Go line (docs, CI only) yields zero mutants,
