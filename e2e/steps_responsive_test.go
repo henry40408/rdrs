@@ -49,10 +49,6 @@ func registerViewportSteps(sc *godog.ScenarioContext, w *world) {
 		}
 		return w.browser.SetViewport(size[0], size[1])
 	})
-	sc.Step(`^I have a feed with (\d+) test entries$`, func(count int) error {
-		_, err := w.seedNamedFeed("Mobile Feed", count)
-		return err
-	})
 	sc.Step(`^I have read entries across several days$`, func() error { return w.seedReadHistory(8) })
 	sc.Step(`^I have read entries spanning several weeks$`, func() error { return w.seedReadHistory(30) })
 }

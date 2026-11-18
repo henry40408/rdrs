@@ -377,9 +377,15 @@ func (b *Browser) ComputedStyle(selector, property string) (string, error) {
 // Rect is a box in viewport coordinates.
 type Rect struct{ X, Y, Width, Height float64 }
 
-// BoundingBox is the first displayed match's box in viewport coordinates.
+// BoundingBox is the first match's box in viewport coordinates. A match need
+// not be displayed: a control faded to opacity 0 still has a size to check.
 func (b *Browser) BoundingBox(selector string) (Rect, error) {
-	element, err := b.CSS(selector)
+	var element *Element
+	err := Eventually("an element matching `"+selector+"`", func() (bool, error) {
+		found, err := b.CSSOpt(selector)
+		element = found
+		return found != nil, err
+	})
 	if err != nil {
 		return Rect{}, err
 	}
