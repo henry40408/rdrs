@@ -39,7 +39,21 @@ when a command should not touch the network (CI does).
   gremlins v0.6.0 ignores `--threshold-efficacy` on the command line, so never
   pass it. Never pass `--test-cpu` either: it builds a single `-cpu 2` argument,
   every mutant's `go test` fails and counts as killed, and the gate passes
-  vacuously. CI limits CPUs with `GOMAXPROCS=2 ... unleash --workers 2` instead.
+  vacuously. Limit CPUs with `GOMAXPROCS=2 ... unleash --workers 2`.
+  CI splits the module into six `mutation-shard (<name>)` matrix jobs on a push
+  to `main` (server-core, server-entries, server-feeds-greader, models, content,
+  misc), 390-820 mutants each; the `mutation` job `needs` all of them and fails
+  if any shard fails or is cancelled, so branch protection names only
+  `mutation`. `unleash` takes one path, so a shard runs `.` with an
+  `--exclude-files` regexp for everything outside it (RE2 has no lookahead, so
+  the matrix lists the complement; the flag replaces `.gremlins.yaml`'s list, so
+  every entry repeats `e2e/` and `vendor/`). The slices must stay disjoint and
+  complete: check that `unleash --dry-run` over the shards sums to the
+  whole-module `Runnable` count. `internal/server` is split by file because
+  its tests are the slowest, so a new file there needs a place in the matrix.
+  Each shard must reach the 95 threshold by itself (it is not a module-wide
+  average) and uploads its log as an artifact. A pull request mutates only the
+  diff, and a shard with no mutant in it passes.
 - Benchmarks: `go test -run '^$' -bench . -benchmem -count 5 ./internal/server ./internal/sanitize`.
   `BenchmarkEntryPages` (`internal/server/bench_test.go`) measures every list
   route; compare before and after with `benchstat`. Raise `RDRS_BENCH_ENTRIES`

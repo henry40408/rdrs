@@ -136,16 +136,41 @@ jobs:
           RDRS_FAST_HASH: "1"
           TEST_DATABASE_URL: postgres://rdrs:rdrs@localhost:5432/rdrs
 
-  # Pushes to main mutate the whole module; pull requests mutate only the lines
+  # Pushes to main mutate the whole module, split into shards that run on their
+  # own runners (one 4-CPU runner needs over an hour for the whole module, and
+  # the unsharded job was killed mid-run); pull requests mutate only the lines
   # changed against the base branch. The efficacy threshold and the `e2e/` and
   # `vendor/` exclusions live in .gremlins.yaml: gremlins v0.6.0 ignores
   # `--threshold-efficacy` on the command line, so never pass it here.
-  mutation:
-    name: mutation
+  #
+  # gremlins `unleash` takes one path, so every shard runs `.` and
+  # `--exclude-files` drops the files outside its slice (RE2 has no lookahead,
+  # so each entry lists the complement). The slices are disjoint and add up to
+  # the whole module: `unleash --dry-run` on each reports 391 + 390 + 418 + 664
+  # + 822 + 781 = 3466 runnable mutants, the same as the unsharded module.
+  # `internal/server` is split by file because its tests are the slowest.
+  # `--exclude-files` replaces the list in .gremlins.yaml, so `e2e/` and
+  # `vendor/` are repeated in every entry.
+  mutation-shard:
+    name: mutation-shard (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
-    # The push run mutates the whole module; 60 minutes is the budget the other
-    # repos use. Not measured on this module yet.
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: server-core
+            exclude: '^(e2e|vendor|cmd)/|^internal/(audit|auth|cache|config|datetime|db|discovery|events|feedparse|feedsync|fetch|flash|greader|han|htmldepth|icon|imageproxy|migrate|models|opml|pixel|readability|sanitize|save|search|secret|siphash|summarize|testutil|textutil|timezone|version|views|worker|zxcvbn)/|^internal/server/(entries_query\.go|entries_rows\.go|entries\.go|entry_actions\.go|entry_api\.go|entry_fragments\.go|entry_pane\.go|mark_read\.go|media\.go|search_text\.go|search\.go|statistics\.go|feeds\.go|greader_auth\.go|greader_stream\.go|greader_subscription\.go|greader_tag\.go|greader_user\.go)|^internal/server/middleware/'
+          - name: server-entries
+            exclude: '^(e2e|vendor|cmd)/|^internal/(audit|auth|cache|config|datetime|db|discovery|events|feedparse|feedsync|fetch|flash|greader|han|htmldepth|icon|imageproxy|migrate|models|opml|pixel|readability|sanitize|save|search|secret|siphash|summarize|testutil|textutil|timezone|version|views|worker|zxcvbn)/|^internal/server/(account\.go|admin\.go|app\.go|auth_handlers\.go|categories\.go|chrome\.go|errors\.go|events\.go|httpio\.go|invite\.go|passkey\.go|page\.go|returnto\.go|routes\.go|static\.go|summarizer\.go|timefmt\.go|feeds\.go|greader_auth\.go|greader_stream\.go|greader_subscription\.go|greader_tag\.go|greader_user\.go)|^internal/server/middleware/'
+          - name: server-feeds-greader
+            exclude: '^(e2e|vendor|cmd)/|^internal/(audit|auth|cache|config|datetime|db|discovery|events|feedparse|feedsync|fetch|flash|greader|han|htmldepth|icon|imageproxy|migrate|models|opml|pixel|readability|sanitize|save|search|secret|siphash|summarize|testutil|textutil|timezone|version|views|worker|zxcvbn)/|^internal/server/(account\.go|admin\.go|app\.go|auth_handlers\.go|categories\.go|chrome\.go|errors\.go|events\.go|httpio\.go|invite\.go|passkey\.go|page\.go|returnto\.go|routes\.go|static\.go|summarizer\.go|timefmt\.go|entries_query\.go|entries_rows\.go|entries\.go|entry_actions\.go|entry_api\.go|entry_fragments\.go|entry_pane\.go|mark_read\.go|media\.go|search_text\.go|search\.go|statistics\.go)'
+          - name: models
+            exclude: '^(e2e|vendor|cmd)/|^internal/(audit|auth|cache|config|datetime|discovery|events|feedparse|feedsync|fetch|flash|greader|han|htmldepth|icon|imageproxy|opml|pixel|readability|sanitize|save|search|secret|server|siphash|summarize|testutil|textutil|timezone|version|views|worker|zxcvbn)/'
+          - name: content
+            exclude: '^(e2e|vendor|cmd)/|^internal/(audit|auth|cache|config|datetime|db|events|flash|greader|han|migrate|models|search|secret|server|siphash|summarize|testutil|textutil|timezone|version|views|worker|zxcvbn)/'
+          - name: misc
+            exclude: '^(e2e|vendor)/|^internal/(db|discovery|feedparse|feedsync|fetch|htmldepth|icon|imageproxy|migrate|models|opml|pixel|readability|sanitize|save|server)/'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -164,21 +189,23 @@ jobs:
       # argument from it, so every mutant's `go test` fails and counts as
       # killed, and the gate passes without testing anything. GOMAXPROCS limits
       # the CPUs instead.
-      - name: Mutate the whole module (push)
+      - name: Mutate the shard (push)
         if: github.event_name != 'pull_request'
         env:
           GOMAXPROCS: "2"
           RDRS_FAST_HASH: "1"
+          SHARD_EXCLUDE: ${{ matrix.shard.exclude }}
         run: |
           set -o pipefail
           go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
-            --workers 2 . 2>&1 | tee "$RUNNER_TEMP/mutation.log"
-      - name: Mutate the changed lines (pull request)
+            --workers 2 --exclude-files "$SHARD_EXCLUDE" . 2>&1 | tee "$RUNNER_TEMP/mutation.log"
+      - name: Mutate the changed lines of the shard (pull request)
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
           GOMAXPROCS: "2"
           RDRS_FAST_HASH: "1"
+          SHARD_EXCLUDE: ${{ matrix.shard.exclude }}
         run: |
           # Stream the output so a killed runner still leaves a log. Capping
           # workers and CPUs per test run keeps a whole-module diff within the
@@ -187,12 +214,13 @@ jobs:
           status=0
           set -o pipefail
           go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash \
-            --workers 2 \
+            --workers 2 --exclude-files "$SHARD_EXCLUDE" \
             --diff "origin/$BASE_REF" . 2>&1 | tee "$RUNNER_TEMP/mutation.log" || status=$?
           set +o pipefail
-          # A diff with no mutable Go line (docs, CI only) yields zero mutants,
-          # which gremlins scores as 0% and so fails the threshold. That is not
-          # a low score, so treat it as a pass.
+          # A shard whose diff has no mutable Go line (docs, CI only, or other
+          # shards' files) yields zero mutants, which gremlins scores as 0% and
+          # so fails the threshold. That is not a low score, so treat it as a
+          # pass.
           if [ "$status" -ne 0 ] \
             && grep -q '^Killed: 0, Lived: 0, Not covered: 0$' "$RUNNER_TEMP/mutation.log" \
             && grep -q '^Timed out: 0, ' "$RUNNER_TEMP/mutation.log"; then
@@ -200,6 +228,29 @@ jobs:
             exit 0
           fi
           exit "$status"
+      - name: Upload the mutation log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-${{ matrix.shard.name }}
+          path: ${{ runner.temp }}/mutation.log
+          if-no-files-found: ignore
+
+  # The one required check: branch protection names `mutation`, so shards can
+  # be added or renamed without touching it. `always()` makes it run (and fail)
+  # when a shard fails or is cancelled instead of being skipped.
+  mutation:
+    name: mutation
+    runs-on: ubuntu-latest
+    needs: mutation-shard
+    if: always()
+    steps:
+      - name: Require every shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.mutation-shard.result }}
+        run: |
+          echo "mutation shards: $SHARDS_RESULT"
+          [ "$SHARDS_RESULT" = success ]
 
   coverage:
     name: coverage
