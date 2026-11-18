@@ -246,13 +246,6 @@ func lex(input string) ([]token, error) {
 			if err != nil {
 				return nil, err
 			}
-			// A word always spans at least one rune. Without this check a lexer
-			// that stopped advancing would append tokens until memory ran out,
-			// which killed the CI runner while mutation testing flipped the
-			// word-break test.
-			if next <= k {
-				return nil, &ParseError{Position: k, Message: "Unexpected input"}
-			}
 			out = append(out, tok)
 			k = next
 		}
