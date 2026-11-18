@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/mutation-gate-shards] # TEMP: verify the push path
+    branches: [main]
   pull_request:
     branches: [main]
 
