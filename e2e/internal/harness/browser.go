@@ -159,6 +159,13 @@ func (b *Browser) SetViewport(width, height int64) error {
 	})
 }
 
+// AddInitScript runs source in every new document before the page's own
+// scripts. The page CSP does not apply to it.
+func (b *Browser) AddInitScript(source string) error {
+	_, err := chromedp.Call(b.ctx, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: source})
+	return err
+}
+
 func send[P any](b *Browser, command cdp.Command[P, cdp.Empty], params P) error {
 	_, err := chromedp.Call(b.ctx, command, params)
 	return err
