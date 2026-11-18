@@ -281,3 +281,112 @@ func TestLoadSkipsNameWithoutUnderscore(t *testing.T) {
 		t.Fatalf("got %v, %v", got, err)
 	}
 }
+
+func TestRunFailsOnClosedDatabase(t *testing.T) {
+	database := openEmpty(t)
+	if err := database.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), database); err == nil {
+		t.Fatal("expected an error from a closed database")
+	}
+}
+
+func TestLoadFailsWhenDirectoryIsMissing(t *testing.T) {
+	if _, err := load(fstest.MapFS{}, "missing"); err == nil {
+		t.Fatal("expected an error for a missing directory")
+	}
+}
+
+func TestParseRejectsNameWithoutUnderscore(t *testing.T) {
+	if _, err := parse("0001.sql", nil); err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+func applyOn(t *testing.T, database *db.DB, all []Migration) error {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := database.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	return apply(ctx, conn, database.Dialect(), all)
+}
+
+func migrationOf(t *testing.T, name, script string) Migration {
+	t.Helper()
+	m, err := parse(name, []byte(script))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestApplyRollsBackAFailingTransactionalMigration(t *testing.T) {
+	database := openEmpty(t)
+	bad := migrationOf(t, "0001_bad.sql", "CREATE TABLE half_done (id INTEGER);\nSELECT * FROM no_such_table;")
+	if err := applyOn(t, database, []Migration{bad}); err == nil {
+		t.Fatal("expected the failing script to return an error")
+	}
+	var tables int64
+	err := database.QueryRowContext(context.Background(),
+		"SELECT COUNT(*) FROM sqlite_master WHERE name = 'half_done'").Scan(&tables)
+	if err != nil || tables != 0 {
+		t.Errorf("half_done tables = %d, err = %v; want the script rolled back", tables, err)
+	}
+	if len(readApplied(t, database)) != 0 {
+		t.Error("a failed migration must not be recorded")
+	}
+}
+
+func TestApplyRunsNoTransactionMigrationAndRecordsIt(t *testing.T) {
+	database := openEmpty(t)
+	good := migrationOf(t, "0001_plain.sql", "-- no-transaction\nCREATE TABLE plain (id INTEGER);")
+	if err := applyOn(t, database, []Migration{good}); err != nil {
+		t.Fatal(err)
+	}
+	if applied := readApplied(t, database); len(applied) != 1 || !applied[0].Success {
+		t.Fatalf("applied = %+v", applied)
+	}
+}
+
+func TestApplyReportsFailingNoTransactionMigration(t *testing.T) {
+	database := openEmpty(t)
+	bad := migrationOf(t, "0001_bad.sql", "-- no-transaction\nSELECT * FROM no_such_table;")
+	if err := applyOn(t, database, []Migration{bad}); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(readApplied(t, database)) != 0 {
+		t.Error("a failed migration must not be recorded")
+	}
+}
+
+func TestApplyFailsWhenTheBookkeepingTableIsUnusable(t *testing.T) {
+	database := openEmpty(t)
+	ctx := context.Background()
+	// A table with the bookkeeping name already exists, so CREATE TABLE IF NOT EXISTS
+	// succeeds while every later read of its missing columns fails.
+	if _, err := database.ExecContext(ctx, "CREATE TABLE "+tableName+" (version TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyOn(t, database, nil); err == nil {
+		t.Fatal("expected an error reading a table without the expected columns")
+	}
+}
+
+func TestApplyScansBadChecksumColumnAsError(t *testing.T) {
+	database := openEmpty(t)
+	ctx := context.Background()
+	if _, err := database.ExecContext(ctx, "CREATE TABLE "+tableName+
+		" (version TEXT, checksum BLOB, success BOOLEAN)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO "+tableName+" VALUES ('not a number', x'00', 1)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyOn(t, database, nil); err == nil {
+		t.Fatal("expected a scan error for a non-numeric version")
+	}
+}
