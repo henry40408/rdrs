@@ -70,7 +70,7 @@ and Gherkin dependencies stay out of the shipped binary. Run `go vet` and
 - Touch-target report (not a gate): `go run -mod=vendor ./cmd/touchaudit`.
 - README screenshots: `go run -mod=vendor ./cmd/screenshots` (writes `../screenshots/`).
 - Swap benchmark (`dom-bench`): not ported. The Rust tool is
-  `e2e/src/bin/dom_bench.rs` at commit `fa0d3b0` (`git show fa0d3b0:e2e/src/bin/dom_bench.rs`);
+  `e2e/src/bin/dom_bench.rs` at commit `9aa9876` (`git show 9aa9876:e2e/src/bin/dom_bench.rs`);
   port it from there when browser-side swap performance needs a baseline again.
 
 **`.feature` files are the contract**, read as-is. New scenarios need steps in
