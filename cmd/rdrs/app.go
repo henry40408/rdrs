@@ -30,6 +30,8 @@ import (
 const (
 	// serverShutdownTimeout bounds how long open requests may finish.
 	serverShutdownTimeout = 10 * time.Second
+	// detachedWritesTimeout bounds the wait for writes started by requests.
+	detachedWritesTimeout = 5 * time.Second
 	// workerShutdownTimeout is the join timeout of the Rust server.
 	workerShutdownTimeout = 30 * time.Second
 )
@@ -217,6 +219,7 @@ func (a *application) serve(ctx context.Context, listener net.Listener) error {
 
 	stopWorkers()
 	a.waitForWorkers(workersDone)
+	a.waitForDetachedWrites()
 	if err := a.db.Shutdown(context.WithoutCancel(ctx)); err != nil {
 		a.logger.Error("database shutdown failed", "event", "db.shutdown_failed", "error", err)
 	}
@@ -261,5 +264,21 @@ func (a *application) waitForWorkers(done <-chan struct{}) {
 		a.logger.Info("all background tasks completed", "event", "shutdown.tasks_completed")
 	case <-time.After(workerShutdownTimeout):
 		a.logger.Warn("background tasks did not complete in time", "event", "shutdown.timeout", "timeout_s", int(workerShutdownTimeout.Seconds()))
+	}
+}
+
+// waitForDetachedWrites lets the writes that requests started in the
+// background finish before the database closes.
+func (a *application) waitForDetachedWrites() {
+	done := make(chan struct{})
+	go func() {
+		a.server.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		a.logger.Info("detached writes completed", "event", "shutdown.writes_completed")
+	case <-time.After(detachedWritesTimeout):
+		a.logger.Warn("detached writes did not complete in time", "event", "shutdown.writes_timeout", "timeout_s", int(detachedWritesTimeout.Seconds()))
 	}
 }

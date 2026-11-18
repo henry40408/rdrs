@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -105,5 +106,20 @@ func TestShutdownLetsARunningRequestWriteWhileStreamsEnd(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the open stream blocked shutdown")
+	}
+}
+
+// The database closes only after the detached writes are joined, as
+// server.App.Wait promises.
+func TestShutdownJoinsDetachedWritesBeforeTheDatabaseCloses(t *testing.T) {
+	_, _, stop, log := startedApplication(t, http.NotFoundHandler())
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	output := log.String()
+	writes := strings.Index(output, "shutdown.writes_completed")
+	complete := strings.Index(output, "shutdown.complete")
+	if writes < 0 || complete < 0 || writes > complete {
+		t.Fatalf("detached writes were not joined before shutdown completed: %s", output)
 	}
 }
