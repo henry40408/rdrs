@@ -255,6 +255,9 @@ func TestHTMLGoldens(t *testing.T) {
 }
 
 func (f *goldenFixture) check(t *testing.T, page goldenPage) {
+	if page.Name == "statistics" {
+		f.moveRealClockReadsToGoldenDay(t)
+	}
 	rec := f.replay(t, page)
 	if rec.Code != page.Status {
 		t.Fatalf("status = %d, want %d", rec.Code, page.Status)
@@ -284,4 +287,17 @@ func firstDifference(a, b string) string {
 		i++
 	}
 	return a[max(0, i-80):]
+}
+
+// moveRealClockReadsToGoldenDay re-dates the reads earlier pages made. The
+// database stamps them with its own clock, so they land on the day the test
+// runs, while the capture (and goldenNow) sit on goldenNow's day.
+func (f *goldenFixture) moveRealClockReadsToGoldenDay(t *testing.T) {
+	t.Helper()
+	const query = "UPDATE entry SET read_at = $1 || substr(read_at, 11) " +
+		"WHERE substr(read_at, 1, 10) = $2 AND substr(read_at, 1, 10) <> $1"
+	today := time.Now().UTC().Format("2006-01-02")
+	if _, err := f.database.ExecContext(context.Background(), query, goldenNow.Format("2006-01-02"), today); err != nil {
+		t.Fatal(err)
+	}
 }

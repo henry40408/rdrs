@@ -2489,6 +2489,8 @@ func postActionHTML(t *testing.T, app *itestApp, entryID int64, action string) s
 	t.Helper()
 	response := app.request(http.MethodPost, fmt.Sprintf("/entries/%d/%s", entryID, action))
 	wantStatus(t, response, http.StatusOK)
+	// The state write is detached; the next post must see it.
+	app.App.Wait()
 	return response.Text()
 }
 
