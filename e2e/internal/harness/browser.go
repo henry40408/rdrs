@@ -308,3 +308,11 @@ func EvalJSON(b *Browser, expression string, target any) error {
 func EvalAsync[T any](b *Browser, expression string) (T, error) {
 	return chromedp.Run(b.ctx, chromedp.Evaluate[T](expression, chromedp.EvalAwaitPromise))
 }
+
+// Back goes one step back in the history and waits for the page to load.
+func (b *Browser) Back() error {
+	if err := chromedp.Do(b.ctx, chromedp.NavigateBack()); err != nil {
+		return err
+	}
+	return b.WaitForLoad()
+}

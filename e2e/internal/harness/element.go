@@ -251,3 +251,59 @@ func (e *Element) Fill(value string) error {
 	}
 	return e.Type(value)
 }
+
+// Enabled reports whether a form control is not disabled.
+func (e *Element) Enabled() (bool, error) {
+	return callOn[bool](e, "function() { return !this.disabled; }")
+}
+
+// Classes are the element's class names.
+func (e *Element) Classes() ([]string, error) {
+	return callOn[[]string](e, "function() { return [...this.classList]; }")
+}
+
+// ButtonNamed waits for a descendant button whose text or aria-label contains
+// name, ignoring case; nil when none shows up in time.
+func (e *Element) ButtonNamed(name string) (*Element, error) {
+	return namedIn(e.browser, e, "button", name)
+}
+
+// ButtonNamed is Element.ButtonNamed over the whole page.
+func (b *Browser) ButtonNamed(name string) (*Element, error) {
+	return namedIn(b, nil, "button", name)
+}
+
+func namedIn(b *Browser, scope *Element, tag, name string) (*Element, error) {
+	var found *Element
+	_, err := poll(WaitTimeout, func() (bool, error) {
+		object, err := objectFrom(b, scope, `function(tag, name) {
+			const needle = name.toLowerCase();
+			const fold = (text) => (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+			const root = this.querySelectorAll ? this : document;
+			return [...root.querySelectorAll(tag)].find((e) =>
+				fold(e.textContent).includes(needle) || fold(e.getAttribute('aria-label')).includes(needle)) ?? null;
+		}`, tag, name)
+		if err != nil {
+			return false, err
+		}
+		found = wrap(b, object, tag+" "+name)
+		return found != nil, nil
+	})
+	return found, err
+}
+
+// ClickWhenReady waits until the element is displayed and enabled, then
+// clicks it: a native click happily lands on a control that is still disabled.
+func (e *Element) ClickWhenReady() error {
+	err := Eventually(e.String()+" to become clickable", func() (bool, error) {
+		shown, err := e.Displayed()
+		if err != nil || !shown {
+			return false, err
+		}
+		return e.Enabled()
+	})
+	if err != nil {
+		return err
+	}
+	return e.Click()
+}

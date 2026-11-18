@@ -70,3 +70,48 @@ func EventuallyEq[T comparable](what string, expected T, probe func() (T, error)
 	}
 	return fmt.Errorf("%s: expected %v, last saw %v after %v", what, expected, last, WaitTimeout)
 }
+
+// DespiteSwaps retries action until it succeeds: sidebar refetches (swap
+// complete, SSE) can replace a node between the find and the click. The action
+// must find its element inside the closure, or it replays the same dead
+// reference.
+func DespiteSwaps(what string, action func() error) error {
+	return Eventually(what, func() (bool, error) {
+		err := action()
+		return err == nil, err
+	})
+}
+
+// Settles polls probe until it has returned the same value for samples
+// consecutive reads, and returns that value. An error restarts the count.
+func Settles[T comparable](what string, samples int, probe func() (T, error)) (T, error) {
+	var last T
+	var seen bool
+	runs := 0
+	var settled T
+	_, err := poll(WaitTimeout, func() (bool, error) {
+		value, err := probe()
+		if err != nil {
+			runs = 0
+			return false, err
+		}
+		if seen && value == last {
+			runs++
+		} else {
+			runs = 1
+		}
+		last, seen = value, true
+		if runs >= samples {
+			settled = value
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		return settled, fmt.Errorf("%s: %w", what, err)
+	}
+	if runs < samples {
+		return settled, fmt.Errorf("%s: never held still, last saw %v after %v", what, last, WaitTimeout)
+	}
+	return settled, nil
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/cucumber/godog"
 
@@ -27,6 +28,13 @@ type world struct {
 	// otherUsername is a second account, for admin-table rows that are not the
 	// scenario's own.
 	otherUsername string
+	// network intercepts requests; attached on first use since it costs a
+	// WebSocket.
+	network *harness.Network
+	// Held fragment, full-content and summarize responses.
+	delayedFragment, delayedFullContent, delayedSummarize *harness.RouteHandle
+	// unreadBefore is the sidebar unread count before an out-of-band change.
+	unreadBefore int
 	// seededEntries are the ids from the latest feed seeded for the account.
 	seededEntries []int64
 }
@@ -42,6 +50,12 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerOrganizeSteps(sc, w)
 	registerOnboardingSteps(sc, w)
 	registerPWASteps(sc, w)
+	registerEntrySteps(sc, w)
+	registerReadingPaneSteps(sc, w)
+	registerTriageSteps(sc, w)
+	registerResponsiveSteps(sc, w)
+	registerSSESteps(sc, w)
+	registerSummarizerSteps(sc, w)
 }
 
 // start boots the server and the browser of the scenario.
@@ -156,4 +170,22 @@ func (w *world) getAsUser(path string) (string, error) {
 	}
 	body, err := io.ReadAll(response.Body)
 	return string(body), err
+}
+
+// route adds an interception rule, attaching the interceptor on first use.
+func (w *world) route(pattern string, action harness.Action) (*harness.RouteHandle, error) {
+	if w.network == nil {
+		network, err := w.browser.AttachNetwork()
+		if err != nil {
+			return nil, err
+		}
+		w.network = network
+	}
+	return w.network.Route(pattern, action)
+}
+
+// delayRequests holds every request matching pattern for delay, then lets it
+// through.
+func (w *world) delayRequests(pattern string, delay time.Duration) (*harness.RouteHandle, error) {
+	return w.route(pattern, harness.Action{Kind: harness.Delay, Delay: delay})
 }
