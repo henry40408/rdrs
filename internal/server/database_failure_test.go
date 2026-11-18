@@ -90,3 +90,29 @@ func TestWritesThatTheDatabaseRefusesAreReportedNotSwallowed(t *testing.T) {
 		})
 	}
 }
+
+// TestEntryActionsAnswer500WhenTheirTableIsUnavailable pins which table each
+// reading-pane action needs: a lost table is a server error, not a swap that
+// shows the action as done.
+func TestEntryActionsAnswer500WhenTheirTableIsUnavailable(t *testing.T) {
+	every := []string{"star", "unstar", "read", "unread", "summarize", "summarize/cancel", "fetch-full-content", "save"}
+	cases := map[string][]string{
+		"entry":         every,
+		"feed":          every,
+		"entry_summary": {"star", "unstar", "read", "unread", "summarize", "summarize/cancel"},
+		"user_settings": {"save"},
+	}
+	for table, actions := range cases {
+		t.Run(table, func(t *testing.T) {
+			f := newSignedIn(t)
+			id := f.withEntries(t)[0]
+			f.mustExec(t, "ALTER TABLE "+table+" RENAME TO "+table+"_gone")
+			for _, action := range actions {
+				path := "/entries/" + itoa(id) + "/" + action
+				if got := f.postForm(path, nil).Code; got != http.StatusInternalServerError {
+					t.Errorf("POST %s = %d, want 500", path, got)
+				}
+			}
+		})
+	}
+}
