@@ -33,6 +33,8 @@ type world struct {
 	network *harness.Network
 	// Held fragment, full-content and summarize responses.
 	delayedFragment, delayedFullContent, delayedSummarize *harness.RouteHandle
+	// actionBar is the recorded reading-pane action bar layout.
+	actionBar []actionBarControl
 	// unreadBefore is the sidebar unread count before an out-of-band change.
 	unreadBefore int
 	// seededEntries are the ids from the latest feed seeded for the account.
@@ -50,6 +52,9 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerOrganizeSteps(sc, w)
 	registerOnboardingSteps(sc, w)
 	registerPWASteps(sc, w)
+	registerKeyboardSteps(sc, w)
+	registerSearchSteps(sc, w)
+	registerScopedSearchSteps(sc, w)
 	registerEntrySteps(sc, w)
 	registerReadingPaneSteps(sc, w)
 	registerTriageSteps(sc, w)

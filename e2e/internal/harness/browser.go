@@ -7,12 +7,15 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
@@ -31,6 +34,10 @@ const (
 type Browser struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	mu sync.Mutex
+	// opened are the URLs the page asked new windows for, in order.
+	opened []string
 }
 
 // Scripting says whether the page's own scripts run: the scripted path, or
@@ -106,6 +113,9 @@ func (b *Browser) start(scripting Scripting) error {
 	if err := chromedp.Do(b.ctx); err != nil {
 		return fmt.Errorf("could not start a browser (%s): a local Chromium or Chrome is required "+
 			"(`brew install --cask ungoogled-chromium`), or set %s to its path: %w", BrowserChoice(), ChromeEnv, err)
+	}
+	if err := chromedp.Listen(b.ctx, b.recordWindowOpen); err != nil {
+		return err
 	}
 	if err := b.SetViewport(windowWidth, windowHeight); err != nil {
 		return err
@@ -315,4 +325,48 @@ func (b *Browser) Back() error {
 		return err
 	}
 	return b.WaitForLoad()
+}
+
+func (b *Browser) recordWindowOpen(event any) {
+	opened, ok := event.(*page.EventWindowOpen)
+	if !ok {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.opened = append(b.opened, opened.URL)
+}
+
+// WindowOpens counts the new windows the page has asked for so far.
+func (b *Browser) WindowOpens() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.opened)
+}
+
+// WindowOpenURL is the URL of the nth requested window. The requested URL is
+// what the app chose; the popup's own URL would collapse to chrome-error://
+// where the network is unreachable.
+func (b *Browser) WindowOpenURL(index int) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.opened[index]
+}
+
+// ClosePopups closes every tab but the scenario's own.
+func (b *Browser) ClosePopups() error {
+	own := chromedp.FromContext(b.ctx).Target.TargetID
+	result, err := chromedp.CallBrowser(b.ctx, target.GetTargets, target.GetTargetsParams{})
+	if err != nil {
+		return err
+	}
+	for _, info := range result.TargetInfos {
+		if info.Type != "page" || info.TargetID == own {
+			continue
+		}
+		if _, err := chromedp.CallBrowser(b.ctx, target.CloseTarget, target.CloseTargetParams{TargetID: info.TargetID}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

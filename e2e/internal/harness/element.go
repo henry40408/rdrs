@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/chromedp/cdproto/dom"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
@@ -306,4 +307,21 @@ func (e *Element) ClickWhenReady() error {
 		return err
 	}
 	return e.Click()
+}
+
+// Hover moves the pointer to the element's centre, scrolling it into view.
+func (e *Element) Hover() error {
+	point, err := e.scrollToCentre()
+	if err != nil {
+		return err
+	}
+	if !point.Visible {
+		return fmt.Errorf("element not interactable: %s is not displayed", e)
+	}
+	return chromedp.Do(e.browser.ctx, chromedp.MouseEvent(input.DispatchMouseEventTypeMouseMoved, point.X, point.Y))
+}
+
+// ClickAt clicks viewport coordinates, for targets that have no element.
+func (b *Browser) ClickAt(x, y float64) error {
+	return chromedp.Do(b.ctx, chromedp.MouseClickXY(x, y))
 }

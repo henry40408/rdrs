@@ -441,6 +441,7 @@ func keyText(key string) string {
 		"ArrowLeft":  kb.ArrowLeft,
 		"ArrowRight": kb.ArrowRight,
 		"Backspace":  kb.Backspace,
+		"End":        kb.End,
 	}
 	if text, ok := named[key]; ok {
 		return text
