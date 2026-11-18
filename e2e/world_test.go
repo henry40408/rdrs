@@ -41,6 +41,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerAdminSteps(sc, w)
 	registerOrganizeSteps(sc, w)
 	registerOnboardingSteps(sc, w)
+	registerPWASteps(sc, w)
 }
 
 // start boots the server and the browser of the scenario.

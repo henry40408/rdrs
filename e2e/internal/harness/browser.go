@@ -302,3 +302,9 @@ func EvalJSON(b *Browser, expression string, target any) error {
 	}
 	return json.Unmarshal(raw, target)
 }
+
+// EvalAsync is Eval for an expression that yields a promise: it waits for the
+// promise and decodes what it resolves to.
+func EvalAsync[T any](b *Browser, expression string) (T, error) {
+	return chromedp.Run(b.ctx, chromedp.Evaluate[T](expression, chromedp.EvalAwaitPromise))
+}
