@@ -95,16 +95,14 @@ func run() error {
 	return audit.verdict()
 }
 
-// verdict fails on any violation other than the planted control.
+// verdict fails on any violation; the planted control was already taken out.
 func (a *audit) verdict() error {
-	var real []string
-	for _, found := range a.violations {
-		if found.Where != positiveControl {
-			real = append(real, found.String())
+	if len(a.violations) > 0 {
+		lines := make([]string, len(a.violations))
+		for i, found := range a.violations {
+			lines[i] = found.String()
 		}
-	}
-	if len(real) > 0 {
-		return fmt.Errorf("CSP violations detected:\n%s", strings.Join(real, "\n"))
+		return fmt.Errorf("CSP violations detected:\n%s", strings.Join(lines, "\n"))
 	}
 	fmt.Println("cspaudit: no violations across the app")
 	return nil
@@ -318,13 +316,27 @@ func (a *audit) plantPositiveControl() error {
 	if err := a.drain(positiveControl); err != nil {
 		return err
 	}
-	control := a.violations[before:]
+	rest, err := takeOutControl(a.violations[before:])
+	if err != nil {
+		return err
+	}
+	a.violations = append(a.violations[:before], rest...)
+	return nil
+}
+
+// takeOutControl removes the one style-src violation the planted style must
+// cause and returns the others, which are real findings.
+func takeOutControl(control []violation) ([]violation, error) {
 	if len(control) == 0 {
-		return fmt.Errorf("positive control: a planted inline style must be blocked — the " +
+		return nil, fmt.Errorf("positive control: a planted inline style must be blocked — the " +
 			"collector was not live, so every clean result above is meaningless")
 	}
-	if !strings.Contains(control[0].Directive, "style-src") {
-		return fmt.Errorf("positive control was blocked by %s, expected style-src", control[0].Directive)
+	for i, found := range control {
+		if !strings.Contains(found.Directive, "style-src") {
+			continue
+		}
+		rest := append([]violation{}, control[:i]...)
+		return append(rest, control[i+1:]...), nil
 	}
-	return nil
+	return nil, fmt.Errorf("positive control was blocked by %s, expected style-src", control[0].Directive)
 }
