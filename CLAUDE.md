@@ -37,7 +37,9 @@ when a command should not touch the network (CI does).
 - Mutation (CI gate): `go run github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0 unleash .`
   after `go clean -testcache`. The efficacy threshold lives in `.gremlins.yaml`;
   gremlins v0.6.0 ignores `--threshold-efficacy` on the command line, so never
-  pass it.
+  pass it. Never pass `--test-cpu` either: it builds a single `-cpu 2` argument,
+  every mutant's `go test` fails and counts as killed, and the gate passes
+  vacuously. CI limits CPUs with `GOMAXPROCS=2 ... unleash --workers 2` instead.
 - Benchmarks: `go test -run '^$' -bench . -benchmem -count 5 ./internal/server ./internal/sanitize`.
   `BenchmarkEntryPages` (`internal/server/bench_test.go`) measures every list
   route; compare before and after with `benchstat`. Raise `RDRS_BENCH_ENTRIES`
