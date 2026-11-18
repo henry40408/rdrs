@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +53,39 @@ func TestHandlersAnswer500WhenTheirTableIsUnavailable(t *testing.T) {
 				if got := app.Get(path).Code; got != http.StatusInternalServerError {
 					t.Errorf("GET %s = %d, want 500", path, got)
 				}
+			}
+		})
+	}
+}
+
+// TestWritesThatTheDatabaseRefusesAreReportedNotSwallowed makes every write to
+// one table abort, then submits the form that writes to it. The user must be
+// told it failed, not shown a success.
+func TestWritesThatTheDatabaseRefusesAreReportedNotSwallowed(t *testing.T) {
+	cases := []struct {
+		table, path string
+		form        url.Values
+		want        string
+	}{
+		{"category", "/categories", url.Values{"name": {"New"}}, "Failed to create category."},
+		{"category", "/categories/1/rename", url.Values{"name": {"Renamed"}}, "Failed to rename category."},
+		{"category", "/categories/1/delete", nil, "Failed to delete category."},
+		{"feed", "/feeds/1/delete", nil, "Failed to delete feed."},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			app := defaultITestApp(t)
+			app.SeedUserWithEntry("alice", fixturePassword)
+			app.Login("alice")
+			for _, event := range []string{"INSERT", "UPDATE", "DELETE"} {
+				trigger := fmt.Sprintf("CREATE TRIGGER refuse_%s BEFORE %s ON %s BEGIN SELECT RAISE(ABORT, 'refused'); END", strings.ToLower(event), event, c.table)
+				if _, err := app.DB.ExecContext(t.Context(), trigger); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response := app.PostForm(c.path, c.form)
+			if got := flashText(t, response); !strings.Contains(got, `"level":"error"`) || !strings.Contains(got, c.want) {
+				t.Errorf("flash = %s, want an error saying %q", got, c.want)
 			}
 		})
 	}
