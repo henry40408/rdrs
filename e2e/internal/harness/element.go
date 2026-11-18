@@ -223,7 +223,9 @@ func (e *Element) scrollToCentre() (clickPoint, error) {
 		}
 		// Instant: the thumbnail rail has scroll-behavior: smooth, and an
 		// animated scroll is still moving when the box is measured.
-		this.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'instant' });
+		// Nearest, not end: aligning the last row of a scrolled sidebar to its
+		// bottom edge moved the sidebar and broke scroll-preservation checks.
+		this.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
 		const r = this.getBoundingClientRect();
 		return { visible: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
 	}`)

@@ -370,3 +370,9 @@ func (b *Browser) ClosePopups() error {
 	}
 	return nil
 }
+
+// SetTimezone makes the browser report another zone. Pages read it as they
+// load, so it applies to pages opened afterwards.
+func (b *Browser) SetTimezone(zone string) error {
+	return send(b, emulation.SetTimezoneOverride, emulation.SetTimezoneOverrideParams{TimezoneID: zone})
+}

@@ -36,7 +36,6 @@ func registerAuthSteps(sc *godog.ScenarioContext, w *world) {
 	})
 	sc.Step(`^the sidebar's cached data no longer survives in session storage$`, w.sidebarCacheCleared)
 	sc.Step(`^I am redirected to "([^"]*)"$`, w.expectPath)
-	sc.Step(`^the browser is on "([^"]*)"$`, w.expectPath)
 	sc.Step(`^I am redirected to the login page$`, func() error { return w.expectPath("/login") })
 }
 

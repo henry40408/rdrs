@@ -33,6 +33,10 @@ type world struct {
 	network *harness.Network
 	// Held fragment, full-content and summarize responses.
 	delayedFragment, delayedFullContent, delayedSummarize *harness.RouteHandle
+	// clientInfoPuts counts the browser reports the page sends.
+	clientInfoPuts *harness.RouteHandle
+	// paneStamp is the list pane's render stamp when it was tagged.
+	paneStamp string
 	// actionBar is the recorded reading-pane action bar layout.
 	actionBar []actionBarControl
 	// unreadBefore is the sidebar unread count before an out-of-band change.
@@ -54,6 +58,9 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerPWASteps(sc, w)
 	registerKeyboardSteps(sc, w)
 	registerSearchSteps(sc, w)
+	registerSettingsSteps(sc, w)
+	registerSidebarSteps(sc, w)
+	registerMorphSteps(sc, w)
 	registerScopedSearchSteps(sc, w)
 	registerEntrySteps(sc, w)
 	registerReadingPaneSteps(sc, w)
@@ -179,6 +186,11 @@ func (w *world) getAsUser(path string) (string, error) {
 
 // route adds an interception rule, attaching the interceptor on first use.
 func (w *world) route(pattern string, action harness.Action) (*harness.RouteHandle, error) {
+	return w.routeMethod(pattern, "", action)
+}
+
+// routeMethod is route restricted to one HTTP method.
+func (w *world) routeMethod(pattern, method string, action harness.Action) (*harness.RouteHandle, error) {
 	if w.network == nil {
 		network, err := w.browser.AttachNetwork()
 		if err != nil {
@@ -186,7 +198,7 @@ func (w *world) route(pattern string, action harness.Action) (*harness.RouteHand
 		}
 		w.network = network
 	}
-	return w.network.Route(pattern, action)
+	return w.network.RouteMethod(pattern, method, action)
 }
 
 // delayRequests holds every request matching pattern for delay, then lets it
