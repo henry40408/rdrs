@@ -42,7 +42,7 @@ when a command should not touch the network (CI does).
   vacuously. Limit CPUs with `GOMAXPROCS=2 ... unleash --workers 2`.
   CI splits the module into seven `mutation-shard (<name>)` matrix jobs on a push
   to `main` (server-accounts, server-pages, server-entries,
-  server-feeds-greader, models, content, misc), 250-820 mutants each, 5-41
+  server-feeds-greader, models, content, misc), 250-820 mutants each, 5-34
   minutes on a runner (an `internal/server` mutant takes 5-6 s, one elsewhere
   under 1 s); the `mutation` job `needs` all of them and fails
   if any shard fails or is cancelled, so branch protection names only
@@ -53,6 +53,10 @@ when a command should not touch the network (CI does).
   complete: check that `unleash --dry-run` over the shards sums to the
   whole-module `Runnable` count. `internal/server` is split by file because
   its tests are the slowest, so a new file there needs a place in the matrix.
+  The shard steps run `ulimit -v 4194304`: a mutant that makes a loop endless
+  while it allocates (the parser's `p.pos++` flipped in `internal/search`) used
+  to exhaust the runner's memory and kill the job with SIGTERM; now its test
+  process crashes or times out instead.
   Each shard must reach the 95 threshold by itself (it is not a module-wide
   average) and uploads its log as an artifact. A pull request mutates only the
   diff, and a shard with no mutant in it passes.
