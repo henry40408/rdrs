@@ -69,6 +69,13 @@ func TestMalformedXMLIsAnError(t *testing.T) {
 	}
 }
 
+func TestIllegalControlCharactersAreDropped(t *testing.T) {
+	feed := mustParse(t, "<rss version=\"2.0\"><channel><title>a\vb\x00c\x1fd\te f\ng\rh</title></channel></rss>")
+	if *feed.Title != "abcd\te f\ng\nh" {
+		t.Errorf("title = %q", *feed.Title)
+	}
+}
+
 func TestTrailingGarbageAfterRootIsIgnored(t *testing.T) {
 	feed := mustParse(t, `<rss version="2.0"><channel><title>T</title></channel></rss><<<garbage`)
 	if *feed.Title != "T" {

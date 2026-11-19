@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/henry40408/rdrs/internal/sanitize"
@@ -171,7 +172,7 @@ var errNoRoot = errors.New("no root element")
 // parseTree reads the document up to the end of its root element. Anything
 // after the root is never looked at, as in the streaming Rust parser.
 func parseTree(data []byte) (*element, error) {
-	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec := xml.NewDecoder(bytes.NewReader(dropIllegalControlBytes(data)))
 	dec.Strict = false
 	// The caller has already converted the text to UTF-8.
 	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) { return input, nil }
@@ -195,6 +196,27 @@ func parseTree(data []byte) (*element, error) {
 			return b.root, nil
 		}
 	}
+}
+
+// dropIllegalControlBytes removes the C0 controls XML 1.0 forbids (all but tab,
+// LF and CR). Real feeds contain stray ones, such as a vertical tab pasted from
+// a word processor; Go's decoder rejects them even when not strict, where the
+// Rust parser skipped them. The text is UTF-8, so a control byte is never part
+// of a longer character.
+func dropIllegalControlBytes(data []byte) []byte {
+	isIllegal := func(c byte) bool {
+		return c < 0x20 && c != '\t' && c != '\n' && c != '\r'
+	}
+	if !slices.ContainsFunc(data, isIllegal) {
+		return data
+	}
+	kept := make([]byte, 0, len(data))
+	for _, c := range data {
+		if !isIllegal(c) {
+			kept = append(kept, c)
+		}
+	}
+	return kept
 }
 
 func xmlError(detail string) error {
