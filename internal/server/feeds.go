@@ -142,9 +142,12 @@ type feedsListing struct {
 // listFeeds reads the rows; a failing query degrades to an empty list.
 func (a *App) listFeeds(r *http.Request, userID int64, unread map[int64]int64) feedsListing {
 	ctx := r.Context()
-	categories, _ := models.ListCategoriesByUser(ctx, a.DB, userID)
-	feeds, _ := models.ListFeedsByUser(ctx, a.DB, userID)
-	rates, _ := models.OpenRatesByFeed(ctx, a.DB, userID)
+	categories, err := models.ListCategoriesByUser(ctx, a.DB, userID)
+	logQueryFailed("feeds.categories", err)
+	feeds, err := models.ListFeedsByUser(ctx, a.DB, userID)
+	logQueryFailed("feeds.feeds", err)
+	rates, err := models.OpenRatesByFeed(ctx, a.DB, userID)
+	logQueryFailed("feeds.open_rates", err)
 	lookups := rowLookups{
 		categoryNames: map[int64]string{}, openRates: map[int64]models.FeedOpenRate{}, unread: unread,
 	}
@@ -157,7 +160,8 @@ func (a *App) listFeeds(r *http.Request, userID int64, unread map[int64]int64) f
 		countByCategory[feed.CategoryID]++
 		ids = append(ids, feed.ID)
 	}
-	lookups.withIcon, _ = models.ExistingImageIDs(ctx, a.DB, models.EntityFeed, ids)
+	lookups.withIcon, err = models.ExistingImageIDs(ctx, a.DB, models.EntityFeed, ids)
+	logQueryFailed("feeds.icons", err)
 	listing := feedsListing{total: int64(len(feeds))}
 	now := a.Now()
 	for _, feed := range feeds {
@@ -229,7 +233,8 @@ func (a *App) feedsPage(w http.ResponseWriter, r *http.Request) {
 	layout := a.buildLayout(r, principal, flash.Take(w, r))
 	userID := principal.User.ID
 	// Gated on the setting, so an opted-in reader sees the column even when empty.
-	enabledAt, _ := models.PixelTrackingEnabledAt(r.Context(), a.DB, userID)
+	enabledAt, err := models.PixelTrackingEnabledAt(r.Context(), a.DB, userID)
+	logQueryFailed("feeds.pixel_tracking", err)
 	listing := a.listFeeds(r, userID, layout.UnreadByFeed)
 	query := r.URL.Query()
 	filter, order := normalizeFilter(query.Get("filter")), normalizeSort(query.Get("sort"))

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -63,24 +65,48 @@ func (a *App) readChrome(ctx context.Context, userID int64, originalUserID *int6
 	if cached := a.Sidebar.Get(userID); cached != nil && cached.IsCurrent() {
 		return chromeData{Chrome: *cached, originalUserIsAdmin: original}
 	}
-	fresh, hasFeeds := a.loadChrome(ctx, userID)
-	// The empty state is the likeliest to go stale, so it is not cached.
-	if hasFeeds || fresh.TotalUnread > 0 {
+	fresh, cacheable := a.loadChrome(ctx, userID)
+	if cacheable {
 		a.Sidebar.InsertIfCurrent(userID, generation, fresh)
 	}
 	return chromeData{Chrome: fresh, originalUserIsAdmin: original}
 }
 
-// loadChrome reads the chrome from the database.
-func (a *App) loadChrome(ctx context.Context, userID int64) (chrome cache.Chrome, hasFeeds bool) {
+// logQueryFailed records a page query whose error is deliberately survived: the
+// page renders without that data, so without a log the gap is invisible.
+func logQueryFailed(query string, err error) {
+	// A client that leaves mid-render cancels the request; that is no fault.
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	slog.Warn("page query failed", "event", "page.query_failed", "query", query, "error", err)
+}
+
+// loadChrome reads the chrome from the database. cacheable is false when a
+// query failed, which would otherwise pin a partial sidebar (such as no
+// categories) for the whole TTL, and for the empty state, the likeliest to go
+// stale.
+func (a *App) loadChrome(ctx context.Context, userID int64) (chrome cache.Chrome, cacheable bool) {
+	queryFailed := false
+	checkQuery := func(name string, err error) {
+		if err == nil {
+			return
+		}
+		queryFailed = true
+		slog.Warn("chrome query failed", "event", "chrome.query_failed", "query", name, "user_id", userID, "error", err)
+	}
 	settings, err := models.LoadUserSettings(ctx, a.DB, userID)
+	checkQuery("settings", err)
 	if err != nil {
 		settings = models.DefaultUserSettings(userID)
 	}
 	location := settings.Tz()
-	categories, _ := models.ListCategoriesByUser(ctx, a.DB, userID)
-	feeds, _ := models.ListFeedsByUser(ctx, a.DB, userID)
-	unreadByFeed, _ := entry.CountUnreadByFeed(ctx, a.DB, userID)
+	categories, err := models.ListCategoriesByUser(ctx, a.DB, userID)
+	checkQuery("categories", err)
+	feeds, err := models.ListFeedsByUser(ctx, a.DB, userID)
+	checkQuery("feeds", err)
+	unreadByFeed, err := entry.CountUnreadByFeed(ctx, a.DB, userID)
+	checkQuery("unread_by_feed", err)
 	unreadByCategory := map[int64]int64{}
 	var totalUnread int64
 	for _, feed := range feeds {
@@ -88,14 +114,16 @@ func (a *App) loadChrome(ctx context.Context, userID int64) (chrome cache.Chrome
 		unreadByCategory[feed.CategoryID] += unread
 		totalUnread += unread
 	}
-	summarized, _ := models.CountCompletedSummaries(ctx, a.DB, userID)
+	summarized, err := models.CountCompletedSummaries(ctx, a.DB, userID)
+	checkQuery("summaries", err)
 	// One reading of the date for the count and the cache label: midnight
 	// between two reads would label yesterday's count as today's.
 	today := timezone.TodayIn(location)
 	start, end := timezone.DayBoundsUTC(today, location)
-	todayCount, _ := entry.CountByUser(ctx, a.DB, userID, &entry.Filter{
+	todayCount, err := entry.CountByUser(ctx, a.DB, userID, &entry.Filter{
 		UnreadOnly: true, PublishedBetween: &entry.TimeRange{Start: start, End: end},
 	})
+	checkQuery("today_count", err)
 	rows := make([]cache.SidebarCategory, 0, len(categories))
 	for _, category := range categories {
 		rows = append(rows, cache.SidebarCategory{
@@ -106,7 +134,7 @@ func (a *App) loadChrome(ctx context.Context, userID int64) (chrome cache.Chrome
 		Theme: settings.Theme, Categories: rows, TotalUnread: totalUnread,
 		TotalSummarized: summarized, TotalToday: todayCount, Timezone: location, Today: today,
 		UnreadByFeed: unreadByFeed, SidebarPrefs: settings.SidebarPrefs(), OfflineKeep: settings.OfflineKeep,
-	}, len(feeds) > 0
+	}, !queryFailed && (len(feeds) > 0 || totalUnread > 0)
 }
 
 // buildSidebar assembles the sidebar payload for a principal.

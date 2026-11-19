@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -71,6 +72,17 @@ func TestPasswordChangeRefusedByTheStoreKeepsTheOldPassword(t *testing.T) {
 	login := f.do(jsonRequest("POST", "/api/session", `{"username":"root","password":"`+testPassword+`"}`))
 	if login.Code != 200 && login.Code != 201 {
 		t.Errorf("old password stopped working after a refused change: %d %s", login.Code, login.Body)
+	}
+}
+
+// A failed read of the stored services must not render the settings page as if
+// no service were configured.
+func TestUserSettingsPageFailsWhenTheServicesCannotBeRead(t *testing.T) {
+	f := newSignedIn(t)
+	f.mustExec(t, `ALTER TABLE user_settings RENAME TO user_settings_gone`)
+
+	if rec := f.get("/user-settings"); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /user-settings = %d, want 500", rec.Code)
 	}
 }
 

@@ -2,6 +2,7 @@ package feedsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,9 +33,22 @@ type Result struct {
 }
 
 func (s *Syncer) recordError(ctx context.Context, feedID int64, message string) error {
-	return models.UpdateFetchResult(ctx, s.DB, models.FetchResult{
+	// A caller that left (a manual refresh whose client disconnected) did not
+	// find a feed fault; the write would also clear the validators.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	// A sync that timed out has a dead ctx; the error is the very thing to
+	// store, so the write must not inherit that. The 5 s bounds the write.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := models.UpdateFetchResult(ctx, s.DB, models.FetchResult{
 		ID: feedID, FetchedAt: time.Now(), FetchError: &message,
 	})
+	if err != nil {
+		slog.Warn("recording feed error failed", "event", "feed.record_error_failed", "feed_id", feedID, "error", err)
+	}
+	return err
 }
 
 // fail stores the error text on the feed, best effort, and returns the error.

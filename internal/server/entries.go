@@ -318,8 +318,10 @@ func (a *App) offlineEntriesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, userID := r.Context(), request.principal.User.ID
-	keep, _ := models.OfflineKeep(ctx, a.DB, userID)
-	found, _ := entry.ListOfflineSet(ctx, a.DB, userID, keep)
+	keep, err := models.OfflineKeep(ctx, a.DB, userID)
+	logQueryFailed("offline.keep", err)
+	found, err := entry.ListOfflineSet(ctx, a.DB, userID, keep)
+	logQueryFailed("offline.entries", err)
 	rows := a.offlineRows(ctx, userID, found)
 	title, detail := "Nothing saved yet", "Entries are mirrored while you are online. Come back once something has synced."
 	if keep == models.OfflineKeepOff {
@@ -340,7 +342,8 @@ func (a *App) offlineRows(ctx context.Context, userID int64, found []entry.WithF
 	for i := range found {
 		ids[i] = found[i].ID
 	}
-	statuses, _ := models.SummaryStatusesFor(ctx, a.DB, userID, ids)
+	statuses, err := models.SummaryStatusesFor(ctx, a.DB, userID, ids)
+	logQueryFailed("offline.summary_statuses", err)
 	rows := make([]views.EntryRow, len(found))
 	for i := range found {
 		rows[i] = a.rowViewFrom(&found[i], statuses[found[i].ID])
@@ -527,7 +530,9 @@ func (a *App) feedScopedPage(ctx context.Context, feed *models.Feed, userID int6
 	}
 	feeds := "/feeds"
 	crumbs := []views.Crumb{{Label: "Feeds", Href: &feeds}}
-	if category, _ := models.FindCategoryByIDAndUser(ctx, a.DB, feed.CategoryID, userID); category != nil {
+	category, err := models.FindCategoryByIDAndUser(ctx, a.DB, feed.CategoryID, userID)
+	logQueryFailed("feed_page.category", err)
+	if category != nil {
 		link := fmt.Sprintf("/categories/%d/entries", category.ID)
 		crumbs = append(crumbs, views.Crumb{Label: category.Name, Href: &link})
 	}
@@ -538,7 +543,9 @@ func (a *App) feedScopedPage(ctx context.Context, feed *models.Feed, userID int6
 		emptyTitle: "Nothing in this feed", emptyOK: "This feed hasn't published anything yet, or it's still syncing.",
 		activeCategoryID: feed.CategoryID, activeFeedID: feed.ID, title: title,
 	}
-	if hasIcon, _ := models.ImageExists(ctx, a.DB, "feed", feed.ID); hasIcon {
+	hasIcon, err := models.ImageExists(ctx, a.DB, "feed", feed.ID)
+	logQueryFailed("feed_page.icon", err)
+	if hasIcon {
 		page.headerFeedIconID = feed.ID
 	}
 	return page

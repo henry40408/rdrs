@@ -89,10 +89,16 @@ func (a *App) userSettingsPage(w http.ResponseWriter, r *http.Request) {
 	userID := principal.User.ID
 	layout := a.buildLayout(r, principal, flash.Take(w, r))
 	settings, err := models.LoadUserSettings(ctx, a.DB, userID)
+	logQueryFailed("account.settings", err)
 	if err != nil {
 		settings = models.DefaultUserSettings(userID)
 	}
-	stored, _ := models.SaveServicesOf(ctx, a.DB, userID, a.serviceKey())
+	stored, err := models.SaveServicesOf(ctx, a.DB, userID, a.serviceKey())
+	if err != nil {
+		// Rendering the services as unconfigured would misreport saved credentials.
+		writeError(w, DatabaseError(err))
+		return
+	}
 	services := save.ConfigOf(stored)
 	prefs := settings.SidebarPrefs()
 	zone, suggested := suggestedTimezone(r, settings.Tz())

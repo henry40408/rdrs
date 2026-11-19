@@ -3,13 +3,75 @@ package feedsync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/models/entry"
 )
+
+// A sync that timed out has a dead context, yet its error is what the feed
+// must store.
+func TestRecordErrorSurvivesAnExpiredDeadline(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+
+		if err := f.syncer.recordError(expired, f.feed.ID, "timed out"); err != nil {
+			t.Fatal(err)
+		}
+		feed := f.reload(t)
+		if feed.FetchError == nil || *feed.FetchError != "timed out" {
+			t.Errorf("FetchError = %v", feed.FetchError)
+		}
+	})
+}
+
+func TestRecordErrorLogsAWriteThatFailed(t *testing.T) {
+	logs := &bytes.Buffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	f := newFixtureOn(t, openDB(t), serveFeed)
+
+	if err := f.syncer.recordError(context.Background(), f.feed.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "feed.record_error_failed") {
+		t.Fatalf("a successful write was logged: %s", logs.String())
+	}
+	if _, err := f.syncer.DB.ExecContext(context.Background(),
+		`CREATE TRIGGER refuse_feed_update BEFORE UPDATE ON feed BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.syncer.recordError(context.Background(), f.feed.ID, "boom"); err == nil {
+		t.Fatal("want the refused write's error")
+	}
+	if !strings.Contains(logs.String(), "event=feed.record_error_failed") {
+		t.Errorf("log lacks the failed write: %s", logs.String())
+	}
+}
+
+// A caller that left must not leave a fetch error on a healthy feed.
+func TestRecordErrorSkipsACanceledCaller(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if err := f.syncer.recordError(canceled, f.feed.ID, "context canceled"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+		if feed := f.reload(t); feed.FetchError != nil {
+			t.Errorf("FetchError = %q, want none", *feed.FetchError)
+		}
+	})
+}
 
 func TestCountsRecordEachOutcomeOnce(t *testing.T) {
 	var c Counts
