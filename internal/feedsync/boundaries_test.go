@@ -3,13 +3,50 @@ package feedsync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/models/entry"
 )
+
+// A sync that timed out has a dead context, yet its error is what the feed
+// must store.
+func TestRecordErrorSurvivesAnExpiredDeadline(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+
+		if err := f.syncer.recordError(expired, f.feed.ID, "timed out"); err != nil {
+			t.Fatal(err)
+		}
+		feed := f.reload(t)
+		if feed.FetchError == nil || *feed.FetchError != "timed out" {
+			t.Errorf("FetchError = %v", feed.FetchError)
+		}
+	})
+}
+
+// A caller that left must not leave a fetch error on a healthy feed.
+func TestRecordErrorSkipsACanceledCaller(t *testing.T) {
+	eachBackend(t, func(t *testing.T, database *db.DB) {
+		f := newFixtureOn(t, database, serveFeed)
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if err := f.syncer.recordError(canceled, f.feed.ID, "context canceled"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+		if feed := f.reload(t); feed.FetchError != nil {
+			t.Errorf("FetchError = %q, want none", *feed.FetchError)
+		}
+	})
+}
 
 func TestCountsRecordEachOutcomeOnce(t *testing.T) {
 	var c Counts

@@ -2,6 +2,7 @@ package feedsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,7 +32,19 @@ type Result struct {
 	UpdatedEntries int64
 }
 
+// recordErrorTimeout bounds the error write, which outlives the sync context.
+const recordErrorTimeout = 5 * time.Second
+
 func (s *Syncer) recordError(ctx context.Context, feedID int64, message string) error {
+	// A caller that left (a manual refresh whose client disconnected) did not
+	// find a feed fault; the write would also clear the validators.
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	// A sync that timed out has a dead ctx; the error is the very thing to
+	// store, so the write must not inherit that.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordErrorTimeout)
+	defer cancel()
 	err := models.UpdateFetchResult(ctx, s.DB, models.FetchResult{
 		ID: feedID, FetchedAt: time.Now(), FetchError: &message,
 	})
