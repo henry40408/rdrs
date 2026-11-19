@@ -49,7 +49,6 @@ def start_server(db_path, log_path):
         "RDRS_MULTI_USER_ENABLED": "true",
         "RDRS_SECRET": SECRET,
         "RUST_LOG": "warn",
-        "NO_COLOR": "1",
         "RDRS_FAST_HASH": "1",
         "RDRS_LOGIN_RATE_LIMIT_ATTEMPTS": "0",
         "RDRS_DISABLE_SIDEBAR_CACHE": "1",
