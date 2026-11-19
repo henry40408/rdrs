@@ -99,13 +99,16 @@ func (s *Seed) SeedTestEntries(feedID int64, count int) ([]int64, error) {
 	entries := make([]NewEntry, 0, count)
 	for i := 1; i <= count; i++ {
 		entries = append(entries, NewEntry{
-			FeedID:          feedID,
-			GUID:            fmt.Sprintf("test-guid-%d-%d", feedID, i),
-			Title:           fmt.Sprintf("Test Entry %d", i),
-			Link:            fmt.Sprintf("https://example.com/entry/%d", i),
-			Content:         fmt.Sprintf("<p>Content for test entry %d</p>", i),
-			Summary:         fmt.Sprintf("Summary for entry %d", i),
-			PublishedOffset: fmt.Sprintf("-%d hours", i),
+			FeedID:  feedID,
+			GUID:    fmt.Sprintf("test-guid-%d-%d", feedID, i),
+			Title:   fmt.Sprintf("Test Entry %d", i),
+			Link:    fmt.Sprintf("https://example.com/entry/%d", i),
+			Content: fmt.Sprintf("<p>Content for test entry %d</p>", i),
+			Summary: fmt.Sprintf("Summary for entry %d", i),
+			// Seconds, not hours: an hour-sized gap puts entries on the previous
+			// UTC day during the first hours after midnight, which empties
+			// /entries/today.
+			PublishedOffset: fmt.Sprintf("-%d seconds", i),
 		})
 	}
 	return s.InsertEntries(entries)
