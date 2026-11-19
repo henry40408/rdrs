@@ -18,7 +18,7 @@ func TestResolveLinkBoundaries(t *testing.T) {
 		{"empty credentials", "http://@h.example/", "", "http://h.example/"},
 		{"port 65535 is valid", "http://h.example:65535/", "", "http://h.example:65535/"},
 		{"port 65536 is invalid", "http://h.example:65536/", "", ""},
-		{"lone continuation byte host goes through idna", "http://%80/", "", "http://xn--zn7c/"},
+		{"lone continuation byte host is rejected by idna", "http://%80/", "", ""},
 		{"underscore host skips idna", "http://a_b.example/", "", "http://a_b.example/"},
 		{"scheme of z only", "z:foo", base, ""},
 		{"scheme of upper Z only", "Z:foo", base, ""},
