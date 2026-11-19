@@ -10,11 +10,12 @@ The module is `github.com/henry40408/rdrs`; `go.mod`'s `toolchain` line is the
 single source of the Go version. Dependencies are vendored: pass `-mod=vendor`
 when a command should not touch the network (CI does).
 
-- Format (CI gate): `gofmt -l` over the tracked `.go` files outside `vendor/`
-  must print nothing. Run `gofmt -w` before committing.
-- Lint (CI gate): `go vet -mod=vendor ./...` and
-  `go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...`. `staticcheck.conf`
-  holds the disabled checks and the reason for each.
+- Lint and format (CI gate): `golangci-lint run ./...` and
+  `golangci-lint fmt --diff ./...` (the `fmt` check is separate because `run`
+  does not check formatting). Config is in `.golangci.yml` (defaults plus the
+  gofmt formatter). Suppress a finding with `//nolint:<linter> // reason`.
+  CI installs the linter through `golangci/golangci-lint-action`, so the linter
+  release floats with the action; dependabot tracks only the action.
 - Supply chain (CI gate, job `deps`): `go mod tidy -diff`, `go mod vendor` leaves
   no diff, `govulncheck`, and `go-licenses` against the allow-list in
   `.github/workflows/ci.yml` (Apache-2.0, BSD-2/3-Clause, ISC, MIT, MIT-0, Zlib,
@@ -71,8 +72,8 @@ when a command should not touch the network (CI does).
 ### E2E (godog + chromedp, from `e2e/`)
 
 `e2e/` is a **separate Go module** (own `go.mod` and `vendor/`) so the browser
-and Gherkin dependencies stay out of the shipped binary. Run `go vet` and
-`staticcheck` inside it too; CI does.
+and Gherkin dependencies stay out of the shipped binary. Run `golangci-lint run ./...` and
+`golangci-lint fmt --diff ./...` inside it too; CI does.
 
 - Build the server first: `go build -o bin/rdrs ./cmd/rdrs`. The harness reuses
   `bin/rdrs` when it exists, so **rebuild after editing `static/` or Go

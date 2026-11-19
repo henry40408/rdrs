@@ -133,7 +133,7 @@ func TestPendingRevokeAndStaleCleanup(t *testing.T) {
 	eachBackend(t, func(t *testing.T, database *db.DB) {
 		ctx := context.Background()
 		alice, bob := mustUser(t, database, "alice"), mustUser(t, database, "bob")
-		IssueInvite(ctx, database, IssueInviteParams{SecretKey: inviteSecret, UserID: alice.ID, Token: "a"})
+		_, _ = IssueInvite(ctx, database, IssueInviteParams{SecretKey: inviteSecret, UserID: alice.ID, Token: "a"})
 		spentInvite, _ := IssueInvite(ctx, database, IssueInviteParams{SecretKey: inviteSecret, UserID: bob.ID, Token: "b"})
 
 		if live, _ := FindLiveInviteForUser(ctx, database, alice.ID); live == nil {
@@ -145,7 +145,7 @@ func TestPendingRevokeAndStaleCleanup(t *testing.T) {
 		if live, _ := FindLiveInviteForUser(ctx, database, alice.ID); live != nil {
 			t.Error("revoked invite still pending")
 		}
-		consumeInvite(ctx, database, spentInvite.ID)
+		_, _ = consumeInvite(ctx, database, spentInvite.ID)
 		if live, _ := FindLiveInviteForUser(ctx, database, bob.ID); live != nil {
 			t.Error("consumed invite reported as pending")
 		}
@@ -159,7 +159,7 @@ func TestDeletingAccountTakesInviteWithIt(t *testing.T) {
 	eachBackend(t, func(t *testing.T, database *db.DB) {
 		ctx := context.Background()
 		user := mustUser(t, database, "alice")
-		IssueInvite(ctx, database, IssueInviteParams{SecretKey: inviteSecret, UserID: user.ID, Token: "a"})
+		_, _ = IssueInvite(ctx, database, IssueInviteParams{SecretKey: inviteSecret, UserID: user.ID, Token: "a"})
 		if err := DeleteUser(ctx, database, user.ID); err != nil {
 			t.Fatal(err)
 		}

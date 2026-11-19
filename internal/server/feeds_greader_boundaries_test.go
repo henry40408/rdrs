@@ -194,7 +194,7 @@ func changingFeedServer(t *testing.T, version *atomic.Int64) string {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
-		fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><link>https://e</link>
+		_, _ = fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><link>https://e</link>
 <item><guid>g1</guid><title>One</title><link>https://e/1</link><description>version %d</description></item>
 </channel></rss>`, version.Load())
 	}))

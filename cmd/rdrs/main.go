@@ -31,7 +31,7 @@ func main() {
 // kills a shutdown that hangs.
 func run(ctx context.Context, releaseSignals func(), args []string, lookupEnv func(string) (string, bool), _, stderr io.Writer) int {
 	if err := ensureNoLegacyEnvVars(lookupEnv); err != nil {
-		fmt.Fprintf(stderr, "Configuration error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 1
 	}
 	opts, err := parseOptions(args, lookupEnv, stderr)
@@ -39,14 +39,14 @@ func run(ctx context.Context, releaseSignals func(), args []string, lookupEnv fu
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "Configuration error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 2
 	}
 	logger := newLogger(loggerSettings{format: opts.logFormat, level: opts.logLevel}, stderr)
 
 	cfg, err := loadConfig(lookupEnv)
 	if err != nil {
-		fmt.Fprintf(stderr, "Configuration error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Configuration error: %v\n", err)
 		return 1
 	}
 	slog.SetDefault(logger)
@@ -57,13 +57,13 @@ func run(ctx context.Context, releaseSignals func(), args []string, lookupEnv fu
 func serveUntilStopped(ctx context.Context, releaseSignals func(), cfg config.Config, logger *slog.Logger, stderr io.Writer) int {
 	app, err := newApplication(ctx, cfg, logger, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "Startup error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Startup error: %v\n", err)
 		return 1
 	}
 	listener, err := net.Listen("tcp", cfg.ServerBind.String())
 	if err != nil {
 		_ = app.db.Shutdown(context.WithoutCancel(ctx))
-		fmt.Fprintf(stderr, "Startup error: bind %s: %v\n", cfg.ServerBind, err)
+		_, _ = fmt.Fprintf(stderr, "Startup error: bind %s: %v\n", cfg.ServerBind, err)
 		return 1
 	}
 	go func() {

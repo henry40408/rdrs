@@ -3368,7 +3368,7 @@ func invitePathFrom(t *testing.T, response itestResponse) string {
 	// The token is base64url; the path ends where the encoded JSON resumes.
 	token := tail
 	end := strings.IndexFunc(token, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_'
 	})
 	if end >= 0 {
 		token = token[:end]

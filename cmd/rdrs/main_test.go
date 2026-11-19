@@ -163,7 +163,7 @@ func TestRunFailsWhenTheAddressIsTaken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer taken.Close()
+	defer func() { _ = taken.Close() }()
 	env := isolatedEnv(t)
 	env["RDRS_SERVER_BIND"] = taken.Addr().String()
 	code, stderr := runServer(t, env)

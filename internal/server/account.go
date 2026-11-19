@@ -627,11 +627,11 @@ func nextLinkding(current *save.LinkdingConfig, form url.Values, clear bool) *sa
 func kagiSessionToken(link string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(link))
 	if err != nil || !parsed.IsAbs() {
-		return "", errors.New("Invalid session link URL")
+		return "", errors.New("Invalid session link URL") //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 	}
 	token := parsed.Query().Get("token")
 	if token == "" {
-		return "", errors.New("No token found in session link")
+		return "", errors.New("No token found in session link") //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 	}
 	return token, nil
 }

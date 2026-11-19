@@ -89,7 +89,7 @@ func (w *world) postAsUser(path string) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 400 {
 		return fmt.Errorf("POST %s answered %s", path, response.Status)
 	}

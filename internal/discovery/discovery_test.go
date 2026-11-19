@@ -147,7 +147,7 @@ func TestRejectsFeedLinkPointingInward(t *testing.T) {
 	page := `<link rel="alternate" type="application/rss+xml" href="http://169.254.169.254/feed">`
 	server := serve(t, map[string]http.HandlerFunc{"/": reply("text/html", page)})
 	_, err := Discover(context.Background(), loopbackParams(t, server.URL))
-	wantKind(t, err, KindInvalidURL)
+	_ = wantKind(t, err, KindInvalidURL)
 }
 
 func TestFirstFetchStatusError(t *testing.T) {
@@ -169,13 +169,13 @@ func TestDiscoveredFetchStatusError(t *testing.T) {
 		},
 	})
 	_, err := Discover(context.Background(), loopbackParams(t, server.URL))
-	wantKind(t, err, KindFetch)
+	_ = wantKind(t, err, KindFetch)
 }
 
 func TestMalformedFeedBody(t *testing.T) {
 	server := serve(t, map[string]http.HandlerFunc{"/": reply("application/rss+xml", "<rss><channel>")})
 	_, err := Discover(context.Background(), loopbackParams(t, server.URL))
-	wantKind(t, err, KindParse)
+	_ = wantKind(t, err, KindParse)
 }
 
 func TestSendsUserAgent(t *testing.T) {

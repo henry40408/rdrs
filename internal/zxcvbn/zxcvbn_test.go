@@ -33,7 +33,7 @@ func loadRustCorpus(t *testing.T) []rustCase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var cases []rustCase
 	scanner := bufio.NewScanner(f)
 	for n := 1; scanner.Scan(); n++ {

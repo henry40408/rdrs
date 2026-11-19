@@ -108,7 +108,7 @@ func (a *API) Login(username, password string) (Session, error) {
 	if err != nil {
 		return Session{}, fmt.Errorf("posting /api/session: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 300 {
 		return Session{}, statusError("login failed", response)
 	}
@@ -158,7 +158,7 @@ func (a *API) claimSetup(username, password string) error {
 	if err != nil {
 		return fmt.Errorf("posting /api/setup: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= 300 {
 		return statusError("setup failed", response)
 	}
@@ -174,7 +174,7 @@ func (a *API) createAccount(session Session, username string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusSeeOther {
 		return "", statusError("creating the account failed", response)
 	}
@@ -185,7 +185,7 @@ func (a *API) createAccount(session Session, username string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer next.Body.Close()
+	defer func() { _ = next.Body.Close() }()
 	page, _ := io.ReadAll(next.Body)
 	link := invitePathPattern.Find(page)
 	if link == nil {
@@ -239,7 +239,7 @@ func (a *API) redeemInvite(invitePath, password string) error {
 	if err != nil {
 		return fmt.Errorf("posting %s: %w", invitePath, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusSeeOther {
 		return statusError("invite redemption failed", response)
 	}

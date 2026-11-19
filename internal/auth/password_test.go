@@ -79,8 +79,8 @@ func TestHashPasswordFormatAndRoundTrip(t *testing.T) {
 func TestHashPasswordDefaultParameters(t *testing.T) {
 	// Setenv cannot unset; Unsetenv with cleanup keeps the process clean.
 	if value, ok := os.LookupEnv("RDRS_FAST_HASH"); ok {
-		os.Unsetenv("RDRS_FAST_HASH")
-		t.Cleanup(func() { os.Setenv("RDRS_FAST_HASH", value) })
+		_ = os.Unsetenv("RDRS_FAST_HASH")
+		t.Cleanup(func() { _ = os.Setenv("RDRS_FAST_HASH", value) })
 	}
 	hash, err := HashPassword("secure_password_123")
 	if err != nil {

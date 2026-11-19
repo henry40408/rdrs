@@ -155,7 +155,7 @@ func forwardLog(stream io.Reader, out io.Writer) *collector {
 	go func() {
 		lines := bufio.NewScanner(stream)
 		for lines.Scan() {
-			fmt.Fprintln(out, lines.Text())
+			_, _ = fmt.Fprintln(out, lines.Text())
 			log.mu.Lock()
 			log.text.WriteString(lines.Text() + "\n")
 			log.mu.Unlock()
@@ -209,7 +209,7 @@ func freePort() (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("probing for a free port: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 

@@ -158,7 +158,7 @@ func (s *pgSmoke) checkCursorPagination() (ids []int64, last entry.WithFeed) {
 	if len(page2) != 2 {
 		t.Fatalf("cursor must return the two remaining entries, got %d", len(page2))
 	}
-	if !(page2[0].ID < last.ID || page2[0].PublishedAt.Before(*last.PublishedAt)) {
+	if page2[0].ID >= last.ID && !page2[0].PublishedAt.Before(*last.PublishedAt) {
 		t.Error("continuation must not repeat or precede the cursor row")
 	}
 	return ids, last
