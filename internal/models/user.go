@@ -207,8 +207,13 @@ func EnableUser(ctx context.Context, e db.Executor, userID int64) error {
 }
 
 // DeleteUser removes the account; foreign keys cascade to its data. The table
-// name is quoted because "user" is reserved in PostgreSQL.
+// name is quoted because "user" is reserved in PostgreSQL. Sessions the user
+// holds while masquerading go first: original_user_id is ON DELETE SET NULL,
+// which would turn them into ordinary, unguarded sessions of the target.
 func DeleteUser(ctx context.Context, e db.Executor, userID int64) error {
+	if _, err := e.ExecContext(ctx, "DELETE FROM session WHERE original_user_id = $1", userID); err != nil {
+		return err
+	}
 	return updateUser(ctx, e, `DELETE FROM "user" WHERE id = $1`, userID)
 }
 

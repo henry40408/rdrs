@@ -198,9 +198,11 @@ func DeleteSession(ctx context.Context, e db.Executor, token string) error {
 	return err
 }
 
-// DeleteUserSessions deletes every session of a user.
+// DeleteUserSessions deletes every session of a user, including the ones the
+// user holds while masquerading: those carry the target's user_id, so matching
+// user_id alone would leave a disabled admin's session alive.
 func DeleteUserSessions(ctx context.Context, e db.Executor, userID int64) error {
-	_, err := e.ExecContext(ctx, "DELETE FROM session WHERE user_id = $1", userID)
+	_, err := e.ExecContext(ctx, "DELETE FROM session WHERE user_id = $1 OR original_user_id = $1", userID)
 	return err
 }
 

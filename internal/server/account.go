@@ -283,18 +283,35 @@ func (a *App) storeNewPassword(w http.ResponseWriter, r *http.Request, principal
 
 // --- sessions and tokens ---
 
-const masqueradeBlocksSessions = "Session management is unavailable while masquerading."
+const (
+	masqueradeBlocksSessions = "Session management is unavailable while masquerading."
+	masqueradeBlocksServices = "Service credentials cannot be changed while masquerading."
+)
+
+// ErrMasqueradeBlocksPasskeys guards the JSON passkey routes: a passkey added
+// while masquerading would still sign in as the target afterwards.
+var ErrMasqueradeBlocksPasskeys = newError(http.StatusForbidden, "Passkeys cannot be managed while masquerading.")
 
 // sessionForm authenticates a credential-management form. It reports false
 // after answering; masquerading is refused so the target's credentials stay
 // out of reach.
 func (a *App) sessionForm(w http.ResponseWriter, r *http.Request) (*auth.Principal, bool) {
+	return a.formUnlessMasquerading(w, r, masqueradeBlocksSessions)
+}
+
+// serviceForm is sessionForm for the stored service credentials: redirecting a
+// target's api_url would send its stored token to the admin's host.
+func (a *App) serviceForm(w http.ResponseWriter, r *http.Request) (*auth.Principal, bool) {
+	return a.formUnlessMasquerading(w, r, masqueradeBlocksServices)
+}
+
+func (a *App) formUnlessMasquerading(w http.ResponseWriter, r *http.Request, refusal string) (*auth.Principal, bool) {
 	principal, ok := a.requireUser(w, r)
 	if !ok {
 		return nil, false
 	}
 	if principal.Session.IsMasquerading() {
-		settingsFlash(w, flash.NewError(masqueradeBlocksSessions))
+		settingsFlash(w, flash.NewError(refusal))
 		return nil, false
 	}
 	return principal, true
@@ -552,7 +569,7 @@ func optionalText(form url.Values, name string) *string {
 
 // updateLinkdingForm is POST /user-settings/linkding.
 func (a *App) updateLinkdingForm(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.requireUser(w, r)
+	principal, ok := a.serviceForm(w, r)
 	if !ok {
 		return
 	}
@@ -619,7 +636,7 @@ func kagiSessionToken(link string) (string, error) {
 
 // updateKagiForm is POST /user-settings/kagi.
 func (a *App) updateKagiForm(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.requireUser(w, r)
+	principal, ok := a.serviceForm(w, r)
 	if !ok {
 		return
 	}
@@ -735,6 +752,10 @@ func (a *App) renamePasskey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if principal.Session.IsMasquerading() {
+		writeError(w, ErrMasqueradeBlocksPasskeys)
+		return
+	}
 	id, ok := pathID(w, r)
 	if !ok {
 		return
@@ -766,6 +787,10 @@ func (a *App) deletePasskey(w http.ResponseWriter, r *http.Request) {
 	principal, err := a.Auth.RecentlyAuthenticated(r)
 	if err != nil {
 		writeError(w, authError(err))
+		return
+	}
+	if principal.Session.IsMasquerading() {
+		writeError(w, ErrMasqueradeBlocksPasskeys)
 		return
 	}
 	id, ok := pathID(w, r)
