@@ -44,6 +44,10 @@ func (a *App) passkeyRegisterStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, authError(err))
 		return
 	}
+	if principal.Session.IsMasquerading() {
+		writeError(w, ErrMasqueradeBlocksPasskeys)
+		return
+	}
 	relyingParty, err := a.relyingParty()
 	if err != nil {
 		writeError(w, err)
@@ -129,6 +133,10 @@ func readPasskeyBody(w http.ResponseWriter, r *http.Request) (passkeyBody, bool)
 func (a *App) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	principal, ok := a.requireUser(w, r)
 	if !ok {
+		return
+	}
+	if principal.Session.IsMasquerading() {
+		writeError(w, ErrMasqueradeBlocksPasskeys)
 		return
 	}
 	body, ok := readPasskeyBody(w, r)

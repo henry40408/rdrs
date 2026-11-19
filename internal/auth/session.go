@@ -194,7 +194,7 @@ func (a *Authenticator) isAdminPrincipal(ctx context.Context, principal *Princip
 	if err != nil {
 		return false, err
 	}
-	if original == nil {
+	if original == nil || original.IsDisabled() {
 		return false, ErrUnauthorized
 	}
 	return original.IsAdmin(), nil

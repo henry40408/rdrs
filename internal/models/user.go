@@ -178,9 +178,18 @@ func updateUser(ctx context.Context, e db.Executor, query string, args ...any) e
 	return nil
 }
 
-// UpdateRole changes an account's role.
+// UpdateRole changes an account's role. A demoted admin's masquerade sessions
+// end: they would otherwise keep acting as the target, unable to stop because
+// stopping requires an admin.
 func UpdateRole(ctx context.Context, e db.Executor, userID int64, role Role) error {
-	return updateUser(ctx, e, `UPDATE "user" SET role = $1 WHERE id = $2`, string(role), userID)
+	if err := updateUser(ctx, e, `UPDATE "user" SET role = $1 WHERE id = $2`, string(role), userID); err != nil {
+		return err
+	}
+	if role == RoleAdmin {
+		return nil
+	}
+	_, err := e.ExecContext(ctx, "DELETE FROM session WHERE original_user_id = $1", userID)
+	return err
 }
 
 // DisableUser disables the account and revokes its sessions and API tokens in
@@ -207,8 +216,13 @@ func EnableUser(ctx context.Context, e db.Executor, userID int64) error {
 }
 
 // DeleteUser removes the account; foreign keys cascade to its data. The table
-// name is quoted because "user" is reserved in PostgreSQL.
+// name is quoted because "user" is reserved in PostgreSQL. Sessions the user
+// holds while masquerading go first: original_user_id is ON DELETE SET NULL,
+// which would turn them into ordinary, unguarded sessions of the target.
 func DeleteUser(ctx context.Context, e db.Executor, userID int64) error {
+	if _, err := e.ExecContext(ctx, "DELETE FROM session WHERE original_user_id = $1", userID); err != nil {
+		return err
+	}
 	return updateUser(ctx, e, `DELETE FROM "user" WHERE id = $1`, userID)
 }
 
