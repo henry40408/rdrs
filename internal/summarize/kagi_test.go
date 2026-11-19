@@ -110,6 +110,10 @@ func TestBodyLevelFailures(t *testing.T) {
 	config := KagiConfig{SessionToken: "t"}
 	for body, want := range map[string]string{
 		`{"error":"nope"}`:                  "nope",
+		`{"error":true}`:                    "Kagi reported an error",
+		`{"error":[{"msg":"bad"}]}`:         `[{"msg":"bad"}]`,
+		`{"error":false}`:                   "No summary returned from Kagi",
+		`{"error":null}`:                    "No summary returned from Kagi",
 		`{}`:                                "No summary returned from Kagi",
 		`{"output_data":{}}`:                "No summary returned from Kagi",
 		`{"output_data":{"markdown":null}}`: "No summary returned from Kagi",
