@@ -227,11 +227,11 @@ func TestAdminWhileMasqueradingFollowsTheOriginalUser(t *testing.T) {
 		t.Error("admin page while masquerading")
 	}
 
-	// A demoted original admin loses access even while impersonating.
+	// A demoted original admin loses the masquerade session itself.
 	if err := models.UpdateRole(context.Background(), f.database, admin.ID, models.RoleUser); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.authenticator.Admin(f.request(token)); !errors.Is(err, ErrForbidden) {
+	if _, err := f.authenticator.Admin(f.request(token)); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("demoted original: %v", err)
 	}
 	if f.authenticator.AdminPage(f.request(token)) != nil {

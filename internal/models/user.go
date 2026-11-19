@@ -178,9 +178,18 @@ func updateUser(ctx context.Context, e db.Executor, query string, args ...any) e
 	return nil
 }
 
-// UpdateRole changes an account's role.
+// UpdateRole changes an account's role. A demoted admin's masquerade sessions
+// end: they would otherwise keep acting as the target, unable to stop because
+// stopping requires an admin.
 func UpdateRole(ctx context.Context, e db.Executor, userID int64, role Role) error {
-	return updateUser(ctx, e, `UPDATE "user" SET role = $1 WHERE id = $2`, string(role), userID)
+	if err := updateUser(ctx, e, `UPDATE "user" SET role = $1 WHERE id = $2`, string(role), userID); err != nil {
+		return err
+	}
+	if role == RoleAdmin {
+		return nil
+	}
+	_, err := e.ExecContext(ctx, "DELETE FROM session WHERE original_user_id = $1", userID)
+	return err
 }
 
 // DisableUser disables the account and revokes its sessions and API tokens in

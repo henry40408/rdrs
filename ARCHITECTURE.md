@@ -994,7 +994,8 @@ limiter. Only the pass/fail gates; the guess count is never shown.
   management, passkey routes and the Linkding/Kagi service forms are refused
   (a passkey would outlive the masquerade; a changed `api_url` would receive
   the stored token). `DeleteUserSessions` also removes sessions whose
-  `original_user_id` is the user, so disabling an admin ends their masquerade.
+  `original_user_id` is the user, so disabling an admin ends their masquerade;
+  deleting or demoting an admin does the same.
 - **Audit** (`internal/audit`): session and credential lifecycle events
   (creation, renewal, token rotation, destruction, masquerade, re-authentication,
   passkey added/removed, invites, rate limiting, failed logins) log under
