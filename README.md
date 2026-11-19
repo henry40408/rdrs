@@ -89,8 +89,6 @@ All configuration is via environment variables.
 >   and `IMAGE_PROXY_SECRET` became `RDRS_SECRET`. Old names are not read;
 >   rdrs **refuses to start** while any is set, listing replacements.
 >   `DATABASE_URL` keeps its name.
-> - **`NO_COLOR` is no longer read:** log output has no colour, so there is
->   nothing to switch off.
 > - **`RUST_LOG` is retired:** rdrs **refuses to start** while it is set. Use
 >   `RDRS_LOG_LEVEL` (`debug`, `info`, `warn`, `error`); there is no per-module
 >   filter syntax.
