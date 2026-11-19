@@ -67,3 +67,11 @@ func TestTimeBoundKeepsFractionOnlyOnPostgres(t *testing.T) {
 		t.Errorf("postgres = %q", got)
 	}
 }
+
+// DialectFor maps a configured backend to its dialect.
+func DialectFor(backend config.Backend) Dialect {
+	if backend == config.Postgres {
+		return DialectPostgres
+	}
+	return DialectSQLite
+}

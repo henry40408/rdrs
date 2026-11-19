@@ -50,9 +50,6 @@ func Disabled(userID int64, rootSecret []byte) Context {
 	return Context{UserID: userID, Secret: rootSecret}
 }
 
-// IsEnabled reports whether this reader tracks opens at all.
-func (c Context) IsEnabled() bool { return c.EnabledAt != nil }
-
 // URL is the pixel URL for one entry.
 func (c Context) URL(entryID int64) string {
 	sig := secret.PixelSig(c.Secret, c.UserID, entryID)

@@ -43,11 +43,6 @@ func findCategory(ctx context.Context, e db.Executor, where string, args ...any)
 	return orNil(&category, err)
 }
 
-// FindCategoryByID looks a category up by id.
-func FindCategoryByID(ctx context.Context, e db.Executor, id int64) (*Category, error) {
-	return findCategory(ctx, e, "id = $1", id)
-}
-
 // FindCategoryByIDAndUser looks a category up by id, scoped to its owner.
 func FindCategoryByIDAndUser(ctx context.Context, e db.Executor, id, userID int64) (*Category, error) {
 	return findCategory(ctx, e, "id = $1 AND user_id = $2", id, userID)

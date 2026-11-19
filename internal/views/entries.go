@@ -419,9 +419,6 @@ func loadMoreForm(fields loadMoreFields) node {
 		el("button", attrs(a("type", "submit"), a("data-testid", "load-more-btn")), text("Load More")))
 }
 
-// EntryRowNode renders a row for the SSE and swap paths.
-func EntryRowNode(row EntryRow, csrf string) string { return string(entryRow(row, csrf)) }
-
 // entryRow's ids, data-* attributes, data-testids and the .entry-status /
 // .entry-read / .selected hooks are relied on by app.js, SSE and e2e.
 func entryRow(row EntryRow, csrf string) node {

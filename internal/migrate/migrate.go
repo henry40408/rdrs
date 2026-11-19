@@ -4,6 +4,7 @@
 package migrate
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha512"
 	"database/sql"
@@ -13,7 +14,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,7 +99,7 @@ func load(fsys fs.FS, dir string) ([]Migration, error) {
 		}
 		all = append(all, migration)
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Version < all[j].Version })
+	slices.SortFunc(all, func(a, b Migration) int { return cmp.Compare(a.Version, b.Version) })
 	return all, nil
 }
 
@@ -248,7 +249,7 @@ func validate(applied map[int64][]byte, all []Migration) error {
 	if len(missing) == 0 {
 		return nil
 	}
-	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+	slices.Sort(missing)
 	return fmt.Errorf("migrate: version %d: %w", missing[0], ErrVersionMissing)
 }
 

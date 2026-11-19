@@ -21,7 +21,7 @@ import (
 	"github.com/henry40408/rdrs/internal/version"
 )
 
-// App is what every handler shares: the Rust AppState.
+// App is what every handler shares.
 type App struct {
 	options Options
 	Config  config.Config

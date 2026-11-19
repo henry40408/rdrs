@@ -68,18 +68,12 @@ func langAttr(content string) attr {
 	return when(lang != "", a("lang", lang))
 }
 
-// EmptyPane is the pane of the category swap; it must not carry
+// emptyPane is the pane of the category swap; it must not carry
 // reading-pane-active, or mobile readers get trapped behind a blank pane.
-func EmptyPane() string { return string(emptyPane()) }
-
 func emptyPane() node {
 	return el("div", attrs(class("reading-pane", "reading-pane-empty"), a("id", "reading-pane")),
 		el("p", attrs(class("empty-state-compact")), text("Select an entry from the list to start reading.")))
 }
-
-// PaneFragment is GET /entries/{id}/fragment for a speculative or offline
-// load: the pane alone.
-func PaneFragment(pane *ReadingPane, csrf string) string { return string(readingPane(pane, csrf)) }
 
 // PaneWithFlash is the pane plus an optional toast.
 func PaneWithFlash(pane *ReadingPane, csrf string, flash *Flash) string {
