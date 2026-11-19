@@ -538,9 +538,11 @@ func (a *App) savePreferences(ctx context.Context, userID int64, input preferenc
 
 // --- service credentials ---
 
-// loadServicesForWrite reads the stored services to edit. An unreadable value
-// reads as empty: re-submitting the form is how the user recovers from a
-// rotated RDRS_SECRET.
+// loadServicesForWrite reads the stored services to edit. It does not refuse an
+// undecryptable value: it starts from an empty config, so saving any service
+// form replaces the unreadable value. That is how the user recovers from a
+// rotated RDRS_SECRET (see models.ErrServicesUndecryptable), at the cost of
+// the other service's credentials stored in the same value.
 func (a *App) loadServicesForWrite(ctx context.Context, userID int64) (save.ServicesConfig, error) {
 	stored, err := models.SaveServicesOf(ctx, a.DB, userID, a.serviceKey())
 	if err != nil {

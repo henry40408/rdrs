@@ -63,8 +63,9 @@ func ParseServicesConfig(stored string) (ServicesConfig, error) {
 
 // ConfigOf reads the document of a StoredServices. An empty or unparsable
 // document is an empty config, so a corrupt value never blocks the settings
-// page; an undecryptable one is also empty, for read-only paths. Writers must
-// check StoredServices.Undecryptable first.
+// page; an undecryptable one is also empty, for read-only paths. Callers that
+// must not treat it as "not configured" use UsableConfigOf; the settings forms
+// deliberately overwrite it (see loadServicesForWrite).
 func ConfigOf(stored models.StoredServices) ServicesConfig {
 	config, err := ParseServicesConfig(stored.JSON)
 	if err != nil {
