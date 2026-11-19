@@ -125,7 +125,8 @@ func (a *App) apiTokenUser(r *http.Request, token string) (greaderUser, error) {
 		return greaderUser{}, err
 	}
 	// Best-effort: must not fail the request being authenticated.
-	_, _ = models.TouchAndRefreshAPIToken(ctx, a.DB, apiToken)
+	_, touchErr := models.TouchAndRefreshAPIToken(ctx, a.DB, apiToken)
+	logQueryFailed("greader.touch_token", touchErr)
 	return greaderUser{user: *user, apiToken: apiToken}, nil
 }
 

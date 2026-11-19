@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -97,7 +98,9 @@ func (a *Authenticator) authenticate(r *http.Request, strict bool) (*Principal, 
 		return nil, err
 	}
 	// A failed touch is not worth failing the request.
-	_ = models.TouchLastSeen(ctx, a.DB, session)
+	if err := models.TouchLastSeen(ctx, a.DB, session); err != nil {
+		slog.Warn("session touch failed", "event", "auth.touch_failed", "error", err)
+	}
 
 	user, err := models.FindUserByID(ctx, a.DB, session.UserID)
 	if err != nil {

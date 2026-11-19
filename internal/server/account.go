@@ -92,7 +92,8 @@ func (a *App) userSettingsPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		settings = models.DefaultUserSettings(userID)
 	}
-	stored, _ := models.SaveServicesOf(ctx, a.DB, userID, a.serviceKey())
+	stored, err := models.SaveServicesOf(ctx, a.DB, userID, a.serviceKey())
+	logQueryFailed("account.save_services", err)
 	services := save.ConfigOf(stored)
 	prefs := settings.SidebarPrefs()
 	zone, suggested := suggestedTimezone(r, settings.Tz())

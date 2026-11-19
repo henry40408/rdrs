@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -54,6 +55,28 @@ func TestReadChromeCachesAnAccountWithUnreadEntries(t *testing.T) {
 	}
 	if cached := app.App.Sidebar.Get(userID); cached == nil || cached.TotalUnread != 1 {
 		t.Errorf("cached = %+v", cached)
+	}
+}
+
+func TestLogQueryFailedLogsOnlyAnError(t *testing.T) {
+	logs := &lockedBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	logQueryFailed("quiet", nil)
+	if logs.String() != "" {
+		t.Fatalf("a nil error was logged: %s", logs.String())
+	}
+	logQueryFailed("left", context.Canceled)
+	if logs.String() != "" {
+		t.Fatalf("a canceled request was logged: %s", logs.String())
+	}
+	logQueryFailed("loud", errors.New("disk on fire"))
+	for _, want := range []string{"event=page.query_failed", "query=loud", "disk on fire"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q: %s", want, logs.String())
+		}
 	}
 }
 

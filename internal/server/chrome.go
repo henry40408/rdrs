@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -69,6 +70,16 @@ func (a *App) readChrome(ctx context.Context, userID int64, originalUserID *int6
 		a.Sidebar.InsertIfCurrent(userID, generation, fresh)
 	}
 	return chromeData{Chrome: fresh, originalUserIsAdmin: original}
+}
+
+// logQueryFailed records a page query whose error is deliberately survived: the
+// page renders without that data, so without a log the gap is invisible.
+func logQueryFailed(query string, err error) {
+	// A client that leaves mid-render cancels the request; that is no fault.
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	slog.Warn("page query failed", "event", "page.query_failed", "query", query, "error", err)
 }
 
 // loadChrome reads the chrome from the database. cacheable is false when a

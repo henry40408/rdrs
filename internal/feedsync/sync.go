@@ -32,9 +32,13 @@ type Result struct {
 }
 
 func (s *Syncer) recordError(ctx context.Context, feedID int64, message string) error {
-	return models.UpdateFetchResult(ctx, s.DB, models.FetchResult{
+	err := models.UpdateFetchResult(ctx, s.DB, models.FetchResult{
 		ID: feedID, FetchedAt: time.Now(), FetchError: &message,
 	})
+	if err != nil {
+		slog.Warn("recording feed error failed", "event", "feed.record_error_failed", "feed_id", feedID, "error", err)
+	}
+	return err
 }
 
 // fail stores the error text on the feed, best effort, and returns the error.
