@@ -301,7 +301,7 @@ func (s *Seed) EntryTitles(userID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var titles []string
 	for rows.Next() {
 		var title string

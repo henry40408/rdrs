@@ -147,7 +147,7 @@ func announceSetupToken(ctx context.Context, database *db.DB, stderr io.Writer) 
 	if err == nil && users > 0 {
 		return token, nil
 	}
-	fmt.Fprintf(stderr, "no accounts yet: open /setup and enter this setup token to create the admin account\nsetup_token=%s\n", token)
+	_, _ = fmt.Fprintf(stderr, "no accounts yet: open /setup and enter this setup token to create the admin account\nsetup_token=%s\n", token)
 	return token, nil
 }
 

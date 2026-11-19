@@ -84,7 +84,7 @@ func HashPassword(password string) (string, error) {
 	memory, passes := hashCost()
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("Password hashing failed: %w", err)
+		return "", fmt.Errorf("Password hashing failed: %w", err) //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 	}
 	key := argon2.IDKey([]byte(password), salt, passes, memory, argonThreads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argonVersion, memory, passes, argonThreads,

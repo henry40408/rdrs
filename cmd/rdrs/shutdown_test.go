@@ -82,14 +82,14 @@ func TestShutdownLetsARunningRequestWriteWhileStreamsEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stream.Body.Close()
+	defer func() { _ = stream.Body.Close() }()
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- stop() }()
 	// Shutdown must not return while /slow runs, and must not wait for the stream.
 	select {
-	case <-stopped:
-		t.Fatal("serve returned while a request was still running")
+	case err := <-stopped:
+		t.Fatalf("serve returned (err=%v) while a request was still running", err)
 	case <-time.After(300 * time.Millisecond):
 	}
 	close(release)

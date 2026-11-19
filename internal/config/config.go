@@ -309,7 +309,7 @@ func parseLoginRateLimit(env environment) (attempts uint32, window uint64, err e
 		return 0, 0, fmt.Errorf("invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '%s': %w", v, err)
 	}
 	if window == 0 {
-		return 0, 0, errors.New("invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '0': the window must be at " +
+		return 0, 0, errors.New("invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '0': the window must be at " + //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 			"least 1 second; a zero-length window elapses instantly and silently " +
 			"disables throttling. Use RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=0 to disable the " +
 			"limiter deliberately.")
@@ -376,11 +376,11 @@ func (c Config) IsTrustedPeer(ip netip.Addr) bool {
 // Validate checks cross-field invariants at startup and returns the first problem.
 func (c Config) Validate() error {
 	if c.AuthProxyEnabled() && len(c.TrustedProxyNetworks) == 0 {
-		return errors.New("RDRS_AUTH_PROXY_HEADER is set but RDRS_TRUSTED_PROXY_NETWORKS is empty. " +
+		return errors.New("RDRS_AUTH_PROXY_HEADER is set but RDRS_TRUSTED_PROXY_NETWORKS is empty. " + //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 			"Refusing to trust an identity header without a trusted-source check.")
 	}
 	if c.DisableLocalAuth && !c.AuthProxyEnabled() {
-		return errors.New("RDRS_DISABLE_LOCAL_AUTH is set but RDRS_AUTH_PROXY_HEADER is not configured. " +
+		return errors.New("RDRS_DISABLE_LOCAL_AUTH is set but RDRS_AUTH_PROXY_HEADER is not configured. " + //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 			"This would leave no way to log in via the browser.")
 	}
 	return nil

@@ -311,7 +311,7 @@ func applyOn(t *testing.T, database *db.DB, all []Migration) error {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return apply(ctx, conn, database.Dialect(), all)
 }
 

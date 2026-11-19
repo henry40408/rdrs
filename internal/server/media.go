@@ -262,7 +262,7 @@ func (a *App) serveProxied(w http.ResponseWriter, r *http.Request, target *url.U
 		writeError(w, FetchError("Image fetch failed: "+err.Error()))
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		writeError(w, FetchError("Image fetch failed: HTTP "+strconv.Itoa(response.StatusCode)))
 		return

@@ -179,7 +179,7 @@ func (w *world) getAsUser(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return "", fmt.Errorf("GET %s answered %s", path, response.Status)
 	}

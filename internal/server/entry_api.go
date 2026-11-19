@@ -310,7 +310,7 @@ func (a *App) queueSummary(ctx context.Context, userID int64, found *entry.WithF
 	a.Summaries.SetPending(userID, found.ID)
 	if err := summarize.Enqueue(ctx, a.SummaryQueue, summarize.Job{UserID: userID, EntryID: found.ID, EntryLink: *found.Link}); err != nil {
 		if errors.Is(err, summarize.ErrQueueFull) {
-			return InternalError(errors.New("Summary queue is full, please try again later"))
+			return InternalError(errors.New("Summary queue is full, please try again later")) //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 		}
 		return InternalError(errors.New("Failed to queue summary job: " + err.Error()))
 	}

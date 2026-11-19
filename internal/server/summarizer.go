@@ -80,10 +80,10 @@ func parseURLLines(input string) ([]string, error) {
 		}
 		parsed, ok := parseHTTPURL(line)
 		if !ok {
-			return nil, fmt.Errorf("Not a valid URL: %s", line)
+			return nil, fmt.Errorf("Not a valid URL: %s", line) //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return nil, fmt.Errorf("Only http(s) URLs are supported: %s", line)
+			return nil, fmt.Errorf("Only http(s) URLs are supported: %s", line) //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 		}
 		if err := fetch.ValidateURL(parsed); err != nil {
 			return nil, fmt.Errorf("URL not allowed (%s): %w", line, err)
@@ -94,10 +94,10 @@ func parseURLLines(input string) ([]string, error) {
 		}
 	}
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("Enter at least one URL.")
+		return nil, fmt.Errorf("Enter at least one URL.") //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 	}
 	if len(urls) > maxSummarizerURLs {
-		return nil, fmt.Errorf("Too many URLs — %d max per run.", maxSummarizerURLs)
+		return nil, fmt.Errorf("Too many URLs — %d max per run.", maxSummarizerURLs) //nolint:staticcheck // ST1005: user-facing text kept verbatim from the Rust build
 	}
 	return urls, nil
 }

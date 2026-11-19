@@ -164,7 +164,7 @@ func fetchFavicon(client *http.Client, url string) *icon {
 	if err != nil {
 		return nil
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return nil
 	}

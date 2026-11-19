@@ -183,7 +183,7 @@ const (
 func scanWithFeed(row scanner, extra ...any) (WithFeed, error) {
 	var w WithFeed
 	var hasIcon int64
-	dest := append(w.Entry.scanDest(),
+	dest := append(w.scanDest(),
 		&w.FeedTitle, &w.FeedURL, &w.SiteURL, &w.CategoryID, &w.CategoryName, &hasIcon, &w.CustomReferrer)
 	err := row.Scan(append(dest, extra...)...)
 	w.FeedHasIcon = hasIcon > 0
