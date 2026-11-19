@@ -187,10 +187,7 @@ func (w *Worker) process(ctx context.Context, job Job) {
 // failing, in the cache, the database and the event stream.
 func (w *Worker) failureOf(ctx context.Context, job Job, message string) {
 	w.Cache.SetFailed(job.UserID, job.EntryID, message)
-	// The row is gone when the user cancelled or deleted the summary meanwhile.
-	if _, err := models.SetSummaryFailed(ctx, w.DB, job.UserID, job.EntryID, message); err != nil && !errors.Is(err, models.ErrSummaryNotFound) {
-		slog.Warn("recording summary failure failed", "event", "summary.record_failed", "entry_id", job.EntryID, "error", err)
-	}
+	_, _ = models.SetSummaryFailed(ctx, w.DB, job.UserID, job.EntryID, message)
 	w.emitStatus(job, models.SummaryFailed)
 }
 

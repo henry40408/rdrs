@@ -32,6 +32,31 @@ func TestRecordErrorSurvivesAnExpiredDeadline(t *testing.T) {
 	})
 }
 
+func TestRecordErrorLogsAWriteThatFailed(t *testing.T) {
+	logs := &bytes.Buffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	f := newFixtureOn(t, openDB(t), serveFeed)
+
+	if err := f.syncer.recordError(context.Background(), f.feed.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "feed.record_error_failed") {
+		t.Fatalf("a successful write was logged: %s", logs.String())
+	}
+	if _, err := f.syncer.DB.ExecContext(context.Background(),
+		`CREATE TRIGGER refuse_feed_update BEFORE UPDATE ON feed BEGIN SELECT RAISE(ABORT, 'refused'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.syncer.recordError(context.Background(), f.feed.ID, "boom"); err == nil {
+		t.Fatal("want the refused write's error")
+	}
+	if !strings.Contains(logs.String(), "event=feed.record_error_failed") {
+		t.Errorf("log lacks the failed write: %s", logs.String())
+	}
+}
+
 // A caller that left must not leave a fetch error on a healthy feed.
 func TestRecordErrorSkipsACanceledCaller(t *testing.T) {
 	eachBackend(t, func(t *testing.T, database *db.DB) {

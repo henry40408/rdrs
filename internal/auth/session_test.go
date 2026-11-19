@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,33 @@ func TestAuthenticateAcceptsALiveSession(t *testing.T) {
 	}
 	if principal.CSRFToken != secret.DeriveCSRF(testSecret, session.SessionToken) {
 		t.Error("csrf token must derive from the cookie token")
+	}
+}
+
+// A touch that fails must neither fail the request nor go unlogged.
+func TestAuthenticateLogsAFailedTouchAndStillSucceeds(t *testing.T) {
+	logs := &bytes.Buffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	f := newFixture(t)
+	session := f.session(f.user("alice", models.RoleUser).ID)
+	f.exec(`UPDATE session SET last_seen_at = '2000-01-01 00:00:00'`)
+
+	if _, err := f.authenticator.Authenticate(f.request(session.SessionToken)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "auth.touch_failed") {
+		t.Fatalf("a successful touch was logged: %s", logs.String())
+	}
+
+	f.exec(`UPDATE session SET last_seen_at = '2000-01-01 00:00:00'`)
+	f.refuseWrites("session", "update")
+	if _, err := f.authenticator.Authenticate(f.request(session.SessionToken)); err != nil {
+		t.Fatalf("a failed touch failed the request: %v", err)
+	}
+	if !strings.Contains(logs.String(), "event=auth.touch_failed") {
+		t.Errorf("log lacks the failed touch: %s", logs.String())
 	}
 }
 
