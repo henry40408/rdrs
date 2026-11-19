@@ -61,7 +61,30 @@ type kagiResponse struct {
 	OutputData *struct {
 		Markdown *string `json:"markdown"`
 	} `json:"output_data"`
-	Error *string `json:"error"`
+	Error kagiError `json:"error"`
+}
+
+// kagiError is the body's "error" member. Kagi sends a string for a failure
+// but also `false` (or null) when there is none, so a plain string field made
+// every such response unparseable.
+type kagiError string
+
+func (e *kagiError) UnmarshalJSON(data []byte) error {
+	var asString string
+	if json.Unmarshal(data, &asString) == nil {
+		*e = kagiError(asString)
+		return nil
+	}
+	switch string(data) {
+	case "false", "null":
+		*e = ""
+	case "true":
+		*e = "Kagi reported an error"
+	default:
+		// An object or array: keep it as text rather than lose the reason.
+		*e = kagiError(data)
+	}
+	return nil
 }
 
 // Summarize asks Kagi for a summary of the URL.
@@ -134,8 +157,8 @@ func statusMessage(response *http.Response) string {
 }
 
 func resultOf(body kagiResponse) *Result {
-	if body.Error != nil {
-		return failure(*body.Error)
+	if body.Error != "" {
+		return failure(string(body.Error))
 	}
 	if body.OutputData == nil || body.OutputData.Markdown == nil {
 		return failure("No summary returned from Kagi")

@@ -99,6 +99,20 @@ func TestMarkdownWithoutTitleKeepsEverything(t *testing.T) {
 	}
 }
 
+func TestNoErrorMemberStillYieldsTheSummary(t *testing.T) {
+	config := KagiConfig{SessionToken: "t"}
+	for _, body := range []string{
+		`{"error":false,"output_data":{"markdown":"ok"}}`,
+		`{"error":null,"output_data":{"markdown":"ok"}}`,
+		`{"error":"","output_data":{"markdown":"ok"}}`,
+	} {
+		result, err := summarizeAt(t, kagiServer(t, 200, body, nil), config)
+		if err != nil || !result.Success || text(result.OutputText) != "ok" {
+			t.Errorf("%s: %+v %v", body, result, err)
+		}
+	}
+}
+
 func TestNotConfigured(t *testing.T) {
 	result, err := Summarize(context.Background(), Request{URL: "https://x"})
 	if err != nil || result.Success || text(result.Error) != "Kagi is not configured" {
@@ -110,6 +124,10 @@ func TestBodyLevelFailures(t *testing.T) {
 	config := KagiConfig{SessionToken: "t"}
 	for body, want := range map[string]string{
 		`{"error":"nope"}`:                  "nope",
+		`{"error":true}`:                    "Kagi reported an error",
+		`{"error":[{"msg":"bad"}]}`:         `[{"msg":"bad"}]`,
+		`{"error":false}`:                   "No summary returned from Kagi",
+		`{"error":null}`:                    "No summary returned from Kagi",
 		`{}`:                                "No summary returned from Kagi",
 		`{"output_data":{}}`:                "No summary returned from Kagi",
 		`{"output_data":{"markdown":null}}`: "No summary returned from Kagi",
