@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/henry40408/rdrs/internal/models"
@@ -52,5 +54,31 @@ func TestReadChromeCachesAnAccountWithUnreadEntries(t *testing.T) {
 	}
 	if cached := app.App.Sidebar.Get(userID); cached == nil || cached.TotalUnread != 1 {
 		t.Errorf("cached = %+v", cached)
+	}
+}
+
+func TestReadChromeDoesNotCacheAfterAFailedQuery(t *testing.T) {
+	logs := &lockedBuffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	app := defaultITestApp(t)
+	userID, _ := app.SeedUserWithEntry("failing", fixturePassword)
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	app.App.readChrome(canceled, userID, nil)
+	for _, query := range []string{"settings", "categories", "feeds", "unread_by_feed", "summaries", "today_count"} {
+		if want := "query=" + query; !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q: %s", want, logs.String())
+		}
+	}
+	if cached := app.App.Sidebar.Get(userID); cached != nil {
+		t.Fatalf("a chrome built from failed queries was cached: %+v", cached)
+	}
+
+	chrome := app.App.readChrome(context.Background(), userID, nil)
+	if len(chrome.Categories) == 0 {
+		t.Error("categories missing after the queries recovered")
 	}
 }
