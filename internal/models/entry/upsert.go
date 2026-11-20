@@ -121,25 +121,3 @@ func insertNew(ctx context.Context, e db.Executor, u *Upsert, contentText *strin
 	}
 	return UpsertResult{Outcome: Inserted, ID: id}, nil
 }
-
-// UpsertAndLoad upserts and returns the stored entry plus whether it is new.
-// It is an error to call it for a tombstoned guid.
-func UpsertAndLoad(ctx context.Context, e db.Executor, u *Upsert) (*Entry, bool, error) {
-	result, err := UpsertEntry(ctx, e, u)
-	if err != nil {
-		return nil, false, err
-	}
-	if result.Outcome == SkippedTombstoned {
-		return nil, false, errors.New("entry: upsert for a tombstoned guid")
-	}
-	entry, err := mustFind(ctx, e, result.ID)
-	return entry, result.Outcome == Inserted, err
-}
-
-// InsertTombstone records a tombstone for (feedID, guid). It is idempotent.
-func InsertTombstone(ctx context.Context, e db.Executor, feedID int64, guid string) error {
-	_, err := e.ExecContext(ctx,
-		`INSERT INTO entry_tombstone (feed_id, guid) VALUES ($1, $2) ON CONFLICT(feed_id, guid) DO NOTHING`,
-		feedID, guid)
-	return err
-}

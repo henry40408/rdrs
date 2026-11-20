@@ -35,11 +35,6 @@ func (d Date) AddDays(n int) Date {
 	return dateOf(d.utcMidnight().AddDate(0, 0, n))
 }
 
-// DaysUntil is the number of calendar days from d to other.
-func (d Date) DaysUntil(other Date) int {
-	return int(other.utcMidnight().Sub(d.utcMidnight()) / (24 * time.Hour))
-}
-
 // Before reports whether d is earlier than other.
 func (d Date) Before(other Date) bool {
 	return d.utcMidnight().Before(other.utcMidnight())

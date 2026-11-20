@@ -19,6 +19,7 @@ import (
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/feedsync"
 	"github.com/henry40408/rdrs/internal/fetch"
+	"github.com/henry40408/rdrs/internal/icon"
 	"github.com/henry40408/rdrs/internal/migrate"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/secret"
@@ -161,15 +162,22 @@ func warnIfNoAdminForGroupMapping(ctx context.Context, logger *slog.Logger, cfg 
 	}
 }
 
+// newBackgroundSyncer is the Syncer the periodic sync worker uses; it fetches
+// feed icons like the server's own Syncer does.
+func newBackgroundSyncer(cfg config.Config, background *db.DB, fetcher *fetch.Fetcher) *feedsync.Syncer {
+	return &feedsync.Syncer{
+		DB: background, Fetcher: fetcher, DefaultUserAgent: cfg.UserAgent, Retry: fetch.DefaultRetry(),
+		FetchIcon: icon.ForProduction(fetcher),
+	}
+}
+
 // backgroundWorkers lists every loop that must finish before the database
 // closes. Each works on a background database handle so it yields to requests.
 func backgroundWorkers(in assembly, app *server.App, fetcher *fetch.Fetcher) []func(context.Context) {
 	background := in.db.Background()
 	syncWorker := &worker.Sync{
-		Syncer: &feedsync.Syncer{
-			DB: background, Fetcher: fetcher, DefaultUserAgent: in.cfg.UserAgent, Retry: fetch.DefaultRetry(),
-		},
-		DB: background, Sidebar: app.Sidebar, Events: app.Events,
+		Syncer: newBackgroundSyncer(in.cfg, background, fetcher),
+		DB:     background, Sidebar: app.Sidebar, Events: app.Events,
 	}
 	key, _ := in.cfg.ServiceTokenKey()
 	summaries := summarize.NewWorker(summarize.Worker{

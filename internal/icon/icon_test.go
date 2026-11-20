@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,31 @@ func TestFaviconFallsBackToHTMLLink(t *testing.T) {
 	img := loopback(t).favicon(context.Background(), server.URL+"/")
 	if img == nil || img.SourceURL != server.URL+"/assets/icon.png" {
 		t.Fatalf("img = %+v", img)
+	}
+}
+
+func TestFaviconReadsOnlyTheStartOfALargePage(t *testing.T) {
+	const link = `<link rel="icon" href="/assets/icon.png">`
+	padding := strings.Repeat("a", maxPageSize)
+	cases := []struct {
+		name string
+		page string
+		want bool
+	}{
+		{"link inside the cap", link + padding, true},
+		{"link past the cap", padding + link, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			server := serve(t, map[string]http.HandlerFunc{
+				"/":                reply("text/html", []byte(c.page)),
+				"/assets/icon.png": reply("image/png", pngBytes),
+			})
+			img := loopback(t).favicon(context.Background(), server.URL+"/")
+			if (img != nil) != c.want {
+				t.Errorf("img = %+v, want found = %v", img, c.want)
+			}
+		})
 	}
 }
 

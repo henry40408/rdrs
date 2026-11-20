@@ -19,8 +19,8 @@ const (
 	orphanImageBatchSize = 500
 )
 
-// Cleanup deletes expired summaries, sessions and API tokens, and feed images
-// whose feed is gone. Sessions and tokens back up the lazy per-request
+// Cleanup deletes expired summaries, sessions and API tokens, spent or expired
+// account invites, and feed images whose feed is gone. Sessions and tokens back up the lazy per-request
 // deletes, which never fire for an abandoned device. DB should be a
 // background handle.
 type Cleanup struct {
@@ -55,6 +55,7 @@ func (c *Cleanup) Sweep(ctx context.Context) {
 		}},
 		{"session", func(ctx context.Context) (int64, error) { return models.DeleteExpiredSessions(ctx, c.DB) }},
 		{"api_token", func(ctx context.Context) (int64, error) { return models.DeleteExpiredTokens(ctx, c.DB) }},
+		{"invite", func(ctx context.Context) (int64, error) { return models.DeleteStaleInvites(ctx, c.DB) }},
 		{"feed_image", c.deleteOrphanedFeedImages},
 	}
 	for _, sweep := range sweeps {

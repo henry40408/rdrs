@@ -116,15 +116,6 @@ func CountByUser(ctx context.Context, e db.Executor, userID int64, f *Filter) (i
 		 WHERE `+q.whereClause(), q.binds...)
 }
 
-// CountUnreadByUser counts a user's unread entries.
-func CountUnreadByUser(ctx context.Context, e db.Executor, userID int64) (int64, error) {
-	return scalar(ctx, e,
-		`SELECT COUNT(*) FROM entry e
-		 INNER JOIN feed f ON e.feed_id = f.id
-		 INNER JOIN category c ON f.category_id = c.id
-		 WHERE c.user_id = $1 AND e.read_at IS NULL`, userID)
-}
-
 func scalar(ctx context.Context, e db.Executor, query string, args ...any) (int64, error) {
 	var n int64
 	err := e.QueryRowContext(ctx, query, args...).Scan(&n)

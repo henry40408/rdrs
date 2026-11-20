@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/henry40408/rdrs/internal/config"
 )
 
 // Dialect picks the backend-specific SQL fragment where SQLite and PostgreSQL
@@ -17,14 +15,6 @@ const (
 	DialectSQLite Dialect = iota
 	DialectPostgres
 )
-
-// DialectFor maps a configured backend to its dialect.
-func DialectFor(backend config.Backend) Dialect {
-	if backend == config.Postgres {
-		return DialectPostgres
-	}
-	return DialectSQLite
-}
 
 // TimeBound renders t for comparison against a stored entry timestamp. SQLite
 // keeps those at second precision in the space form, so the sub-second part

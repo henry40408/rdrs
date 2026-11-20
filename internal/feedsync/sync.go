@@ -21,9 +21,15 @@ type Syncer struct {
 	DB               *db.DB
 	Fetcher          *fetch.Fetcher
 	DefaultUserAgent string
-	// FetchIcon is nil until the icon package is wired; then no icon is fetched.
+	// FetchIcon finds a feed's icon; when nil no icon is fetched.
 	FetchIcon IconFetcher
-	Retry     fetch.RetryConfig
+	// IconTimeout bounds one feed's icon refresh; zero means iconBudget.
+	IconTimeout time.Duration
+	Retry       fetch.RetryConfig
+	// Now is the clock of the icon circuit breaker; nil means time.Now.
+	Now func() time.Time
+
+	iconBreaker iconBreaker
 }
 
 // Result is what a successful refresh changed.
@@ -189,13 +195,13 @@ func (s *Syncer) readFeed(ctx context.Context, feedID int64, resp *http.Response
 }
 
 func (s *Syncer) store(ctx context.Context, feed *models.Feed, parsed *feedparse.Feed, v validators) (Result, error) {
-	if err := s.refreshIcon(ctx, feed, parsed); err != nil {
-		return Result{}, err
-	}
 	counts, err := apply(ctx, s.DB, parsed, batch{feedID: feed.ID, feedTimestamp: parsed.Timestamp(), validators: v})
 	if err != nil {
 		return Result{}, err
 	}
+	// After the entries are written, so a slow icon host cannot starve them of
+	// the sync deadline; an icon is cosmetic and never fails the sync.
+	s.refreshIconWithinBudget(ctx, feed, parsed)
 	slog.Info("feed refreshed", "event", "feed.refreshed", "feed_id", feed.ID, "new_entries", counts.New,
 		"updated_entries", counts.Updated, "unchanged_entries", counts.Unchanged, "skipped_entries", counts.Skipped)
 	return Result{NewEntries: counts.New, UpdatedEntries: counts.Updated}, nil

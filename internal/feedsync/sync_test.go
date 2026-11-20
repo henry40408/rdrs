@@ -15,6 +15,7 @@ import (
 
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
+	"github.com/henry40408/rdrs/internal/feedparse"
 	"github.com/henry40408/rdrs/internal/fetch"
 	"github.com/henry40408/rdrs/internal/migrate"
 	"github.com/henry40408/rdrs/internal/models"
@@ -264,6 +265,81 @@ func TestIconFailureDoesNotFailTheSync(t *testing.T) {
 	}
 	if result, err := f.syncer.Refresh(context.Background(), f.feed.ID); err != nil || result.NewEntries != 2 {
 		t.Fatalf("result = %+v, %v", result, err)
+	}
+}
+
+// The icon host hangs until the sync's own deadline passes. The entries are
+// written before the icon is tried, so the sync still succeeds.
+func TestAHangingIconHostDoesNotFailTheSync(t *testing.T) {
+	f := newFixture(t, serveFeed)
+	f.syncer.FetchIcon = func(ctx context.Context, _ IconCandidates) (*FetchedIcon, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := f.syncer.Refresh(ctx, f.feed.ID)
+
+	if err != nil || result.NewEntries != 2 {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+}
+
+func TestTheIconRefreshHasItsOwnTimeout(t *testing.T) {
+	f := newFixture(t, serveFeed)
+	f.syncer.IconTimeout = 20 * time.Millisecond
+	f.syncer.FetchIcon = func(ctx context.Context, _ IconCandidates) (*FetchedIcon, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	started := time.Now()
+
+	result, err := f.syncer.Refresh(context.Background(), f.feed.ID)
+
+	if err != nil || result.NewEntries != 2 {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("sync took %v; the icon timeout did not apply", elapsed)
+	}
+}
+
+func TestTheIconRefreshDefaultsToItsBudget(t *testing.T) {
+	f := newFixture(t, serveFeed)
+	var remaining time.Duration
+	f.syncer.FetchIcon = func(ctx context.Context, _ IconCandidates) (*FetchedIcon, error) {
+		deadline, _ := ctx.Deadline()
+		remaining = time.Until(deadline)
+		return nil, nil
+	}
+
+	if _, err := f.syncer.Refresh(context.Background(), f.feed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if remaining < 25*time.Second || remaining > 30*time.Second {
+		t.Errorf("icon deadline in %v, want about 30s", remaining)
+	}
+}
+
+func TestAFailedFreshnessCheckIsLoggedNotReturned(t *testing.T) {
+	var logs strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	f := newFixture(t, serveFeed)
+	f.syncer.FetchIcon = func(context.Context, IconCandidates) (*FetchedIcon, error) {
+		t.Error("an icon was fetched although the freshness check failed")
+		return nil, nil
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	f.syncer.refreshIconWithinBudget(cancelled, f.feed, &feedparse.Feed{})
+
+	if !strings.Contains(logs.String(), "feed.icon_refresh_failed") {
+		t.Errorf("log = %q, want the failure logged", logs.String())
 	}
 }
 

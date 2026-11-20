@@ -139,3 +139,6 @@ func TestDisabledContext(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// IsEnabled reports whether this reader tracks opens at all.
+func (c Context) IsEnabled() bool { return c.EnabledAt != nil }

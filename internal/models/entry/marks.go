@@ -51,18 +51,6 @@ func StarEntry(ctx context.Context, e db.Executor, id int64) (*Entry, error) {
 	return mustFind(ctx, e, id)
 }
 
-// UnstarEntry clears starred_at and returns the entry.
-func UnstarEntry(ctx context.Context, e db.Executor, id int64) (*Entry, error) {
-	rows, err := exec(ctx, e, updateEntry+clearStarSQL+" WHERE id = $1", id)
-	if err != nil {
-		return nil, err
-	}
-	if rows == 0 {
-		return nil, ErrNotFound
-	}
-	return mustFind(ctx, e, id)
-}
-
 func mustFind(ctx context.Context, e db.Executor, id int64) (*Entry, error) {
 	entry, err := FindByID(ctx, e, id)
 	if err != nil {

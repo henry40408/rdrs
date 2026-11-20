@@ -277,3 +277,8 @@ func TestRustVectors(t *testing.T) {
 		}
 	}
 }
+
+// DaysUntil is the number of calendar days from d to other.
+func (d Date) DaysUntil(other Date) int {
+	return int(other.utcMidnight().Sub(d.utcMidnight()) / (24 * time.Hour))
+}

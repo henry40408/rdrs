@@ -47,11 +47,7 @@ func (s *Syncer) refreshGroup(ctx context.Context, group []models.Feed) []Bucket
 	slots := make([]*BucketResult, len(group))
 	var wg sync.WaitGroup
 	for i := range group {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			slots[i] = s.refreshOne(ctx, group[i].ID)
-		}()
+		wg.Go(func() { slots[i] = s.refreshOne(ctx, group[i].ID) })
 	}
 	wg.Wait()
 	var results []BucketResult
