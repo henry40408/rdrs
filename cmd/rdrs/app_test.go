@@ -8,7 +8,19 @@ import (
 	"testing"
 
 	"github.com/henry40408/rdrs/internal/config"
+	"github.com/henry40408/rdrs/internal/fetch"
 )
+
+func TestTheBackgroundSyncerFetchesFeedIcons(t *testing.T) {
+	syncer := newBackgroundSyncer(config.Config{UserAgent: "ua"}, nil, fetch.NewFetcher(fetch.Policy{}))
+
+	if syncer.FetchIcon == nil {
+		t.Error("the background syncer has no icon fetcher, so feeds it syncs never get an icon")
+	}
+	if syncer.DefaultUserAgent != "ua" {
+		t.Errorf("DefaultUserAgent = %q", syncer.DefaultUserAgent)
+	}
+}
 
 func TestNewApplicationRefusesAConfigurationItCannotServe(t *testing.T) {
 	cases := []struct {

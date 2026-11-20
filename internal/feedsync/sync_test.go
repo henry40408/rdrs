@@ -267,6 +267,43 @@ func TestIconFailureDoesNotFailTheSync(t *testing.T) {
 	}
 }
 
+// The icon host hangs until the sync's own deadline passes. The entries are
+// written before the icon is tried, so the sync still succeeds.
+func TestAHangingIconHostDoesNotFailTheSync(t *testing.T) {
+	f := newFixture(t, serveFeed)
+	f.syncer.FetchIcon = func(ctx context.Context, _ IconCandidates) (*FetchedIcon, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := f.syncer.Refresh(ctx, f.feed.ID)
+
+	if err != nil || result.NewEntries != 2 {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+}
+
+func TestTheIconRefreshHasItsOwnTimeout(t *testing.T) {
+	f := newFixture(t, serveFeed)
+	f.syncer.IconTimeout = 20 * time.Millisecond
+	f.syncer.FetchIcon = func(ctx context.Context, _ IconCandidates) (*FetchedIcon, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	started := time.Now()
+
+	result, err := f.syncer.Refresh(context.Background(), f.feed.ID)
+
+	if err != nil || result.NewEntries != 2 {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("sync took %v; the icon timeout did not apply", elapsed)
+	}
+}
+
 func TestLatestPicksTheNewestNonNil(t *testing.T) {
 	early, late := time.Unix(100, 0), time.Unix(200, 0)
 	if got := latest(nil, &early, &late, nil); got != &late {

@@ -3,6 +3,7 @@ package feedsync
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/henry40408/rdrs/internal/feedparse"
 	"github.com/henry40408/rdrs/internal/models"
@@ -10,6 +11,9 @@ import (
 
 // iconMaxAgeDays is how long a stored feed icon is kept before a refetch.
 const iconMaxAgeDays = 7
+
+// iconBudget bounds one feed's whole icon chain (up to five requests).
+const iconBudget = 30 * time.Second
 
 // IconCandidates are where a feed's icon may be found.
 type IconCandidates struct {
@@ -28,6 +32,20 @@ type FetchedIcon struct {
 
 // IconFetcher finds a feed's icon. A nil icon with a nil error means none exists.
 type IconFetcher func(ctx context.Context, candidates IconCandidates) (*FetchedIcon, error)
+
+// refreshIconWithinBudget runs refreshIcon under its own timeout and only logs
+// a failure, because the entries are already stored.
+func (s *Syncer) refreshIconWithinBudget(ctx context.Context, feed *models.Feed, parsed *feedparse.Feed) {
+	budget := s.IconTimeout
+	if budget <= 0 {
+		budget = iconBudget
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if err := s.refreshIcon(ctx, feed, parsed); err != nil {
+		slog.Warn("feed icon refresh failed", "event", "feed.icon_refresh_failed", "feed_id", feed.ID, "error", err)
+	}
+}
 
 // refreshIcon stores the feed icon when it is older than a week. Only the
 // freshness check can fail the sync; fetch and save failures are logged.

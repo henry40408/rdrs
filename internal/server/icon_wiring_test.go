@@ -97,24 +97,47 @@ func TestAnIconFetchErrorDoesNotFailTheSync(t *testing.T) {
 	}
 }
 
-// Icons ride the same SSRF policy as feeds: the allow list names 127.0.0.1
-// only, so a logo on another loopback address must never be requested.
-func TestAnIconOutsideTheFetchPolicyIsNotRequested(t *testing.T) {
+// logoFetchedFrom syncs a feed whose logo is on logoHost, served by a second
+// server, and returns the stored icon and how many requests that server got.
+func logoFetchedFrom(t *testing.T, logoHost string) (*models.Image, int32) {
+	t.Helper()
 	var hits atomic.Int32
-	logoServer := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	logoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(iconPNG)
+	}))
 	t.Cleanup(logoServer.Close)
 	_, port, _ := strings.Cut(strings.TrimPrefix(logoServer.URL, "http://"), ":")
 	feedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
 		_, _ = fmt.Fprintf(w, `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>
-<image><url>http://127.0.0.2:%s/logo.png</url></image>
-<item><guid>a</guid><title>A</title></item></channel></rss>`, port)
+<image><url>http://%s:%s/logo.png</url></image>
+<item><guid>a</guid><title>A</title></item></channel></rss>`, logoHost, port)
 	}))
 	t.Cleanup(feedServer.Close)
 
 	image, err := refreshNewFeed(t, feedServer)
 
-	if err != nil || image != nil || hits.Load() != 0 {
-		t.Errorf("image = %v, err = %v, logo hits = %d; want none", image, err, hits.Load())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return image, hits.Load()
+}
+
+// Icons ride the same SSRF policy as feeds: the allow list names the IP
+// 127.0.0.1 only, so a logo on the host name localhost (which exists on every
+// OS, unlike 127.0.0.2 on macOS) must never be requested. The control run
+// serves the same logo from the allowed address, so the test can fail.
+func TestAnIconOutsideTheFetchPolicyIsNotRequested(t *testing.T) {
+	image, hits := logoFetchedFrom(t, "127.0.0.1")
+	if image == nil || hits == 0 {
+		t.Fatalf("control: image = %v, logo hits = %d; the allowed address must be fetched", image, hits)
+	}
+
+	image, hits = logoFetchedFrom(t, "localhost")
+
+	if image != nil || hits != 0 {
+		t.Errorf("image = %v, logo hits = %d; want none", image, hits)
 	}
 }
