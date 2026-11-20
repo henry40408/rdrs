@@ -8,6 +8,8 @@ import (
 const (
 	iconBackoffBase = time.Hour
 	iconBackoffMax  = 24 * time.Hour
+	// iconBackoffMaxShift is the doubling count after which 1 h exceeds 24 h.
+	iconBackoffMaxShift = 5
 	// iconBreakerMaxEntries bounds the memory held for deleted feeds.
 	iconBreakerMaxEntries = 4096
 )
@@ -78,11 +80,8 @@ func (b *iconBreaker) makeRoom(now time.Time) {
 	}
 }
 
-// iconBackoff is 1 h for the first failure, doubling up to 24 h.
+// iconBackoff is 1 h for the first failure, doubling up to 24 h. The shift is
+// clamped so that a long failure streak cannot overflow the duration.
 func iconBackoff(consecutive int) time.Duration {
-	pause := iconBackoffBase
-	for i := 1; i < consecutive && pause < iconBackoffMax; i++ {
-		pause *= 2
-	}
-	return min(pause, iconBackoffMax)
+	return min(iconBackoffBase<<min(consecutive-1, iconBackoffMaxShift), iconBackoffMax)
 }
