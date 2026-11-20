@@ -809,6 +809,7 @@ func (a *App) deletePasskey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, passkeyError(err))
 		return
 	}
+	a.Audit.PasskeyRemoved(principal.Session.SessionToken, principal.User.ID, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
