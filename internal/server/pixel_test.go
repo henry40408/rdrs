@@ -80,6 +80,14 @@ func enablePixelTracking(t *testing.T, app *itestApp, username string) {
 	if err := models.UpdatePixelTracking(context.Background(), app.DB, pixelUserID(t, app, username), true); err != nil {
 		t.Fatal(err)
 	}
+	// created_at and the opt-in baseline have one-second resolution, so entries
+	// seeded just before opting in would drop out of the denominator whenever
+	// the two straddle a second boundary. Real entries are created after opt-in.
+	if _, err := app.DB.ExecContext(context.Background(),
+		"UPDATE user_settings SET pixel_tracking_enabled_at = datetime('now', '-1 day') WHERE user_id = $1",
+		pixelUserID(t, app, username)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func openCount(t *testing.T, app *itestApp) int64 {
