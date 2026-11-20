@@ -17,6 +17,10 @@ import (
 // MaxSize is the largest icon kept, in bytes.
 const MaxSize = 256 * 1024
 
+// maxPageSize is how much of a site's HTML is read. The icon link sits in the
+// head, so a larger page is cut off and the start parsed.
+const maxPageSize = 1 << 20
+
 // Image is an icon ready to store.
 type Image struct {
 	Data        []byte
@@ -181,7 +185,7 @@ func (f Fetcher) page(ctx context.Context, siteURL string) string {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return ""
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPageSize))
 	if err != nil {
 		return ""
 	}
