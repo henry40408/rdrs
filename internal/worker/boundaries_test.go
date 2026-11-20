@@ -116,7 +116,7 @@ func TestCleanupSweepReportsEachFailure(t *testing.T) {
 
 	(&Cleanup{DB: f.database}).Sweep(context.Background())
 
-	if got := strings.Count(logs.String(), "event=cleanup.sweep_failed"); got != 4 {
+	if got := strings.Count(logs.String(), "event=cleanup.sweep_failed"); got != 5 {
 		t.Errorf("failed sweeps = %d, logs = %s", got, logs)
 	}
 	if strings.Contains(logs.String(), "event=cleanup.swept") {
