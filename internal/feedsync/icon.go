@@ -53,6 +53,10 @@ func (s *Syncer) refreshIcon(ctx context.Context, feed *models.Feed, parsed *fee
 	if s.FetchIcon == nil {
 		return nil
 	}
+	if s.iconBreaker.isOpen(feed.ID, s.now()) {
+		slog.Debug("feed icon refresh skipped after earlier failures", "event", "feed.icon_skipped", "feed_id", feed.ID)
+		return nil
+	}
 	stale, err := models.ImageNeedsRefresh(ctx, s.DB, models.ImageRefreshParams{
 		EntityType: models.EntityFeed, EntityID: feed.ID, MaxAgeDays: iconMaxAgeDays,
 	})
@@ -65,14 +69,24 @@ func (s *Syncer) refreshIcon(ctx context.Context, feed *models.Feed, parsed *fee
 	})
 	if err != nil {
 		slog.Warn("failed to fetch feed icon", "event", "feed.icon_fetch_failed", "feed_id", feed.ID, "error", err)
+		s.iconBreaker.recordFailure(feed.ID, s.now())
 		return nil
 	}
 	if icon == nil {
 		slog.Debug("no icon found for feed", "event", "feed.icon_missing", "feed_id", feed.ID)
+		s.iconBreaker.recordFailure(feed.ID, s.now())
 		return nil
 	}
+	s.iconBreaker.recordSuccess(feed.ID)
 	s.saveIcon(ctx, feed.ID, icon)
 	return nil
+}
+
+func (s *Syncer) now() time.Time {
+	if s.Now == nil {
+		return time.Now()
+	}
+	return s.Now()
 }
 
 func (s *Syncer) saveIcon(ctx context.Context, feedID int64, icon *FetchedIcon) {

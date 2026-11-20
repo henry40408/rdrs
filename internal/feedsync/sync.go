@@ -26,6 +26,10 @@ type Syncer struct {
 	// IconTimeout bounds one feed's icon refresh; zero means iconBudget.
 	IconTimeout time.Duration
 	Retry       fetch.RetryConfig
+	// Now is the clock of the icon circuit breaker; nil means time.Now.
+	Now func() time.Time
+
+	iconBreaker iconBreaker
 }
 
 // Result is what a successful refresh changed.
