@@ -17,6 +17,7 @@ import (
 	"github.com/henry40408/rdrs/internal/events"
 	"github.com/henry40408/rdrs/internal/feedsync"
 	"github.com/henry40408/rdrs/internal/fetch"
+	"github.com/henry40408/rdrs/internal/icon"
 	"github.com/henry40408/rdrs/internal/summarize"
 	"github.com/henry40408/rdrs/internal/version"
 )
@@ -73,7 +74,7 @@ func NewApp(options Options) *App {
 	if options.Syncer == nil {
 		options.Syncer = &feedsync.Syncer{
 			DB: options.DB, Fetcher: options.Fetcher, DefaultUserAgent: options.Config.UserAgent,
-			Retry: fetch.DefaultRetry(),
+			Retry: fetch.DefaultRetry(), FetchIcon: icon.ForProduction(options.Fetcher),
 		}
 	}
 	if options.Now == nil {

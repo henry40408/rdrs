@@ -19,6 +19,7 @@ import (
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/internal/feedsync"
 	"github.com/henry40408/rdrs/internal/fetch"
+	"github.com/henry40408/rdrs/internal/icon"
 	"github.com/henry40408/rdrs/internal/migrate"
 	"github.com/henry40408/rdrs/internal/models"
 	"github.com/henry40408/rdrs/internal/secret"
@@ -168,6 +169,7 @@ func backgroundWorkers(in assembly, app *server.App, fetcher *fetch.Fetcher) []f
 	syncWorker := &worker.Sync{
 		Syncer: &feedsync.Syncer{
 			DB: background, Fetcher: fetcher, DefaultUserAgent: in.cfg.UserAgent, Retry: fetch.DefaultRetry(),
+			FetchIcon: icon.ForProduction(fetcher),
 		},
 		DB: background, Sidebar: app.Sidebar, Events: app.Events,
 	}
