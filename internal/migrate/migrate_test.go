@@ -3,9 +3,7 @@ package migrate
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
@@ -13,11 +11,6 @@ import (
 	"github.com/henry40408/rdrs/internal/config"
 	"github.com/henry40408/rdrs/internal/db"
 	"github.com/henry40408/rdrs/migrations"
-)
-
-const (
-	fixturePath = "testdata/sqlx_migrated.sqlite3"
-	vectorsPath = "../../testdata/vectors/migrations.json"
 )
 
 type appliedRow struct {
@@ -40,19 +33,6 @@ func openFile(t *testing.T, path string) *db.DB {
 func openEmpty(t *testing.T) *db.DB {
 	t.Helper()
 	return openFile(t, filepath.Join(t.TempDir(), "empty.sqlite3"))
-}
-
-func openFixtureCopy(t *testing.T) *db.DB {
-	t.Helper()
-	raw, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "rust.sqlite3")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return openFile(t, path)
 }
 
 func readApplied(t *testing.T, database *db.DB) []appliedRow {
@@ -101,7 +81,7 @@ func TestRunOnEmptyDatabaseMatchesRustBuiltDatabase(t *testing.T) {
 	if err := Run(ctx, fresh); err != nil {
 		t.Fatal(err)
 	}
-	rust := openFixtureCopy(t)
+	rust := openRustMigrated(t)
 
 	got, want := readApplied(t, fresh), readApplied(t, rust)
 	if len(got) != 16 {
@@ -124,7 +104,7 @@ func TestRunOnEmptyDatabaseMatchesRustBuiltDatabase(t *testing.T) {
 }
 
 func TestRunOnRustMigratedDatabaseIsNoOp(t *testing.T) {
-	database := openFixtureCopy(t)
+	database := openRustMigrated(t)
 	before := readInstalledOn(t, database)
 	if err := Run(context.Background(), database); err != nil {
 		t.Fatal(err)
@@ -176,7 +156,7 @@ func TestRunRecordsExecutionTime(t *testing.T) {
 
 func TestRunRejectsTamperedChecksum(t *testing.T) {
 	ctx := context.Background()
-	database := openFixtureCopy(t)
+	database := openRustMigrated(t)
 	if _, err := database.ExecContext(ctx, "UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 3"); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +167,7 @@ func TestRunRejectsTamperedChecksum(t *testing.T) {
 
 func TestRunRejectsDirtyDatabase(t *testing.T) {
 	ctx := context.Background()
-	database := openFixtureCopy(t)
+	database := openRustMigrated(t)
 	if _, err := database.ExecContext(ctx, "UPDATE _sqlx_migrations SET success = 0 WHERE version = 5"); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +178,7 @@ func TestRunRejectsDirtyDatabase(t *testing.T) {
 
 func TestRunRejectsUnknownAppliedVersion(t *testing.T) {
 	ctx := context.Background()
-	database := openFixtureCopy(t)
+	database := openRustMigrated(t)
 	_, err := database.ExecContext(ctx,
 		"INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (999, 'future', 1, x'00', 1)")
 	if err != nil {
@@ -210,20 +190,7 @@ func TestRunRejectsUnknownAppliedVersion(t *testing.T) {
 }
 
 func TestEmbeddedChecksumsMatchRustVectors(t *testing.T) {
-	raw, err := os.ReadFile(vectorsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors map[string][]struct {
-		Description string `json:"description"`
-		File        string `json:"file"`
-		SHA384      string `json:"sha384"`
-		Version     int64  `json:"version"`
-	}
-	if err := json.Unmarshal(raw, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	for dir, want := range vectors {
+	for dir, want := range rustMigrationVectors {
 		got, err := load(migrations.FS, dir)
 		if err != nil {
 			t.Fatal(err)
