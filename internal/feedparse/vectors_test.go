@@ -2,8 +2,6 @@ package feedparse
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -11,8 +9,9 @@ import (
 	"time"
 )
 
-// vectorEntry and vectorFeed are what the Rust generator wrote for each
-// fixture, so comparing them checks every field the sync reads.
+// vectorEntry and vectorFeed hold the expectations the Rust generator wrote
+// for each feed in vectors_cases_test.go, so comparing them checks every field
+// the sync reads.
 type vectorEntry struct {
 	GUID      string   `json:"guid"`
 	Title     *string  `json:"title"`
@@ -70,25 +69,10 @@ func describe(feed *Feed) vectorFeed {
 }
 
 func TestRustFeedVectors(t *testing.T) {
-	files, err := filepath.Glob("../../testdata/vectors/feeds/*.xml")
-	if err != nil || len(files) < 17 {
-		t.Fatalf("fixtures: %v, %d files", err, len(files))
-	}
-	for _, file := range files {
-		t.Run(filepath.Base(file), func(t *testing.T) {
-			body, err := os.ReadFile(file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			raw, err := os.ReadFile(strings.TrimSuffix(file, ".xml") + ".json")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var want vectorFeed
-			if err := json.Unmarshal(raw, &want); err != nil {
-				t.Fatal(err)
-			}
-			feed, err := Parse(body)
+	for _, vector := range feedVectors {
+		t.Run(vector.name, func(t *testing.T) {
+			want := vector.want
+			feed, err := Parse([]byte(vector.xml))
 			if want.Error != "" {
 				if err == nil || err.Error() != want.Error {
 					t.Fatalf("error = %v, want %q", err, want.Error)

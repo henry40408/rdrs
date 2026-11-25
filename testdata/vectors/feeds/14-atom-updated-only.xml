@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom"><title>Updated only</title><id>u</id><updated>2024-05-06T07:08:09-07:00</updated>
-<entry><title>U1</title><id>u1</id><link href="https://u.example/1"/><updated>2024-05-06T07:08:09-07:00</updated></entry>
-<entry><title>U2</title><id>u2</id><link href="https://u.example/2"/><published>2024-05-01T00:00:00Z</published></entry>
-<entry><title>U3</title><id>u3</id><link href="https://u.example/3"/><published>bad date</published><updated>2024-05-02T00:00:00Z</updated></entry>
-</feed>
