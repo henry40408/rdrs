@@ -19,14 +19,14 @@ import (
 )
 
 // Route is one method and path. Paths use the axum notation the Rust router
-// used ({id}, {*rest}), so testdata/routes.txt can be compared with them.
+// used ({id}, {*rest}), so the pinnedRoutes test list can be compared with them.
 type Route struct {
 	Method  string
 	Path    string
 	Handler http.HandlerFunc
 }
 
-// String is the "METHOD /path" form used in testdata/routes.txt.
+// String is the "METHOD /path" form used in pinnedRoutes.
 func (r Route) String() string { return r.Method + " " + r.Path }
 
 // pattern converts the axum path to a net/http pattern: {*rest} becomes

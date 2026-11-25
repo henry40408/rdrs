@@ -89,10 +89,10 @@ e2e/                 # Separate Go module: godog + chromedp suite and audits
 ### Router (`internal/server/routes.go`)
 
 `App.routes()` is the single registry of `Route{Method, Path, Handler}`;
-`internal/server/testdata/routes.txt` pins the table. Patterns are
-`net/http.ServeMux` patterns with the method included, so a known path with
-another method answers 405 with `Allow`. Unmatched paths render the 404 page
-when signed in and redirect to `/login` otherwise.
+`pinnedRoutes` in `internal/server/routes_list_test.go` pins the table.
+Patterns are `net/http.ServeMux` patterns with the method included, so a known
+path with another method answers 405 with `Allow`. Unmatched paths render the
+404 page when signed in and redirect to `/login` otherwise.
 
 **Middleware stack**, outermost first (`buildHandler`):
 

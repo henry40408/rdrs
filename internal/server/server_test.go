@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -51,32 +50,24 @@ func TestEveryResponseCarriesTheOuterLayers(t *testing.T) {
 }
 
 func TestRegisteredRoutesAreAllInTheRustRouteList(t *testing.T) {
-	data, err := os.ReadFile("testdata/routes.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	known := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for _, line := range pinnedRoutes {
 		known[line] = true
 	}
 	for _, route := range NewApp(Options{}).routes() {
 		if !known[route.String()] {
-			t.Errorf("%s is registered but is not in testdata/routes.txt", route)
+			t.Errorf("%s is registered but is not in pinnedRoutes (routes_list_test.go)", route)
 		}
 	}
 }
 
 func TestEveryRustRouteIsRegistered(t *testing.T) {
-	data, err := os.ReadFile("testdata/routes.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	registered := map[string]bool{}
 	for _, route := range NewApp(Options{}).routes() {
 		registered[route.String()] = true
 	}
 	var missing []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for _, line := range pinnedRoutes {
 		if !registered[line] {
 			missing = append(missing, line)
 		}
