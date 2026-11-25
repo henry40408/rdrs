@@ -2,7 +2,6 @@ package opml
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,91 +21,146 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func readVectors(t *testing.T, name string, into any) {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, into); err != nil {
-		t.Fatal(err)
-	}
-}
+const rustExportOutput = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head>
+<title>RDRS Subscriptions</title>
+</head>
+<body>
+<outline text="Tech" title="Tech">
+<outline type="rss" text="A Feed" title="A Feed" xmlUrl="https://a.example/feed.xml" htmlUrl="https://a.example/"/>
+<outline type="rss" text="https://b.example/rss?x=1&amp;y=2" title="https://b.example/rss?x=1&amp;y=2" xmlUrl="https://b.example/rss?x=1&amp;y=2"/>
+</outline>
+<outline text="News &amp; Views" title="News &amp; Views">
+<outline type="rss" text="C &amp; D" title="C &amp; D" xmlUrl="https://c.example/atom" htmlUrl="https://c.example/?a=1&amp;b=2"/>
+<outline type="rss" text="日本語" title="日本語" xmlUrl="https://e.example/日本語"/>
+</outline>
+<outline text="Q&quot;uote&apos;s &lt;b&gt;" title="Q&quot;uote&apos;s &lt;b&gt;">
+<outline type="rss" text="It&apos;s &quot;quoted&quot; &lt;tag&gt;" title="It&apos;s &quot;quoted&quot; &lt;tag&gt;" xmlUrl="https://d.example/&quot;q&quot;"/>
+</outline>
+</body>
+</opml>`
+
+const rustEmptyExportOutput = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head>
+<title>RDRS Subscriptions</title>
+</head>
+<body>
+</body>
+</opml>`
 
 func TestExportMatchesRust(t *testing.T) {
-	var v struct {
-		Categories []struct {
-			ID   int64
-			Name string
-		}
-		Feeds []struct {
-			CategoryID int64   `json:"category_id"`
-			SiteURL    *string `json:"site_url"`
-			Title      *string
-			URL        string
-		}
-		Output      string
-		EmptyOutput string `json:"empty_output"`
+	categories := []models.Category{
+		{ID: 1, Name: "Tech"},
+		{ID: 2, Name: "News &amp; Views"},
+		{ID: 3, Name: "Empty"},
+		{ID: 4, Name: `Q"uote's <b>`},
 	}
-	readVectors(t, "opml_export.json", &v)
-	var categories []models.Category
-	for _, c := range v.Categories {
-		categories = append(categories, models.Category{ID: c.ID, Name: c.Name})
+	feeds := []models.Feed{
+		{CategoryID: 1, SiteURL: ptr("https://a.example/"), Title: ptr("A Feed"), URL: "https://a.example/feed.xml"},
+		{CategoryID: 1, URL: "https://b.example/rss?x=1&y=2"},
+		{CategoryID: 2, SiteURL: ptr("https://c.example/?a=1&b=2"), Title: ptr("C &amp; D"), URL: "https://c.example/atom"},
+		{CategoryID: 4, Title: ptr(`It's "quoted" <tag>`), URL: `https://d.example/"q"`},
+		{CategoryID: 2, Title: ptr("日本語"), URL: "https://e.example/日本語"},
 	}
-	var feeds []models.Feed
-	for _, f := range v.Feeds {
-		feeds = append(feeds, models.Feed{CategoryID: f.CategoryID, SiteURL: f.SiteURL, Title: f.Title, URL: f.URL})
+	if got := Export(categories, feeds); got != rustExportOutput {
+		t.Fatalf("export differs:\n%s\nwant:\n%s", got, rustExportOutput)
 	}
-	if got := Export(categories, feeds); got != v.Output {
-		t.Fatalf("export differs:\n%s\nwant:\n%s", got, v.Output)
-	}
-	if got := Export(nil, nil); got != v.EmptyOutput {
-		t.Fatalf("empty export = %q, want %q", got, v.EmptyOutput)
+	if got := Export(nil, nil); got != rustEmptyExportOutput {
+		t.Fatalf("empty export = %q, want %q", got, rustEmptyExportOutput)
 	}
 }
 
-type outlineJSON struct {
-	Category string `json:"category"`
-	Feeds    []struct {
-		HTMLURL *string `json:"html_url"`
-		Title   *string `json:"title"`
-		XMLURL  string  `json:"xml_url"`
-	} `json:"feeds"`
-}
+func ptr[T any](v T) *T { return &v }
 
-func (o outlineJSON) toOutline() Outline {
-	out := Outline{CategoryName: o.Category}
-	for _, f := range o.Feeds {
-		out.Feeds = append(out.Feeds, Feed{Title: f.Title, XMLURL: f.XMLURL, HTMLURL: f.HTMLURL})
-	}
-	return out
+// wantErr is empty when the input must parse into outlines.
+var rustParseVectors = []struct {
+	input    string
+	outlines []Outline
+	wantErr  string
+}{
+	{
+		input: `<opml version="2.0"><body><outline text="Cat"><outline type="rss" text="F" xmlUrl="https://x/1"/></outline></body></opml>`,
+		outlines: []Outline{
+			{CategoryName: "Cat", Feeds: []Feed{
+				{Title: ptr("F"), XMLURL: "https://x/1"},
+			}},
+		},
+	},
+	{
+		input: `<opml><body><outline type="rss" text="Top" xmlUrl="https://x/top"/></body></opml>`,
+		outlines: []Outline{
+			{CategoryName: "Uncategorized", Feeds: []Feed{
+				{Title: ptr("Top"), XMLURL: "https://x/top"},
+			}},
+		},
+	},
+	{
+		input: `<opml><body><outline text="A"><outline text="B"><outline type="rss" text="F" xmlUrl="https://x/n" htmlUrl="https://x/"/></outline></outline></body></opml>`,
+		outlines: []Outline{
+			{CategoryName: "B", Feeds: []Feed{
+				{Title: ptr("F"), XMLURL: "https://x/n", HTMLURL: ptr("https://x/")},
+			}},
+		},
+	},
+	{
+		input: `<opml><body><outline title="OnlyTitle"><outline xmlUrl="https://x/notype"/></outline></body></opml>`,
+		outlines: []Outline{
+			{CategoryName: "OnlyTitle", Feeds: []Feed{
+				{XMLURL: "https://x/notype"},
+			}},
+		},
+	},
+	{
+		input: `<opml><body><outline text="Dup"><outline xmlUrl="https://x/1"/><outline xmlUrl="https://x/1"/></outline><outline text="Dup"><outline xmlUrl="https://x/2"/></outline></body></opml>`,
+		outlines: []Outline{
+			{CategoryName: "Dup", Feeds: []Feed{
+				{XMLURL: "https://x/1"},
+				{XMLURL: "https://x/1"},
+			}},
+			{CategoryName: "Dup", Feeds: []Feed{
+				{XMLURL: "https://x/2"},
+			}},
+		},
+	},
+	{
+		input: `<opml><body><outline text="E &amp;amp; F"><outline text="T &amp;amp; U" xmlUrl="https://x/?a=1&amp;amp;b=2"/></outline></body></opml>`,
+		outlines: []Outline{
+			{CategoryName: "E &amp; F", Feeds: []Feed{
+				{Title: ptr("T &amp; U"), XMLURL: "https://x/?a=1&amp;b=2"},
+			}},
+		},
+	},
+	{
+		input:   "<opml><body></body></opml>",
+		wantErr: "Invalid OPML format: No feeds found in OPML",
+	},
+	{
+		input:   "not xml at all",
+		wantErr: "Invalid OPML format: No feeds found in OPML",
+	},
+	{
+		input:   "",
+		wantErr: "Invalid OPML format: No feeds found in OPML",
+	},
 }
 
 func TestParseMatchesRust(t *testing.T) {
-	var cases []struct {
-		Input    string
-		Outlines []outlineJSON
-		Error    *string
-	}
-	readVectors(t, "opml_parse_cases.json", &cases)
-	for _, c := range cases {
-		got, err := Parse(c.Input)
-		if c.Error != nil {
-			if err == nil || err.Error() != *c.Error {
-				t.Errorf("%q: err = %v, want %q", c.Input, err, *c.Error)
+	for _, c := range rustParseVectors {
+		got, err := Parse(c.input)
+		if c.wantErr != "" {
+			if err == nil || err.Error() != c.wantErr {
+				t.Errorf("%q: err = %v, want %q", c.input, err, c.wantErr)
 			}
 			continue
 		}
 		if err != nil {
-			t.Errorf("%q: %v", c.Input, err)
+			t.Errorf("%q: %v", c.input, err)
 			continue
 		}
-		var want []Outline
-		for _, o := range c.Outlines {
-			want = append(want, o.toOutline())
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%q:\n got %+v\nwant %+v", c.Input, got, want)
+		if !reflect.DeepEqual(got, c.outlines) {
+			t.Errorf("%q:\n got %+v\nwant %+v", c.input, got, c.outlines)
 		}
 	}
 }

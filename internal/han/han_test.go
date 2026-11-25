@@ -1,8 +1,6 @@
 package han
 
 import (
-	"encoding/json"
-	"os"
 	"testing"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -62,32 +60,20 @@ func TestLangAttr(t *testing.T) {
 	}
 }
 
+// want is empty when the text needs no lang attribute.
+var rustLangVectors = []struct{ input, want string }{
+	{"这是简体中文测试", "zh-Hans"},
+	{"這是繁體中文測試", ""},
+	{"hello", ""},
+	{"国国国国国国国国国国国国", "zh-Hans"},
+}
+
 // Rust vectors; the Big5 repertoire of x/text may differ from encoding_rs, so
 // any mismatch here must be reported rather than silenced.
 func TestLangAttrMatchesRustVectors(t *testing.T) {
-	raw, err := os.ReadFile("../../testdata/vectors/text.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors struct {
-		Han []struct {
-			Input string  `json:"input"`
-			Lang  *string `json:"lang"`
-		} `json:"han"`
-	}
-	if err := json.Unmarshal(raw, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	if len(vectors.Han) == 0 {
-		t.Fatal("no han vectors")
-	}
-	for _, v := range vectors.Han {
-		want := ""
-		if v.Lang != nil {
-			want = *v.Lang
-		}
-		if got := LangAttr(v.Input); got != want {
-			t.Errorf("LangAttr(%q) = %q, want %q", v.Input, got, want)
+	for _, v := range rustLangVectors {
+		if got := LangAttr(v.input); got != v.want {
+			t.Errorf("LangAttr(%q) = %q, want %q", v.input, got, v.want)
 		}
 	}
 }

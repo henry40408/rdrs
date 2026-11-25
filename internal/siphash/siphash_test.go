@@ -1,30 +1,24 @@
 package siphash
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
+var rustBucketVectors = []struct {
+	url    string
+	bucket uint64
+}{
+	{"", 19},
+	{"https://example.com/feed.xml", 17},
+	{"https://example.org/rss", 42},
+	{"http://blog.example.net/atom?x=1", 6},
+	{"https://日本語.example/フィード", 45},
+}
+
 func TestFeedBucketMatchesRust(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "feed_bucket.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rows []struct {
-		URL    string `json:"url"`
-		Bucket uint64 `json:"bucket"`
-	}
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) == 0 {
-		t.Fatal("no vectors")
-	}
-	for _, row := range rows {
-		if got := RustStrHash(row.URL) % 60; got != row.Bucket {
-			t.Errorf("%q: bucket %d, Rust chose %d", row.URL, got, row.Bucket)
+	for _, row := range rustBucketVectors {
+		if got := RustStrHash(row.url) % 60; got != row.bucket {
+			t.Errorf("%q: bucket %d, Rust chose %d", row.url, got, row.bucket)
 		}
 	}
 }

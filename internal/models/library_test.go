@@ -2,9 +2,7 @@ package models
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -87,21 +85,21 @@ func TestFeedCreateFindAndBucket(t *testing.T) {
 	})
 }
 
+var rustBucketVectors = []struct {
+	url    string
+	bucket int64
+}{
+	{"", 19},
+	{"https://example.com/feed.xml", 17},
+	{"https://example.org/rss", 42},
+	{"http://blog.example.net/atom?x=1", 6},
+	{"https://日本語.example/フィード", 45},
+}
+
 func TestURLToBucketMatchesRustDefaultHasher(t *testing.T) {
-	raw, err := os.ReadFile("../../testdata/vectors/feed_bucket.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors []struct {
-		Bucket int64  `json:"bucket"`
-		URL    string `json:"url"`
-	}
-	if err := json.Unmarshal(raw, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	for _, v := range vectors {
-		if got := URLToBucket(v.URL); got != v.Bucket {
-			t.Errorf("URLToBucket(%q) = %d, want %d", v.URL, got, v.Bucket)
+	for _, v := range rustBucketVectors {
+		if got := URLToBucket(v.url); got != v.bucket {
+			t.Errorf("URLToBucket(%q) = %d, want %d", v.url, got, v.bucket)
 		}
 	}
 }

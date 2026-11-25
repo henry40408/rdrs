@@ -1,49 +1,49 @@
 package imageproxy
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
 var testSecret = []byte("0123456789abcdef0123456789abcdef")
 
+var rustProxyVectors = []struct {
+	url, sign, proxyRelative, proxyAbsolute, signReferrer, proxyReferrer string
+}{
+	{
+		url:           "https://example.com/a.png",
+		sign:          "ctPtoMZh_G0",
+		proxyRelative: "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=ctPtoMZh_G0",
+		proxyAbsolute: "https://rdrs.example/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=ctPtoMZh_G0",
+		signReferrer:  "uZi283Prf4E",
+		proxyReferrer: "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=uZi283Prf4E&r=aHR0cHM6Ly9yZWYuZXhhbXBsZS8",
+	},
+	{
+		url:           "https://example.com/a.png?x=1&y=2",
+		sign:          "yRMxD1FuTLc",
+		proxyRelative: "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZz94PTEmeT0y&s=yRMxD1FuTLc",
+		proxyAbsolute: "https://rdrs.example/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZz94PTEmeT0y&s=yRMxD1FuTLc",
+		signReferrer:  "mIwC6fLS4oU",
+		proxyReferrer: "/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZz94PTEmeT0y&s=mIwC6fLS4oU&r=aHR0cHM6Ly9yZWYuZXhhbXBsZS8",
+	},
+}
+
 func TestRustVectors(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "image_proxy.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rows []struct {
-		URL           string `json:"url"`
-		Sign          string `json:"sign"`
-		ProxyRelative string `json:"proxy_relative"`
-		ProxyAbsolute string `json:"proxy_absolute"`
-		SignReferrer  string `json:"sign_referrer"`
-		ProxyReferrer string `json:"proxy_referrer"`
-	}
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) == 0 {
-		t.Fatal("no vectors")
-	}
 	const referrer = "https://ref.example/"
-	for _, r := range rows {
-		if got := SignURL(testSecret, r.URL); got != r.Sign {
-			t.Errorf("SignURL(%q) = %q, want %q", r.URL, got, r.Sign)
+	for _, r := range rustProxyVectors {
+		if got := SignURL(testSecret, r.url); got != r.sign {
+			t.Errorf("SignURL(%q) = %q, want %q", r.url, got, r.sign)
 		}
-		if got := CreateProxyURL(testSecret, r.URL, ""); got != r.ProxyRelative {
-			t.Errorf("relative = %q, want %q", got, r.ProxyRelative)
+		if got := CreateProxyURL(testSecret, r.url, ""); got != r.proxyRelative {
+			t.Errorf("relative = %q, want %q", got, r.proxyRelative)
 		}
-		if got := CreateProxyURL(testSecret, r.URL, "https://rdrs.example/"); got != r.ProxyAbsolute {
-			t.Errorf("absolute = %q, want %q", got, r.ProxyAbsolute)
+		if got := CreateProxyURL(testSecret, r.url, "https://rdrs.example/"); got != r.proxyAbsolute {
+			t.Errorf("absolute = %q, want %q", got, r.proxyAbsolute)
 		}
-		if got := SignURLWithReferrer(testSecret, r.URL, referrer); got != r.SignReferrer {
-			t.Errorf("SignURLWithReferrer = %q, want %q", got, r.SignReferrer)
+		if got := SignURLWithReferrer(testSecret, r.url, referrer); got != r.signReferrer {
+			t.Errorf("SignURLWithReferrer = %q, want %q", got, r.signReferrer)
 		}
-		if got := CreateProxyURLWithReferrer(testSecret, r.URL, referrer, ""); got != r.ProxyReferrer {
-			t.Errorf("referrer proxy = %q, want %q", got, r.ProxyReferrer)
+		if got := CreateProxyURLWithReferrer(testSecret, r.url, referrer, ""); got != r.proxyReferrer {
+			t.Errorf("referrer proxy = %q, want %q", got, r.proxyReferrer)
 		}
 	}
 }

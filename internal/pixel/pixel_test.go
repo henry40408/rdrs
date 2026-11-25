@@ -2,47 +2,12 @@ package pixel
 
 import (
 	"encoding/hex"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/henry40408/rdrs/internal/secret"
 )
-
-type vectors struct {
-	Secret string `json:"secret"`
-	Prefix string `json:"prefix"`
-	OptIn  string `json:"opt_in"`
-	URLs   []struct {
-		UserID  int64   `json:"user_id"`
-		EntryID int64   `json:"entry_id"`
-		BaseURL *string `json:"base_url"`
-		URL     string  `json:"url"`
-	} `json:"urls"`
-	Inject []struct {
-		Enabled   bool   `json:"enabled"`
-		CreatedAt string `json:"created_at"`
-		HTML      string `json:"html"`
-		Output    string `json:"output"`
-	} `json:"inject"`
-	GIFHex string `json:"gif_hex"`
-}
-
-func loadVectors(t *testing.T) vectors {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "pixel.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v vectors
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
-	}
-	return v
-}
 
 func mustTime(t *testing.T, s string) time.Time {
 	t.Helper()
@@ -54,32 +19,27 @@ func mustTime(t *testing.T, s string) time.Time {
 }
 
 func TestRustVectors(t *testing.T) {
-	v := loadVectors(t)
-	key := []byte(v.Secret)
-	if v.Prefix != PathPrefix {
-		t.Fatalf("prefix %q", v.Prefix)
+	if PathPrefix != "/p/" {
+		t.Fatalf("prefix %q", PathPrefix)
 	}
-	if hex.EncodeToString(TransparentGIF) != v.GIFHex {
+	if hex.EncodeToString(TransparentGIF) != rustGIFHex {
 		t.Fatal("GIF bytes differ from Rust")
 	}
-	optIn := mustTime(t, v.OptIn)
-	for _, u := range v.URLs {
-		c := Context{UserID: u.UserID, EnabledAt: &optIn, Secret: key}
-		if u.BaseURL != nil {
-			c.BaseURL = *u.BaseURL
-		}
-		if got := c.URL(u.EntryID); got != u.URL {
-			t.Errorf("URL(%d,%d) = %q, want %q", u.UserID, u.EntryID, got, u.URL)
+	optIn := mustTime(t, rustOptIn)
+	for _, u := range rustURLVectors {
+		c := Context{UserID: u.userID, EnabledAt: &optIn, Secret: testKey, BaseURL: u.baseURL}
+		if got := c.URL(u.entryID); got != u.url {
+			t.Errorf("URL(%d,%d) = %q, want %q", u.userID, u.entryID, got, u.url)
 		}
 	}
-	for _, row := range v.Inject {
-		c := Context{UserID: 7, Secret: key}
-		if row.Enabled {
+	for _, row := range rustInjectVectors {
+		c := Context{UserID: 7, Secret: testKey}
+		if row.enabled {
 			c.EnabledAt = &optIn
 		}
-		got := c.MaybeInject(row.HTML, 42, mustTime(t, row.CreatedAt))
-		if got != row.Output {
-			t.Errorf("inject(%+v) = %q, want %q", row, got, row.Output)
+		got := c.MaybeInject(row.html, 42, mustTime(t, row.createdAt))
+		if got != row.output {
+			t.Errorf("inject(%+v) = %q, want %q", row, got, row.output)
 		}
 	}
 }

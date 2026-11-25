@@ -1,8 +1,6 @@
 package timezone
 
 import (
-	"encoding/json"
-	"os"
 	"testing"
 	"time"
 )
@@ -181,47 +179,6 @@ func TestDateArithmetic(t *testing.T) {
 	}
 }
 
-type vectors struct {
-	Default string `json:"default"`
-	DateAt  []struct {
-		At   string `json:"at"`
-		Date string `json:"date"`
-		Tz   string `json:"tz"`
-	} `json:"date_at"`
-	DayBounds []struct {
-		Date       string `json:"date"`
-		End        string `json:"end"`
-		Start      string `json:"start"`
-		StartOfDay string `json:"start_of_day"`
-		Tz         string `json:"tz"`
-	} `json:"day_bounds"`
-	Parse []struct {
-		Name   string  `json:"name"`
-		OrUTC  string  `json:"or_utc"`
-		Parsed *string `json:"parsed"`
-	} `json:"parse"`
-	SameRules []struct {
-		A    string `json:"a"`
-		B    string `json:"b"`
-		Now  string `json:"now"`
-		Same bool   `json:"same"`
-	} `json:"same_rules"`
-	Suggestions []string `json:"suggestions"`
-}
-
-func loadVectors(t *testing.T) vectors {
-	t.Helper()
-	raw, err := os.ReadFile("../../testdata/vectors/timezone.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v vectors
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
-	}
-	return v
-}
-
 func mustTime(t *testing.T, s string) time.Time {
 	t.Helper()
 	got, err := time.Parse(time.RFC3339, s)
@@ -232,48 +189,47 @@ func mustTime(t *testing.T, s string) time.Time {
 }
 
 func TestRustVectors(t *testing.T) {
-	v := loadVectors(t)
-	if v.Default != Default {
-		t.Errorf("default %q", v.Default)
+	if Default != "UTC" {
+		t.Errorf("default %q", Default)
 	}
-	if len(v.Suggestions) != len(Suggestions) {
-		t.Fatalf("suggestions: %v", v.Suggestions)
+	if len(rustSuggestions) != len(Suggestions) {
+		t.Fatalf("suggestions: %v", Suggestions)
 	}
-	for i, name := range v.Suggestions {
+	for i, name := range rustSuggestions {
 		if Suggestions[i] != name {
 			t.Errorf("suggestion %d: %q != %q", i, Suggestions[i], name)
 		}
 	}
-	for _, c := range v.DateAt {
-		got := DateAt(mustTime(t, c.At), mustParse(t, c.Tz)).String()
-		if got != c.Date {
-			t.Errorf("DateAt(%s, %s) = %s, want %s", c.At, c.Tz, got, c.Date)
+	for _, c := range rustDateAtVectors {
+		got := DateAt(mustTime(t, c.at), mustParse(t, c.tz)).String()
+		if got != c.date {
+			t.Errorf("DateAt(%s, %s) = %s, want %s", c.at, c.tz, got, c.date)
 		}
 	}
-	for _, c := range v.DayBounds {
-		date, _ := ParseDate(c.Date)
-		loc := mustParse(t, c.Tz)
+	for _, c := range rustDayBoundsVectors {
+		date, _ := ParseDate(c.date)
+		loc := mustParse(t, c.tz)
 		start, end := DayBoundsUTC(date, loc)
-		if !start.Equal(mustTime(t, c.Start)) || !end.Equal(mustTime(t, c.End)) {
-			t.Errorf("DayBounds(%s, %s) = [%v, %v), want [%s, %s)", c.Date, c.Tz, start, end, c.Start, c.End)
+		if !start.Equal(mustTime(t, c.start)) || !end.Equal(mustTime(t, c.end)) {
+			t.Errorf("DayBounds(%s, %s) = [%v, %v), want [%s, %s)", c.date, c.tz, start, end, c.start, c.end)
 		}
-		if got := start.Format("2006-01-02 15:04:05"); got != c.StartOfDay {
-			t.Errorf("StartOfDay(%s, %s) = %s, want %s", c.Date, c.Tz, got, c.StartOfDay)
-		}
-	}
-	for _, c := range v.Parse {
-		loc, ok := Parse(c.Name)
-		if ok != (c.Parsed != nil) || (ok && loc.String() != *c.Parsed) {
-			t.Errorf("Parse(%q) = %v, %v; want %v", c.Name, loc, ok, c.Parsed)
-		}
-		if got := ParseOrUTC(c.Name).String(); got != c.OrUTC {
-			t.Errorf("ParseOrUTC(%q) = %s, want %s", c.Name, got, c.OrUTC)
+		if got := start.Format("2006-01-02 15:04:05"); got != c.startOfDay {
+			t.Errorf("StartOfDay(%s, %s) = %s, want %s", c.date, c.tz, got, c.startOfDay)
 		}
 	}
-	for _, c := range v.SameRules {
-		got := SameRules(mustParse(t, c.A), mustParse(t, c.B), mustTime(t, c.Now))
-		if got != c.Same {
-			t.Errorf("SameRules(%s, %s, %s) = %v", c.A, c.B, c.Now, got)
+	for _, c := range rustParseVectors {
+		loc, ok := Parse(c.name)
+		if ok != (c.parsed != "") || (ok && loc.String() != c.parsed) {
+			t.Errorf("Parse(%q) = %v, %v; want %q", c.name, loc, ok, c.parsed)
+		}
+		if got := ParseOrUTC(c.name).String(); got != c.orUTC {
+			t.Errorf("ParseOrUTC(%q) = %s, want %s", c.name, got, c.orUTC)
+		}
+	}
+	for _, c := range rustSameRulesVectors {
+		got := SameRules(mustParse(t, c.a), mustParse(t, c.b), mustTime(t, c.now))
+		if got != c.same {
+			t.Errorf("SameRules(%s, %s, %s) = %v", c.a, c.b, c.now, got)
 		}
 	}
 }

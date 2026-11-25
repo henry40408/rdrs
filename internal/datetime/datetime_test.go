@@ -1,8 +1,6 @@
 package datetime
 
 import (
-	"encoding/json"
-	"os"
 	"testing"
 	"time"
 )
@@ -207,32 +205,32 @@ func TestFormatDisplay(t *testing.T) {
 	}
 }
 
+// parsed is empty when ParseTimestamp must reject the input.
+var rustTimestampVectors = []struct{ input, normalized, parsed string }{
+	{"2024-03-05T10:20:30Z", "2024-03-05T10:20:30Z", "2024-03-05 10:20:30"},
+	{"2024-03-05T10:20:30+08:00", "2024-03-05T10:20:30+0800", "2024-03-05 02:20:30"},
+	{"2024-03-05 10:20:30", "2024-03-05 10:20:30", "2024-03-05 10:20:30"},
+	{"Tue, 05 Mar 2024 10:20:30 GMT", "Tue, 05 Mar 2024 10:20:30 GMT", "2024-03-05 10:20:30"},
+	{"Tue, 05 Mar 2024 10:20:30 +0800", "Tue, 05 Mar 2024 10:20:30 +0800", "2024-03-05 02:20:30"},
+	{"5 Mar 2024", "5 Mar 2024", "2024-03-05 00:00:00"},
+	{"2024-03-05", "2024-03-05", "2024-03-05 00:00:00"},
+	{"週二, 05 三月 2024 10:20:30 +0800", "週二, 05 三月 2024 10:20:30 +0800", "2024-03-05 02:20:30"},
+	{"05 三月 2024 10:20:30", "05 三月 2024 10:20:30", "2024-03-05 10:20:30"},
+	{"not a date", "not a date", ""},
+	{"", "", ""},
+}
+
 func TestRustVectors(t *testing.T) {
-	raw, err := os.ReadFile("../../testdata/vectors/datetime.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors struct {
-		Display string `json:"display"`
-		Rows    []struct {
-			Input      string  `json:"input"`
-			Normalized string  `json:"normalized"`
-			Parsed     *string `json:"parsed"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal(raw, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range vectors.Rows {
-		if got := NormalizeTimezoneFormat(row.Input); got != row.Normalized {
-			t.Errorf("Normalize(%q) = %q, want %q", row.Input, got, row.Normalized)
+	for _, row := range rustTimestampVectors {
+		if got := NormalizeTimezoneFormat(row.input); got != row.normalized {
+			t.Errorf("Normalize(%q) = %q, want %q", row.input, got, row.normalized)
 		}
-		got, ok := ParseTimestamp(row.Input)
+		got, ok := ParseTimestamp(row.input)
 		switch {
-		case row.Parsed == nil && ok:
-			t.Errorf("ParseTimestamp(%q) = %v, want none", row.Input, got)
-		case row.Parsed != nil && (!ok || FormatDisplay(got) != *row.Parsed):
-			t.Errorf("ParseTimestamp(%q) = %v, %v; want %s", row.Input, got, ok, *row.Parsed)
+		case row.parsed == "" && ok:
+			t.Errorf("ParseTimestamp(%q) = %v, want none", row.input, got)
+		case row.parsed != "" && (!ok || FormatDisplay(got) != row.parsed):
+			t.Errorf("ParseTimestamp(%q) = %v, %v; want %s", row.input, got, ok, row.parsed)
 		}
 	}
 }

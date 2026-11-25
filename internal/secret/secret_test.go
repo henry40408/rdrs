@@ -1,91 +1,97 @@
 package secret
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 var testSecret = []byte("0123456789abcdef0123456789abcdef")
 
-type vectorFile struct {
-	Secret string `json:"secret"`
-	Tags   []struct {
-		Token         string `json:"token"`
-		TagImage      string `json:"tag_image"`
-		SessionCookie string `json:"session_cookie"`
-		CSRF          string `json:"csrf"`
-		AuditID       string `json:"audit_id"`
-	} `json:"tags"`
-	IDs []struct {
-		ID         int64  `json:"id"`
-		OfflineID  string `json:"offline_id"`
-		PixelSig42 string `json:"pixel_sig_entry_42"`
-	} `json:"ids"`
-	Sealed struct {
-		Plaintext string `json:"plaintext"`
-		Stored    string `json:"stored"`
-	} `json:"sealed"`
+var rustTagVectors = []struct {
+	token, tagImage, sessionCookie, csrf, auditID string
+}{
+	{
+		token:         "",
+		tagImage:      "eb5967eea1df83b35ffb9ce266e4eccf2d719a5661e8d23d103cad62fd4bf894",
+		sessionCookie: ".f046cb8fe8729af25a24f06c769ee53ff1955351a2c2102baeb4e5a3e53e18ec",
+		csrf:          "c2285c94893729ea817c6bd4c102d7f3a6d5e59d17689a70c871593ccc79dbf1",
+		auditID:       "94b2e55462bb314f",
+	},
+	{
+		token:         "abc",
+		tagImage:      "c49442e7033fcf70b75586e5e3e0e5ef48943770f07cf29c3242ed21b91a7176",
+		sessionCookie: "abc.2706446e0f6f5147a65dbd4b08b33dd1a5762b35a5d8f76e6491f2cc6313da10",
+		csrf:          "22bb4fbe5ffd961db1d28e15ef31793de1b51d98992666cbe87b1e7a622ddd3a",
+		auditID:       "3a8135cd403f9d82",
+	},
+	{
+		token:         "token-with.dot",
+		tagImage:      "a75e283c0a065b53c7cd02c8ed1fb0b118ff3250e8ca17928a133d1320dc714d",
+		sessionCookie: "token-with.dot.adddfb50f989e83517db2c132ff7fa4a684e9b8d150aba12028384f56aa41591",
+		csrf:          "6bd04451d865a2dbddd57d5abde4f4a514454e800a6307d0e8e5d82cef909303",
+		auditID:       "9e8885229e4acb65",
+	},
+	{
+		token:         "日本語",
+		tagImage:      "7fc2e344b6a12e19307232dfd958fd4d3b665ba6fd97ecbcdebd1a581c726192",
+		sessionCookie: "日本語.9dc3f74b0d166b81a8c9793bd538dc5bca9b38c43a7700875e6a6b4bdf8c2883",
+		csrf:          "9f0fe2866378396fd2c4a24a8cfb280c86b4eb6e298dbd244f38298ee6fff4ea",
+		auditID:       "e9c0c119562f7ced",
+	},
 }
 
-func loadVectors(t *testing.T) vectorFile {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "vectors", "secret.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v vectorFile
-	if err := json.Unmarshal(raw, &v); err != nil {
-		t.Fatal(err)
-	}
-	if v.Secret != string(testSecret) {
-		t.Fatalf("vector secret %q", v.Secret)
-	}
-	return v
+var rustIDVectors = []struct {
+	id                    int64
+	offlineID, pixelSig42 string
+}{
+	{id: 0, offlineID: "9f7a76084eb09ce4", pixelSig42: "6b14b421b04cbc2b1fff7b52be064e4b"},
+	{id: 1, offlineID: "c237ad6d902e9857", pixelSig42: "084d782f30556d55aba824eef13dabf5"},
+	{id: 7, offlineID: "43c41414e1a44052", pixelSig42: "768ecc13f8e773d6549b150cc17f0851"},
+	{id: -1, offlineID: "ed59d53fad39200c", pixelSig42: "7de0c7726b9390040dbe866e2f3c96bf"},
+	{id: 9223372036854775807, offlineID: "9a599686a0f00d27", pixelSig42: "eb06c9a5fd8032119c466910704d402b"},
 }
+
+const rustSealedPlaintext = "hunter2-token"
+const rustSealedStored = "rdrs.v1.0GncUVDLmcZrWwW_JktMBVEj4cnhe7F44GietTqluT65yNM-xsk_oOwzOaI9pnyZbP66Ako"
 
 func TestRustVectors(t *testing.T) {
-	v := loadVectors(t)
-	for _, c := range v.Tags {
-		image := Tag(testSecret, DomainImage, []byte(c.Token))
-		if got := hexOf(image[:]); got != c.TagImage {
-			t.Errorf("image tag %q: %s != %s", c.Token, got, c.TagImage)
+	for _, c := range rustTagVectors {
+		image := Tag(testSecret, DomainImage, []byte(c.token))
+		if got := hexOf(image[:]); got != c.tagImage {
+			t.Errorf("image tag %q: %s != %s", c.token, got, c.tagImage)
 		}
-		if got := SignSession(testSecret, c.Token); got != c.SessionCookie {
-			t.Errorf("session %q: %s != %s", c.Token, got, c.SessionCookie)
+		if got := SignSession(testSecret, c.token); got != c.sessionCookie {
+			t.Errorf("session %q: %s != %s", c.token, got, c.sessionCookie)
 		}
-		if got := DeriveCSRF(testSecret, c.Token); got != c.CSRF {
-			t.Errorf("csrf %q: %s != %s", c.Token, got, c.CSRF)
+		if got := DeriveCSRF(testSecret, c.token); got != c.csrf {
+			t.Errorf("csrf %q: %s != %s", c.token, got, c.csrf)
 		}
-		if got := AuditID(testSecret, c.Token); got != c.AuditID {
-			t.Errorf("audit %q: %s != %s", c.Token, got, c.AuditID)
+		if got := AuditID(testSecret, c.token); got != c.auditID {
+			t.Errorf("audit %q: %s != %s", c.token, got, c.auditID)
 		}
-		if token, ok := VerifySession(testSecret, c.SessionCookie); !ok || token != c.Token {
-			t.Errorf("verify session %q: %q %v", c.Token, token, ok)
+		if token, ok := VerifySession(testSecret, c.sessionCookie); !ok || token != c.token {
+			t.Errorf("verify session %q: %q %v", c.token, token, ok)
 		}
-		if !VerifyCSRF(testSecret, c.Token, c.CSRF) {
-			t.Errorf("verify csrf %q", c.Token)
+		if !VerifyCSRF(testSecret, c.token, c.csrf) {
+			t.Errorf("verify csrf %q", c.token)
 		}
 	}
-	for _, c := range v.IDs {
-		if got := OfflineID(testSecret, c.ID); got != c.OfflineID {
-			t.Errorf("offline %d: %s != %s", c.ID, got, c.OfflineID)
+	for _, c := range rustIDVectors {
+		if got := OfflineID(testSecret, c.id); got != c.offlineID {
+			t.Errorf("offline %d: %s != %s", c.id, got, c.offlineID)
 		}
-		if got := PixelSig(testSecret, c.ID, 42); got != c.PixelSig42 {
-			t.Errorf("pixel %d: %s != %s", c.ID, got, c.PixelSig42)
+		if got := PixelSig(testSecret, c.id, 42); got != c.pixelSig42 {
+			t.Errorf("pixel %d: %s != %s", c.id, got, c.pixelSig42)
 		}
-		if !VerifyPixelSig(testSecret, c.ID, 42, c.PixelSig42) {
-			t.Errorf("verify pixel %d", c.ID)
+		if !VerifyPixelSig(testSecret, c.id, 42, c.pixelSig42) {
+			t.Errorf("verify pixel %d", c.id)
 		}
 	}
 }
 
 func TestOpensValueSealedByRust(t *testing.T) {
-	v := loadVectors(t)
-	got, ok := Open(testSecret, v.Sealed.Stored)
-	if !ok || got != v.Sealed.Plaintext {
+	got, ok := Open(testSecret, rustSealedStored)
+	if !ok || got != rustSealedPlaintext {
 		t.Fatalf("got %q %v", got, ok)
 	}
 }
