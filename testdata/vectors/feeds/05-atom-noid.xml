@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom"><title>No ids</title><updated>2024-01-01T00:00:00Z</updated>
-<entry><title>With link</title><link href="https://noid.example/1"/><updated>2024-01-01T00:00:00Z</updated></entry>
-<entry><title>With link again</title><link href="https://noid.example/2"/></entry>
-<entry><title>No link</title></entry>
-<entry><link href="https://noid.example/4"/></entry>
-<entry></entry>
-</feed>

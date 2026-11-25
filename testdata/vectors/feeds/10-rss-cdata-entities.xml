@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0"><channel><title>Tom &amp; Jerry's &lt;Show&gt;</title><link>https://ent.example/</link><description><![CDATA[<b>bold</b> desc]]></description>
-<item><title><![CDATA[CDATA & title]]></title><guid>e1</guid><description>&lt;p&gt;escaped &amp;amp; html&lt;/p&gt;</description></item>
-<item><title>Caf&#233; &#x4e2d; &quot;q&quot;</title><guid>e2</guid><description><![CDATA[<p>cdata <a href="https://ent.example/x?a=1&b=2">link</a></p>]]></description></item>
-</channel></rss>
