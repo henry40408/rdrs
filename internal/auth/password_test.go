@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -10,49 +9,25 @@ import (
 	"github.com/henry40408/rdrs/internal/models"
 )
 
-type argonVector struct {
-	Hash         string `json:"hash"`
-	Password     string `json:"password"`
-	RejectsOther bool   `json:"rejects_other"`
-	Verifies     bool   `json:"verifies"`
-}
-
-type argonFile struct {
-	Hashed      []argonVector `json:"hashed"`
-	VerifyCases []argonVector `json:"verify_cases"`
-}
-
-func readArgonFile(t *testing.T, name string) argonFile {
-	t.Helper()
-	raw, err := os.ReadFile("../../testdata/vectors/" + name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var file argonFile
-	if err := json.Unmarshal(raw, &file); err != nil {
-		t.Fatal(err)
-	}
-	return file
-}
-
 func TestVerifyPasswordAcceptsRustHashes(t *testing.T) {
-	for _, name := range []string{"argon2_default.json", "argon2_fast.json"} {
-		file := readArgonFile(t, name)
-		if len(file.Hashed) == 0 {
-			t.Fatalf("%s: no vectors", name)
+	for _, set := range []struct {
+		name    string
+		vectors argonVectors
+	}{{"default", argon2DefaultVectors}, {"fast", argon2FastVectors}} {
+		if len(set.vectors.hashed) == 0 {
+			t.Fatalf("%s: no vectors", set.name)
 		}
-		for _, v := range file.Hashed {
-			if got := VerifyPassword(v.Password, v.Hash); got != v.Verifies {
-				t.Errorf("%s %q: verify = %v, want %v", name, v.Password, got, v.Verifies)
+		for _, v := range set.vectors.hashed {
+			if got := VerifyPassword(v.password, v.hash); got != v.verifies {
+				t.Errorf("%s %q: verify = %v, want %v", set.name, v.password, got, v.verifies)
 			}
-			// rejects_other holds what Rust returned for a wrong password.
-			if VerifyPassword(v.Password+"x", v.Hash) != v.RejectsOther {
-				t.Errorf("%s %q: wrong password verified", name, v.Password)
+			if got := VerifyPassword(v.password+"x", v.hash); got != v.wrongVerifies {
+				t.Errorf("%s %q: wrong password verify = %v, want %v", set.name, v.password, got, v.wrongVerifies)
 			}
 		}
-		for _, v := range file.VerifyCases {
-			if got := VerifyPassword("anything", v.Hash); got != v.Verifies {
-				t.Errorf("%s hash %q: verify = %v, want %v", name, v.Hash, got, v.Verifies)
+		for _, v := range set.vectors.verifyCases {
+			if got := VerifyPassword("anything", v.hash); got != v.verifies {
+				t.Errorf("%s hash %q: verify = %v, want %v", set.name, v.hash, got, v.verifies)
 			}
 		}
 	}
@@ -133,12 +108,6 @@ func TestVerifyDummyPasswordDoesNotPanic(t *testing.T) {
 	}
 }
 
-type strengthVector struct {
-	Error      *string  `json:"error"`
-	Password   string   `json:"password"`
-	UserInputs []string `json:"user_inputs"`
-}
-
 // knownFeedbackDifferences lists vectors the Go estimator rejects like Rust
 // but explains with another warning: the dictionary word 123456789 and the
 // sequence 123456789 both cost 50 guesses, and Go keeps the dictionary match.
@@ -147,33 +116,24 @@ var knownFeedbackDifferences = map[string]string{
 }
 
 func TestValidatePasswordStrengthMatchesRust(t *testing.T) {
-	raw, err := os.ReadFile("../../testdata/vectors/zxcvbn.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors []strengthVector
-	if err := json.Unmarshal(raw, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	for _, v := range vectors {
-		err := ValidatePasswordStrength(v.Password, v.UserInputs)
-		if v.Error == nil {
+	for _, v := range strengthVectors {
+		err := ValidatePasswordStrength(v.password, v.userInputs)
+		if v.wantMessage == "" {
 			if err != nil {
-				t.Errorf("%q: unexpected error %v", v.Password, err)
+				t.Errorf("%q: unexpected error %v", v.password, err)
 			}
 			continue
 		}
-		want := strings.TrimPrefix(*v.Error, "Validation error: ")
-		if reason, known := knownFeedbackDifferences[v.Password]; known {
+		if reason, known := knownFeedbackDifferences[v.password]; known {
 			// Same verdict, different tie-break between equally cheap matches.
 			if err == nil || !strings.HasSuffix(err.Error(), "Add another word or two. Uncommon words are better.") {
-				t.Errorf("%q (%s): error = %v", v.Password, reason, err)
+				t.Errorf("%q (%s): error = %v", v.password, reason, err)
 			}
 			continue
 		}
 		var validation *models.ValidationError
-		if !errors.As(err, &validation) || validation.Message != want {
-			t.Errorf("%q: error = %v, want %q", v.Password, err, want)
+		if !errors.As(err, &validation) || validation.Message != v.wantMessage {
+			t.Errorf("%q: error = %v, want %q", v.password, err, v.wantMessage)
 		}
 	}
 }

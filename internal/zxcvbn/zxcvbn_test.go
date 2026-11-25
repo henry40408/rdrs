@@ -1,57 +1,18 @@
 package zxcvbn
 
 import (
-	"bufio"
 	"math/rand/v2"
-	"os"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/henry40408/rdrs/internal/zxcvbn/scoring"
 )
 
-// corpusYear is when testdata/rust_scores.tsv was generated. Year and date
-// guesses depend on the distance to the current year, so the comparison
-// pins it.
+// corpusYear is when rustCorpus was captured. Year and date guesses depend on
+// the distance to the current year, so the comparison pins it.
 const corpusYear = 2026
 
 const minAcceptedScore = 3
-
-type rustCase struct {
-	line     int
-	score    int
-	username string
-	password string
-}
-
-// loadRustCorpus reads "score\tusername\tpassword" lines scored by Rust
-// zxcvbn 3.1.1.
-func loadRustCorpus(t *testing.T) []rustCase {
-	t.Helper()
-	f, err := os.Open("testdata/rust_scores.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	var cases []rustCase
-	scanner := bufio.NewScanner(f)
-	for n := 1; scanner.Scan(); n++ {
-		fields := strings.SplitN(scanner.Text(), "\t", 3)
-		if len(fields) != 3 {
-			t.Fatalf("line %d: want 3 fields, got %d", n, len(fields))
-		}
-		score, err := strconv.Atoi(fields[0])
-		if err != nil {
-			t.Fatalf("line %d: %v", n, err)
-		}
-		cases = append(cases, rustCase{line: n, score: score, username: fields[1], password: fields[2]})
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return cases
-}
 
 func userInputs(username string) []string {
 	if username == "" {
@@ -131,18 +92,20 @@ func TestInvalidUTF8ScoresZero(t *testing.T) {
 // every case. Exact scores are reported, not required.
 func TestVerdictsMatchRustZxcvbn(t *testing.T) {
 	pinReferenceYear(t)
-	cases := loadRustCorpus(t)
+	if len(rustCorpus) != 5778 {
+		t.Fatalf("%d corpus cases, want 5778", len(rustCorpus))
+	}
 	scoreDiffs := 0
-	for _, tc := range cases {
+	for i, tc := range rustCorpus {
 		got := PasswordStrength(tc.password, userInputs(tc.username)).Score
 		if got != tc.score {
 			scoreDiffs++
-			t.Logf("line %d %q (user %q): score %d, Rust %d", tc.line, tc.password, tc.username, got, tc.score)
+			t.Logf("case %d %q (user %q): score %d, Rust %d", i+1, tc.password, tc.username, got, tc.score)
 		}
 		if (got >= minAcceptedScore) != (tc.score >= minAcceptedScore) {
-			t.Errorf("line %d %q (user %q): score %d, Rust %d: verdict differs",
-				tc.line, tc.password, tc.username, got, tc.score)
+			t.Errorf("case %d %q (user %q): score %d, Rust %d: verdict differs",
+				i+1, tc.password, tc.username, got, tc.score)
 		}
 	}
-	t.Logf("%d cases, %d exact score differences", len(cases), scoreDiffs)
+	t.Logf("%d cases, %d exact score differences", len(rustCorpus), scoreDiffs)
 }
