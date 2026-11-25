@@ -2,7 +2,8 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -22,24 +23,32 @@ import (
 	"github.com/henry40408/rdrs/internal/testutil"
 )
 
-// The goldens are full pages captured from the Rust server (see
-// testdata/html/capture.py). Each handler step adds its pages to goldenCovered.
+// The goldens are full pages captured from the Rust server. Their files are no
+// longer in the tree: goldenPages holds a sha256 digest of each, and git history
+// holds the files. Each handler step adds its pages to goldenCovered.
 
 var goldenNow = time.Date(2026, 11, 17, 7, 15, 0, 0, time.UTC)
 
 var goldenSecret = []byte("golden-secret-not-base64-0123456789")
 
+// goldenPage is one replayed request. The zero value of User, Location, Body
+// and File means none: no session cookie, no redirect target to check, no form
+// body, no golden file.
 type goldenPage struct {
-	Name        string  `json:"name"`
-	Method      string  `json:"method"`
-	Path        string  `json:"path"`
-	User        *string `json:"user"`
-	Status      int     `json:"status"`
-	ContentType string  `json:"content_type"`
-	Location    *string `json:"location"`
-	Anonymous   bool    `json:"anonymous"`
-	Body        *string `json:"body"`
-	File        *string `json:"file"`
+	Name      string
+	Method    string
+	Path      string
+	User      string
+	Status    int
+	Location  string
+	Anonymous bool
+	// Body is the form without its _csrf field, which anonymousForm adds from the
+	// form page itself.
+	Body string
+	// File is the golden's name under internal/views/testdata/golden (deleted),
+	// and Digest the sha256 of its content, see goldenPages.
+	File   string
+	Digest string
 }
 
 // goldenCovered selects the pages whose handlers exist.
@@ -108,10 +117,10 @@ var (
 	hex64Pattern = regexp.MustCompile(`[0-9a-f]{64}`)
 	// The file size depends on the page layout the engine writes, not on the app.
 	databaseSize = regexp.MustCompile(`(stats-card-value">)[0-9.]+ [KMG]?B(</div><div class="stats-card-label">Database Size)`)
-	// The invite expiry is the seeded time to the minute; capture.py left it as is.
+	// The invite expiry is the seeded time to the minute; the capture left it as is.
 	inviteExpiry = regexp.MustCompile(`link expires \d{4}-\d\d-\d\d \d\d:\d\d`)
 	lastActive   = regexp.MustCompile(`(<dt>Last active</dt><dd><time datetime=")[^"]*(" data-local-text>)[^<]*`)
-	// capture.py ran against a scratch directory of the capturing machine.
+	// The capture ran against a scratch directory of the capturing machine.
 	capturedDatabase = regexp.MustCompile(`<code>[^<]*golden\.sqlite3</code>`)
 	csrfField        = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 )
@@ -147,14 +156,11 @@ func newGoldenFixture(t *testing.T) *goldenFixture {
 	}
 }
 
-// seed applies seed.sql; the first captures ran before it, on an empty instance.
+// seed applies goldenSeedSQL; the first captures ran before it, on an empty
+// instance.
 func (f *goldenFixture) seed(t *testing.T) {
 	t.Helper()
-	raw, err := os.ReadFile("../../testdata/html/seed.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := strings.ReplaceAll(string(raw), "@SESSION_EXPIRES@", f.expires)
+	script := strings.ReplaceAll(goldenSeedSQL, "@SESSION_EXPIRES@", f.expires)
 	script = strings.ReplaceAll(script, "@INVITE_HASH@", secret.InviteHash(goldenSecret, "golden-invite-token"))
 	if _, err := f.database.ExecContext(context.Background(), script); err != nil {
 		t.Fatal(err)
@@ -172,7 +178,7 @@ func (f *goldenFixture) serve(r *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-// anonymousForm mirrors capture.py: the cookie and CSRF token the form page
+// anonymousForm mirrors the capture: the cookie and CSRF token the form page
 // itself issues are the ones the POST carries.
 func (f *goldenFixture) anonymousForm(t *testing.T, path, body string) (cookie, withCSRF string) {
 	t.Helper()
@@ -191,19 +197,15 @@ func (f *goldenFixture) anonymousForm(t *testing.T, path, body string) (cookie, 
 
 func (f *goldenFixture) replay(t *testing.T, page goldenPage) *httptest.ResponseRecorder {
 	t.Helper()
-	body := ""
-	if page.Body != nil {
-		body = strings.TrimPrefix(*page.Body, "_csrf=@HEX64@&")
-	}
 	request := httptest.NewRequest(page.Method, page.Path, strings.NewReader(""))
 	switch {
 	case page.Method == http.MethodPost && page.Anonymous:
-		cookie, withCSRF := f.anonymousForm(t, page.Path, body)
+		cookie, withCSRF := f.anonymousForm(t, page.Path, page.Body)
 		request = httptest.NewRequest(page.Method, page.Path, strings.NewReader(withCSRF))
 		request.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: cookie})
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	case page.User != nil:
-		request.AddCookie(auth.Cookies{Secret: goldenSecret}.Session(*page.User))
+	case page.User != "":
+		request.AddCookie(auth.Cookies{Secret: goldenSecret}.Session(page.User))
 	}
 	return f.serve(request)
 }
@@ -232,18 +234,8 @@ func scrubVolatile(body string) string {
 }
 
 func TestHTMLGoldens(t *testing.T) {
-	raw, err := os.ReadFile("../views/testdata/golden/index.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var index struct {
-		Pages []goldenPage `json:"pages"`
-	}
-	if err := json.Unmarshal(raw, &index); err != nil {
-		t.Fatal(err)
-	}
 	f := newGoldenFixture(t)
-	for _, page := range index.Pages {
+	for _, page := range goldenPages {
 		if !goldenCovered(page) {
 			continue
 		}
@@ -262,31 +254,37 @@ func (f *goldenFixture) check(t *testing.T, page goldenPage) {
 	if rec.Code != page.Status {
 		t.Fatalf("status = %d, want %d", rec.Code, page.Status)
 	}
-	if page.Location != nil && rec.Header().Get("Location") != *page.Location {
-		t.Errorf("Location = %q, want %q", rec.Header().Get("Location"), *page.Location)
+	if page.Location != "" && rec.Header().Get("Location") != page.Location {
+		t.Errorf("Location = %q, want %q", rec.Header().Get("Location"), page.Location)
 	}
-	if page.File == nil {
+	if page.File == "" {
 		return
 	}
-	want, err := os.ReadFile("../views/testdata/golden/" + *page.File)
+	got := databaseSize.ReplaceAllString(scrubVolatile(f.normalise(page, rec.Body.String())), "${1}@SIZE@${2}")
+	assertPageGolden(t, page, got)
+}
+
+// assertPageGolden compares the digest of the replayed page, after the same
+// scrubbing the golden's digest had, with the Rust server's. A mismatch writes
+// the page to a temporary file; the golden is in git history.
+func assertPageGolden(t *testing.T, page goldenPage, got string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(got))
+	if hex.EncodeToString(sum[:]) == page.Digest {
+		return
+	}
+	file, err := os.CreateTemp("", page.File+".actual.*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := databaseSize.ReplaceAllString(scrubVolatile(f.normalise(page, rec.Body.String())), "${1}@SIZE@${2}")
-	wanted := databaseSize.ReplaceAllString(scrubVolatile(string(want)), "${1}@SIZE@${2}")
-	if got != wanted {
-		t.Errorf("body differs from %s\n got: %.400s\nwant: %.400s", *page.File, firstDifference(got, wanted), firstDifference(wanted, got))
+	defer func() { _ = file.Close() }()
+	if _, err := file.WriteString(got); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// firstDifference returns the text from a little before the first byte where a
-// and b differ.
-func firstDifference(a, b string) string {
-	i := 0
-	for i < len(a) && i < len(b) && a[i] == b[i] {
-		i++
-	}
-	return a[max(0, i-80):]
+	path := "internal/views/testdata/golden/" + page.File
+	t.Errorf("%s differs from the Rust golden (%d bytes of scrubbed output written to %s).\n"+
+		"The golden is in git history: git show $(git log --diff-filter=D --format=%%h -1 -- %s)^:%s",
+		page.Name, len(got), file.Name(), path, path)
 }
 
 // moveRealClockReadsToGoldenDay re-dates the reads earlier pages made. The

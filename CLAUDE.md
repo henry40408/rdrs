@@ -65,9 +65,15 @@ when a command should not touch the network (CI does).
   `BenchmarkEntryPages` (`internal/server/bench_test.go`) measures every list
   route; compare before and after with `benchstat`. Raise `RDRS_BENCH_ENTRIES`
   for realistic data volume.
-- Golden files: `internal/server/golden_test.go` pins full pages captured from
-  the original Rust server (`testdata/html/`, `testdata/vectors/`). Do not
-  regenerate them to make a test pass; a diff is a behaviour change.
+- Golden pages: `TestHTMLGoldens` (`internal/server/golden_test.go`) replays
+  the requests in `goldenPages` (`golden_pages_test.go`) against the database
+  state `goldenSeedSQL` (`golden_seed_test.go`) and compares a sha256 of each
+  page with the one taken from the original Rust server's golden file. The
+  auth pages and the document shell in `internal/views/views_test.go` work the
+  same way. The files are deleted and live in git history; a mismatch writes
+  the page to a temp file and prints the `git show` command that recovers the
+  golden. Never recompute a digest to make a test pass; a diff is a behaviour
+  change.
 
 ### E2E (godog + chromedp, from `e2e/`)
 
