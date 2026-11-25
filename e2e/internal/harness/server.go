@@ -48,22 +48,26 @@ func Start() (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	port, err := freePort()
-	if err != nil {
-		return nil, err
-	}
 	dataDir, err := os.MkdirTemp("", "rdrs-e2e-")
 	if err != nil {
 		return nil, err
 	}
+	// The mocks bind first and keep their ports, so freePort cannot hand one of
+	// them to rdrs. The other order let a mock take the freed port: rdrs then
+	// failed to bind, and the mock answered /health and POST /setup in its place.
 	feed, kagi := startFeedMock(), startKagiMock()
 	server := &Server{
-		BaseURL: "http://127.0.0.1:" + strconv.Itoa(port),
 		DBPath:  filepath.Join(dataDir, "test.sqlite3"),
 		FeedURL: feed.URL,
 		mocks:   []*mock{feed, kagi},
 		dataDir: dataDir,
 	}
+	port, err := freePort()
+	if err != nil {
+		server.Stop()
+		return nil, err
+	}
+	server.BaseURL = "http://127.0.0.1:" + strconv.Itoa(port)
 	if err := server.launch(binary, port, kagi.URL); err != nil {
 		server.Stop()
 		return nil, err
