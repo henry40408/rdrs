@@ -1,36 +1,27 @@
 package textutil
 
 import (
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 )
 
+var rustStripVectors = []struct{ input, plain, search string }{
+	{"plain", "plain", "plain"},
+	{"<p>Hello <b>world</b></p>", "Hello world", "Hello world"},
+	{"a &amp; b &lt;c&gt; &#39;q&#39; &#x27;h&#x27; &nbsp; &bogus; &amp;#x27;", "a &amp; b &lt;c&gt; &#39;q&#39; &#x27;h&#x27; &nbsp; &bogus; &amp;#x27;", "a &amp; b &lt;c&gt; &#39;q&#39; &#x27;h&#x27; &nbsp; &bogus; &amp;#x27;"},
+	{"<script>x()</script><style>p{}</style>text", "text", "text"},
+	{"line1<br>line2<p>para</p>", "line1 line2 para", "line1line2para"},
+	{"  spaced \n\n out\t text  ", "spaced out text", "spaced out text"},
+	{"日本語<em>テスト</em>", "日本語 テスト", "日本語テスト"},
+}
+
 func TestStripVectors(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/vectors/text.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors struct {
-		Rows []struct {
-			Input  string `json:"input"`
-			Plain  string `json:"plain"`
-			Search string `json:"search"`
-		} `json:"rows"`
-	}
-	if err := json.Unmarshal(data, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	if len(vectors.Rows) == 0 {
-		t.Fatal("no vectors")
-	}
-	for _, row := range vectors.Rows {
-		if got := StripToPlainText(row.Input); got != row.Plain {
-			t.Errorf("plain(%q) = %q, want %q", row.Input, got, row.Plain)
+	for _, row := range rustStripVectors {
+		if got := StripToPlainText(row.input); got != row.plain {
+			t.Errorf("plain(%q) = %q, want %q", row.input, got, row.plain)
 		}
-		if got := StripToSearchText(row.Input); got != row.Search {
-			t.Errorf("search(%q) = %q, want %q", row.Input, got, row.Search)
+		if got := StripToSearchText(row.input); got != row.search {
+			t.Errorf("search(%q) = %q, want %q", row.input, got, row.search)
 		}
 	}
 }
