@@ -8,9 +8,9 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
 	github.com/andybalholm/brotli v1.3.0
 	github.com/go-webauthn/webauthn v0.18.2
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	golang.org/x/crypto v0.59.0
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/text v0.44.0
 	modernc.org/sqlite v1.62.0
 )
