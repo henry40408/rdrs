@@ -1,12 +1,10 @@
--- Deterministic fixture applied to a freshly migrated SQLite DB before the Rust
--- server renders the HTML goldens in internal/views/testdata/golden. The Go
--- port loads the same file, so both sides render identical state.
---
--- Placeholders replaced by the loader:
---   @SESSION_EXPIRES@  RFC 3339 instant 7 days after the capture (sessions)
---   @INVITE_HASH@      hex(HMAC(secret, "invite:" || "golden-invite-token"))
+package server
 
-INSERT INTO user (id, username, password_hash, role, disabled_at, created_at) VALUES
+// goldenSeedSQL is the state the Rust server held when it rendered the goldens
+// (a freshly migrated database plus this script). The placeholders are replaced
+// at run time: @SESSION_EXPIRES@ is a RFC 3339 instant 7 days ahead (sessions)
+// and @INVITE_HASH@ is the HMAC the server stores for "golden-invite-token".
+const goldenSeedSQL = `INSERT INTO user (id, username, password_hash, role, disabled_at, created_at) VALUES
   (1, 'admin', '!', 'admin', NULL, '2026-01-01 00:00:00'),
   (2, 'alice', '!', 'user', NULL, '2026-01-02 00:00:00'),
   (3, 'bob', '!', 'user', '2026-02-01 00:00:00', '2026-01-03 00:00:00');
@@ -92,3 +90,4 @@ INSERT INTO api_token (user_id, token, kind, label, created_at, expires_at, last
 INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports, created_at,
                      last_used_at) VALUES
   (1, X'0102030405', X'7B7D', 3, 'Laptop key', NULL, '2026-10-01T00:00:00+00:00', '2026-11-16T00:00:00+00:00');
+`

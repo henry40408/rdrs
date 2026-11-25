@@ -32,8 +32,6 @@ func TestAuthPagesMatchTheRustGoldens(t *testing.T) {
 			PasswordMaxLength: 128}),
 	}
 	for name, got := range cases {
-		if want := readGolden(t, name); got != want {
-			t.Errorf("%s differs:\n got: %.400s\nwant: %.400s", name, got, want)
-		}
+		assertPageGolden(t, name, goldenDigests[name], got)
 	}
 }

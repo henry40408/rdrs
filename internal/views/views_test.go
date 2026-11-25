@@ -1,6 +1,8 @@
 package views
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"regexp"
 	"strings"
@@ -11,29 +13,60 @@ import (
 
 const goldenVersion = "@VERSION@"
 
-func readGolden(t *testing.T, name string) string {
+// goldenDigests are the sha256 of the pages the Rust server rendered, by the
+// name of the golden file under internal/views/testdata/golden. The files are
+// deleted; git history holds them. Never recompute a digest to make a test
+// pass: a difference is a behaviour change.
+var goldenDigests = map[string]string{
+	"login.html":                 "afa21100232d041be86dcb26aef5862c91af6b7247c64a5f5ec100f8684340bf",
+	"login_next.html":            "3f3dd1aab65e9d265d1c55948ccdcaf8361d92fec4a90d0a49ef0ecb85fe0742",
+	"login_bad_credentials.html": "64df6c77537edd204e2610fad69ee47beed7970ae699a0935598aa65e4a3caec",
+	"login_setup_available.html": "0b34404050da6ac487535129cfab20a4c2528041a28f20f53782de2e758c23f7",
+	"setup.html":                 "61676b8e1885c452cf08fdecc819ba9c013ad0ebfac93c0356bbe39c46ba7673",
+	"setup_mismatch.html":        "5be1b09165d460b02bbeb99688bd2688be8a385121ca5ceaf898a4ac26e41953",
+	"setup_bad_token.html":       "7ca26f9d8682aa1a056132b4ab5064e745cd5337d95fbe004467c19ab76b4e46",
+	"invite.html":                "d7cb6eeebf3e37d668ad2180ec9cefd15627a4b9ed5437b48f2a36f73501ba30",
+	"invite_mismatch.html":       "40c60c296e4ffbf6267e0a31aa38baaffb53ebfdd2beb03facf29586c05579e3",
+	"invite_invalid.html":        "7bfe03397284b3c8a09921e47ff143f4064294a0dcf2fd9268a2e2882aed645c",
+}
+
+// loginShellDigest is the digest of login.html up to the end of the sprite.
+const loginShellDigest = "c906a1c9c3c76eb4249da7890fab40bad09c877669eb85b69a0a01b8e71da47d"
+
+// assertPageGolden compares the digest of got with want, the digest of the
+// Rust server's golden file. A mismatch writes got to a temporary file; the
+// golden is in git history.
+func assertPageGolden(t *testing.T, file, want, got string) {
 	t.Helper()
-	data, err := os.ReadFile("testdata/golden/" + name)
+	sum := sha256.Sum256([]byte(got))
+	if hex.EncodeToString(sum[:]) == want {
+		return
+	}
+	actual, err := os.CreateTemp("", file+".actual.*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(data)
+	defer func() { _ = actual.Close() }()
+	if _, err := actual.WriteString(got); err != nil {
+		t.Fatal(err)
+	}
+	path := "internal/views/testdata/golden/" + file
+	t.Errorf("%s differs from the Rust golden (%d bytes of output written to %s).\n"+
+		"The golden is in git history: git show $(git log --diff-filter=D --format=%%h -1 -- %s)^:%s",
+		file, len(got), actual.Name(), path, path)
 }
 
 // The shell is compared with the Rust server's own output: everything up to
-// the end of the sprite is the same for every page.
+// the end of the sprite is the same for every page. The digest covers only that
+// part of login.html, so the recovered golden is longer than the output.
 func TestDocumentShellMatchesTheRustGolden(t *testing.T) {
-	golden := readGolden(t, "login.html")
-	end := strings.Index(golden, "</svg>") + len("</svg>")
 	got := string(document(documentParts{
 		title:      "Login - RDRS",
 		gitVersion: goldenVersion,
 		head:       moduleScript(goldenVersion, "login.js"),
 	}))
 	got = strings.TrimSuffix(got, "</body></html>")
-	if got != golden[:end] {
-		t.Errorf("shell differs from the golden:\n got: %.300s\nwant: %.300s", got[len(got)-300:], golden[end-300:end])
-	}
+	assertPageGolden(t, "login.html", loginShellDigest, got)
 }
 
 func TestEscapingMatchesMaud(t *testing.T) {
