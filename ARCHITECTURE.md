@@ -520,6 +520,9 @@ clean, post-pass.
   surface as text); an article that would be left empty is returned untouched
 - Promotes lazy-loaded image URLs (`data-src`, `data-lazy-src`,
   `data-original`)
+- Replaces WordPress emoji images (`https://s.w.org/images/core/emoji/`) with
+  their `alt` text, since the inline style that sizes them is stripped; one
+  alone in a `<span>` (a bullet) keeps a trailing space
 - Injects `width`/`height` from `data-original-width`/`-height` or inline
   `style` when missing
 - Strips tracking params (`utm_*`, `mtm_*`, `fbclid`, …), tracking domains

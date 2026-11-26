@@ -261,6 +261,49 @@ func TestImagesAreTaggedAsLoading(t *testing.T) {
 		`loading="lazy" decoding="async" data-img-state="loading"`)
 }
 
+func TestEmojiImagesBecomeText(t *testing.T) {
+	const src = `src="https://s.w.org/images/core/emoji/17.0.2/72x72/1f4b8.png"`
+	tests := []struct{ name, in, want string }{
+		{
+			"feed markup",
+			`<p><span style="width:30px"><img ` + src + ` alt="💸" class="wp-smiley" style="height:1em"></span>text</p>`,
+			`<p><span>💸 </span>text</p>`,
+		},
+		{"running text", `<p>so<img ` + src + ` alt="😄">!</p>`, `<p>so😄!</p>`},
+		{"text before in the span", `<span>a<img ` + src + ` alt="😄"></span>`, `<span>a😄</span>`},
+		{"text after in the span", `<span><img ` + src + ` alt="😄">b</span>`, `<span>😄b</span>`},
+		{"alone in another element", `<p><img ` + src + ` alt="😄"></p>`, `<p>😄</p>`},
+		{
+			"lazy loaded",
+			`<img src="data:image/gif;base64,R0lGOD" data-src="https://s.w.org/images/core/emoji/17.0.2/svg/1f4b8.svg" alt="💸">`,
+			`💸`,
+		},
+		{"entity-encoded src", `<IMAGE src="https&#58;//s.w.org/images/core/emoji/1f4b8.png" alt="💸">`, `💸`},
+		// The alt becomes a text node, so it must never turn back into markup.
+		{"markup in alt", `<img ` + src + ` alt="<script>x</script>">`, `&lt;script&gt;x&lt;/script&gt;`},
+	}
+	for _, tc := range tests {
+		if got := sanitize(tc.in); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestOtherImagesAreNotTurnedIntoText(t *testing.T) {
+	tests := []struct{ name, in string }{
+		{"no alt", `<img src="https://s.w.org/images/core/emoji/1f4b8.png">`},
+		{"empty alt", `<img src="https://s.w.org/images/core/emoji/1f4b8.png" alt="">`},
+		{"other host", `<img src="https://e.com/images/core/emoji/1f4b8.png" alt="💸" class="wp-smiley">`},
+		{"lookalike host", `<img src="https://s.w.org.e.com/images/core/emoji/1f4b8.png" alt="💸">`},
+		{"prefix in the query", `<img src="https://e.com/a.png?u=https://s.w.org/images/core/emoji/" alt="💸">`},
+	}
+	for _, tc := range tests {
+		if out := sanitize(tc.in); !strings.HasPrefix(out, `<img `) {
+			t.Errorf("%s: %s", tc.name, out)
+		}
+	}
+}
+
 func TestAriaHidden(t *testing.T) {
 	gutter := `<div class="language-ts"><pre><code><span class="line">const a = 1;</span>` + "\n" +
 		`<span class="line">const b = 2;</span></code></pre>` +
@@ -333,6 +376,7 @@ var gateCorpus = []string{
 	`<div style="color:red">no image here</div>`,
 	`<!-- <img src="x" style="width:8px"> -->`,
 	"<p>a &lt;img&gt; mention in text</p>",
+	`<IMG SRC="https&#58;//s.w.org/images/core/emoji/1f4b8.png" ALT="x">`,
 }
 
 // Each gate must be a superset of its pass: when it says "skip", running the
@@ -345,6 +389,7 @@ func TestGatesAreSupersetsOfThePassesTheyFront(t *testing.T) {
 	}{
 		{"aria-hidden", ariaHiddenGate, func(n *html.Node) { removeAriaHidden(n) }},
 		{"lazy", lazyGate, func(n *html.Node) { eachElement(n, "img", promoteLazyImage) }},
+		{"emoji", imageGate, func(n *html.Node) { eachElement(n, "img", restoreEmoji) }},
 		{"dimensions", dimensionGate, func(n *html.Node) { eachElement(n, "img", harvestDimensions) }},
 	}
 	for _, p := range passes {
