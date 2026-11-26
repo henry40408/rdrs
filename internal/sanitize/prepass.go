@@ -54,13 +54,22 @@ func lazyGate(content string) bool {
 	return false
 }
 
+// imageGate matches <image> too, which the parser reads as <img>.
+func imageGate(content string) bool {
+	return containsFold(content, "<img") || containsFold(content, "<image")
+}
+
 func dimensionGate(content string) bool {
-	return (containsFold(content, "<img") || containsFold(content, "<image")) &&
+	return imageGate(content) &&
 		(containsFold(content, "style") || containsFold(content, "data-original-"))
 }
 
-// prepare parses content once and applies the pre-passes in their original
-// order: aria-hidden, lazy images, image dimensions.
+// emojiSrcPrefix is where WordPress serves the pictures it puts in feeds in
+// place of emoji characters.
+const emojiSrcPrefix = "https://s.w.org/images/core/emoji/"
+
+// prepare parses content once and applies the pre-passes in order:
+// aria-hidden, lazy images, emoji images, image dimensions.
 func prepare(content string) *html.Node {
 	root := parseFragment(content)
 	if ariaHiddenGate(content) {
@@ -68,6 +77,9 @@ func prepare(content string) *html.Node {
 	}
 	if lazyGate(content) {
 		eachElement(root, "img", promoteLazyImage)
+	}
+	if imageGate(content) {
+		eachElement(root, "img", restoreEmoji)
 	}
 	if dimensionGate(content) {
 		eachElement(root, "img", harvestDimensions)
@@ -129,6 +141,22 @@ func promoteLazyImage(img *html.Node) {
 		renameAttr(img, name, "src")
 		return
 	}
+}
+
+// restoreEmoji turns an emoji image back into its character. The picture is
+// sized by an inline style the allowlist strips, so it would otherwise render
+// as a full-size block image.
+func restoreEmoji(img *html.Node) {
+	alt := attrValue(img, "alt")
+	if alt == "" || !strings.HasPrefix(attrValue(img, "src"), emojiSrcPrefix) {
+		return
+	}
+	// A span holding only the picture spaced it from the text, as in a list
+	// that uses emoji for bullets. Its style is stripped too.
+	if img.Parent.Data == "span" && img.PrevSibling == nil && img.NextSibling == nil {
+		alt += " "
+	}
+	img.Type, img.Data, img.DataAtom, img.Attr = html.TextNode, alt, 0, nil
 }
 
 // harvestDimensions gives an img that has neither width nor height a positive
